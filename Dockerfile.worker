@@ -1,0 +1,66 @@
+################################################################################
+# Worker Dockerfile
+# 
+# Deployment targets:
+#   - Camber
+#   - DigitalOcean Droplet
+#   - Any container runtime supporting EXECUTION_BACKEND
+#
+# Environment variables:
+#   - DATABASE_URL       (required)
+#   - ARTIFACT_STORE     (required)
+#   - EXECUTION_BACKEND  (required: camber, do, local, heroku)
+#   - CAMBER_API_KEY     (required if EXECUTION_BACKEND=camber)
+#   - DO_API_TOKEN       (required if EXECUTION_BACKEND=do)
+#   - NODE_ENV           (optional, default: production)
+#
+# Startup: Worker entrypoint
+################################################################################
+
+FROM node:18-alpine AS builder
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apk add --no-cache python3 make g++
+
+# Copy source files
+COPY package*.json ./
+RUN npm ci --only=production
+
+# Build TypeScript
+COPY tsconfig.json ./
+COPY src/ ./src/
+RUN npm run build
+
+################################################################################
+# Production Image
+################################################################################
+
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Install runtime dependencies (curl for health checks, dumb-init for signal handling)
+RUN apk add --no-cache curl dumb-init
+
+# Copy built artifacts
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+COPY package*.json ./
+
+# Health check: verify worker is responsive
+HEALTHCHECK --interval=60s --timeout=10s --start-period=5s --retries=3 \
+  CMD node -e "const http = require('http'); http.get('http://localhost:3001/health', (res) => { if (res.statusCode === 200) process.exit(0); else process.exit(1); })" || exit 1
+
+# Environment defaults
+ENV NODE_ENV=production
+ENV EXECUTION_BACKEND=local
+
+EXPOSE 3001
+
+# Use dumb-init to properly handle signals
+ENTRYPOINT ["/sbin/dumb-init", "--"]
+
+# Startup: Worker entrypoint
+CMD ["npm", "run", "worker"]
