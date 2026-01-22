@@ -1,1 +1,1 @@
-web: node dist/api-gateway/server.js
+web: npm start
