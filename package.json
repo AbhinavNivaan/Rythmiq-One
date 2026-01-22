@@ -5,6 +5,7 @@
   "main": "dist/api-gateway/server.js",
   "scripts": {
     "build": "tsc",
+    "heroku-postbuild": "npm run build",
     "start": "node dist/api-gateway/server.js",
     "dev": "ts-node api-gateway/server.ts",
     "worker": "node dist/worker/entrypoint.js",
