@@ -37,6 +37,5 @@
     "**/*TESTS.ts",
     "**/*EXAMPLE*.ts",
     "**/*REFERENCE*.ts"
-  ],
-  "extends": "expo/tsconfig.base"
+  ]
 }
