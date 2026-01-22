@@ -48,7 +48,7 @@ function validateEnvironment(): void {
     process.exit(1);
   }
 
-  const validArtifactStores = ['local', 's3', 'gcs'];
+  const validArtifactStores = ['local', 's3', 'gcs', 'spaces'];
   if (!validArtifactStores.includes(process.env.ARTIFACT_STORE_TYPE!)) {
     console.error(`FATAL: Invalid ARTIFACT_STORE_TYPE: ${process.env.ARTIFACT_STORE_TYPE}`);
     process.exit(1);
