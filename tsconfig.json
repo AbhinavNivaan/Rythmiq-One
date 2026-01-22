@@ -31,15 +31,12 @@
     "dist",
     "app",
     "infra",
-    // 🔴 Non-production files
+    "api-gateway/COMPLETE_IMPLEMENTATION.ts",
     "**/*.test.ts",
     "**/*.spec.ts",
     "**/*TESTS.ts",
     "**/*EXAMPLE*.ts",
-    "**/*REFERENCE*.ts",
-    "**/errors/**",
-    "**/examples/**",
-    "**/docs/**"
-  ]
+    "**/*REFERENCE*.ts"
+  ],
   "extends": "expo/tsconfig.base"
 }
