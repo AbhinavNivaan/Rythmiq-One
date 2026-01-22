@@ -31,8 +31,15 @@
     "dist",
     "app",
     "infra",
+    // 🔴 Non-production files
     "**/*.test.ts",
-    "**/*.spec.ts"
-  ],
+    "**/*.spec.ts",
+    "**/*TESTS.ts",
+    "**/*EXAMPLE*.ts",
+    "**/*REFERENCE*.ts",
+    "**/errors/**",
+    "**/examples/**",
+    "**/docs/**"
+  ]
   "extends": "expo/tsconfig.base"
 }
