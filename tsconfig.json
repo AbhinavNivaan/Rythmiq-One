@@ -21,6 +21,7 @@
   "include": [
     "api-gateway/**/*",
     "engine/**/*",
+    "worker/**/*",
     "bootstrap/**/*",
     "db/**/*",
     "schemas/**/*",
