@@ -1,0 +1,8 @@
+# Rythmiq Python Worker Dependencies
+# Minimal set for Camber Cloud BASE engine (pip-installable only)
+
+# OCR engine
+pytesseract>=0.3.10
+
+# Image handling (required by pytesseract)
+Pillow>=10.0.0

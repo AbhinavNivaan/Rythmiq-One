@@ -1,23 +1,31 @@
 {
-    "name": "rythmiq-one-worker",
-    "type": "service",
-    "engineType": "base",
-    "runtime": "nodejs18",
-    "command": "node dist/worker/entrypoint.js",
-    "resources": {
-        "cpu": 1,
-        "memory": "2Gi"
-    },
+    "name": "rythmiq-worker-python",
+    "engine": "BASE",
+    "runtime": "python:3.10",
+    "entrypoint": "python worker/main.py",
     "env": {
         "SERVICE_ENV": "prod",
         "EXECUTION_BACKEND": "camber",
-        "JWT_PUBLIC_KEY": "${JWT_PUBLIC_KEY}",
-        "SUPABASE_URL": "${SUPABASE_URL}",
-        "SUPABASE_SERVICE_ROLE_KEY": "${SUPABASE_SERVICE_ROLE_KEY}",
-        "ARTIFACT_STORE_TYPE": "spaces",
-        "DO_SPACES_KEY": "${DO_SPACES_KEY}",
-        "DO_SPACES_SECRET": "${DO_SPACES_SECRET}",
-        "DO_SPACES_BUCKET": "rythmiq-one-artifacts",
-        "DO_SPACES_REGION": "sgp1"
+        "ARTIFACT_STORE_TYPE": "s3"
+    },
+    "secrets": [
+        "SUPABASE_URL",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "DO_SPACES_KEY",
+        "DO_SPACES_SECRET",
+        "DO_SPACES_ENDPOINT",
+        "DO_SPACES_BUCKET"
+    ],
+    "scaling": {
+        "min_instances": 0,
+        "max_instances": 50,
+        "max_concurrency": 1
+    },
+    "dependencies": {
+        "python": "worker/requirements.txt",
+        "system": [
+            "tesseract-ocr",
+            "libtesseract-dev"
+        ]
     }
 }
