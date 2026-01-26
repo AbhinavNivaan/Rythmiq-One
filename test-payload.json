@@ -1,0 +1,13 @@
+{
+  "job_id": "test-001",
+  "artifact_url": "https://example.com/dummy.png",
+  "schema": {
+    "name": "demo",
+    "fields": {
+      "invoice_number": {
+        "source_fields": ["invoice_number"],
+        "required": true
+      }
+    }
+  }
+}

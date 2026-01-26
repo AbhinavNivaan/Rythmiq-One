@@ -1,31 +1,12 @@
 {
-    "name": "rythmiq-worker-python",
-    "engine": "BASE",
-    "runtime": "python:3.10",
-    "entrypoint": "python worker/main.py",
-    "env": {
-        "SERVICE_ENV": "prod",
-        "EXECUTION_BACKEND": "camber",
-        "ARTIFACT_STORE_TYPE": "s3"
-    },
-    "secrets": [
-        "SUPABASE_URL",
-        "SUPABASE_SERVICE_ROLE_KEY",
-        "DO_SPACES_KEY",
-        "DO_SPACES_SECRET",
-        "DO_SPACES_ENDPOINT",
-        "DO_SPACES_BUCKET"
-    ],
-    "scaling": {
-        "min_instances": 0,
-        "max_instances": 50,
-        "max_concurrency": 1
-    },
-    "dependencies": {
-        "python": "worker/requirements.txt",
-        "system": [
-            "tesseract-ocr",
-            "libtesseract-dev"
-        ]
-    }
+  "name": "rythmiq-worker-python-v2",
+  "engineType": "base",
+  "command": "python entrypoint.py",
+  "bundle": "stash://abhinavprakash15151692/rythmiq-worker-code",
+  "runtime": "python",
+  "env": {
+    "SERVICE_ENV": "prod",
+    "EXECUTION_BACKEND": "camber",
+    "ARTIFACT_STORE_TYPE": "s3"
+  }
 }

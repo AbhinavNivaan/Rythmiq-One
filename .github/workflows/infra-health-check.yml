@@ -1,0 +1,102 @@
+name: Infra Health Check
+
+on:
+  schedule:
+    - cron: "0 */12 * * *" # Run every 12 hours
+  workflow_dispatch: {} # Allow manual trigger
+
+permissions:
+  contents: read
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      INTERNAL_API_BASE_URL: ${{ secrets.INTERNAL_API_BASE_URL }}
+      INTERNAL_API_HEALTH_TOKEN: ${{ secrets.INTERNAL_API_HEALTH_TOKEN }}
+      GPU_BUDGET_SAFETY_THRESHOLD_HOURS: "10" # Warn (not fail) when remaining hours drop below this value
+    steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y jq
+          fi
+
+      - name: Supabase heartbeat (read-only)
+        # Lightweight health ping; logs status and latency without writing data
+        run: |
+          set -euo pipefail
+          endpoint="${SUPABASE_URL}/auth/v1/health"
+          echo "Pinging Supabase auth health endpoint..."
+          read -r http_code total_time <<<"$(curl -sS -o /tmp/supabase_health.json -w "%{http_code} %{time_total}" \
+            -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+            "$endpoint")"
+          echo "Supabase status: ${http_code}; latency: ${total_time}s"
+          if [ "${http_code}" -ge 400 ]; then
+            echo "Supabase heartbeat failed" >&2
+            cat /tmp/supabase_health.json >&2 || true
+            exit 1
+          fi
+          jq .status /tmp/supabase_health.json 2>/dev/null || cat /tmp/supabase_health.json
+
+      - name: CPU pipeline dry-run probe
+        # Calls CPU processing health endpoint in dry-run mode to validate orchestration without real work
+        run: |
+          set -euo pipefail
+          endpoint="${INTERNAL_API_BASE_URL}/internal/health/processing"
+          payload='{"dry_run": true}'
+          echo "Invoking CPU processing dry-run probe..."
+          http_code=$(curl -sS -o /tmp/cpu_probe.json -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer ${INTERNAL_API_HEALTH_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "${payload}" \
+            "${endpoint}")
+          echo "CPU probe status: ${http_code}"
+          if [ "${http_code}" -ne 200 ]; then
+            echo "CPU health probe failed" >&2
+            cat /tmp/cpu_probe.json >&2 || true
+            exit 1
+          fi
+          jq . /tmp/cpu_probe.json 2>/dev/null || cat /tmp/cpu_probe.json
+
+      - name: GPU budget audit (read-only)
+        # Reads remaining GPU hours; warns (does not fail) when below safety threshold
+        run: |
+          set -euo pipefail
+          endpoint="${INTERNAL_API_BASE_URL}/internal/health/gpu-budget"
+          echo "Fetching GPU budget (read-only)..."
+          http_code=$(curl -sS -o /tmp/gpu_budget.json -w "%{http_code}" \
+            -H "Authorization: Bearer ${INTERNAL_API_HEALTH_TOKEN}" \
+            "${endpoint}")
+          if [ "${http_code}" -ne 200 ]; then
+            echo "GPU budget audit failed" >&2
+            cat /tmp/gpu_budget.json >&2 || true
+            exit 1
+          fi
+
+          remaining_hours=$(jq -r '.remaining_hours // .remaining // .available_hours // empty' /tmp/gpu_budget.json)
+          threshold="${GPU_BUDGET_SAFETY_THRESHOLD_HOURS}"
+
+          echo "GPU budget response:" && (jq . /tmp/gpu_budget.json 2>/dev/null || cat /tmp/gpu_budget.json)
+
+          if [ -z "${remaining_hours}" ]; then
+            echo "Could not parse remaining GPU hours" >&2
+            exit 1
+          fi
+
+          # Compare as float using Python to avoid bash float quirks
+          python - <<'PY'
+import os, sys
+remaining = float(os.environ["remaining_hours"])
+threshold = float(os.environ["threshold"])
+if remaining < threshold:
+    print(f"::warning::GPU remaining hours below threshold: {remaining}h < {threshold}h")
+else:
+    print(f"GPU remaining hours healthy: {remaining}h (threshold {threshold}h)")
+PY
