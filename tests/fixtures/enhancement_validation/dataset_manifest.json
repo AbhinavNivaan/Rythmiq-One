@@ -1,0 +1,166 @@
+{
+  "description": "Enhancement pipeline validation test dataset",
+  "total_images": 16,
+  "images": [
+    {
+      "filename": "01_clean_control.jpg",
+      "category": "control",
+      "description": "Clean, high-quality document (control)",
+      "baseline_readable": true,
+      "expected_improvement": false,
+      "degradation_type": "none",
+      "degradation_severity": "none",
+      "rotation_applied": null
+    },
+    {
+      "filename": "02_slight_blur.jpg",
+      "category": "blur",
+      "description": "Slight Gaussian blur",
+      "baseline_readable": true,
+      "expected_improvement": true,
+      "degradation_type": "blur",
+      "degradation_severity": "mild",
+      "rotation_applied": null
+    },
+    {
+      "filename": "03_heavy_blur.jpg",
+      "category": "blur",
+      "description": "Heavy Gaussian blur",
+      "baseline_readable": false,
+      "expected_improvement": true,
+      "degradation_type": "blur",
+      "degradation_severity": "severe",
+      "rotation_applied": null
+    },
+    {
+      "filename": "04_motion_blur.jpg",
+      "category": "blur",
+      "description": "Horizontal motion blur",
+      "baseline_readable": false,
+      "expected_improvement": true,
+      "degradation_type": "motion_blur",
+      "degradation_severity": "moderate",
+      "rotation_applied": null
+    },
+    {
+      "filename": "05_low_light.jpg",
+      "category": "exposure",
+      "description": "Low light conditions (dark + noise)",
+      "baseline_readable": false,
+      "expected_improvement": true,
+      "degradation_type": "underexposure",
+      "degradation_severity": "severe",
+      "rotation_applied": null
+    },
+    {
+      "filename": "06_overexposed.jpg",
+      "category": "exposure",
+      "description": "Overexposed / washed out",
+      "baseline_readable": true,
+      "expected_improvement": true,
+      "degradation_type": "overexposure",
+      "degradation_severity": "moderate",
+      "rotation_applied": null
+    },
+    {
+      "filename": "07_light_grain.jpg",
+      "category": "noise",
+      "description": "Light grain noise",
+      "baseline_readable": true,
+      "expected_improvement": true,
+      "degradation_type": "noise",
+      "degradation_severity": "mild",
+      "rotation_applied": null
+    },
+    {
+      "filename": "08_heavy_grain.jpg",
+      "category": "noise",
+      "description": "Heavy grain noise (phone camera low-light)",
+      "baseline_readable": false,
+      "expected_improvement": true,
+      "degradation_type": "noise",
+      "degradation_severity": "severe",
+      "rotation_applied": null
+    },
+    {
+      "filename": "09_rotation_1deg.jpg",
+      "category": "rotation",
+      "description": "1 degree clockwise rotation",
+      "baseline_readable": true,
+      "expected_improvement": false,
+      "degradation_type": "rotation",
+      "degradation_severity": "mild",
+      "rotation_applied": 1.0
+    },
+    {
+      "filename": "10_rotation_5deg.jpg",
+      "category": "rotation",
+      "description": "5 degrees clockwise rotation",
+      "baseline_readable": true,
+      "expected_improvement": true,
+      "degradation_type": "rotation",
+      "degradation_severity": "moderate",
+      "rotation_applied": 5.0
+    },
+    {
+      "filename": "11_rotation_neg5deg.jpg",
+      "category": "rotation",
+      "description": "5 degrees counter-clockwise rotation",
+      "baseline_readable": true,
+      "expected_improvement": true,
+      "degradation_type": "rotation",
+      "degradation_severity": "moderate",
+      "rotation_applied": -5.0
+    },
+    {
+      "filename": "12_rotation_90deg.jpg",
+      "category": "rotation",
+      "description": "90 degrees rotation",
+      "baseline_readable": true,
+      "expected_improvement": true,
+      "degradation_type": "rotation",
+      "degradation_severity": "severe",
+      "rotation_applied": 90.0
+    },
+    {
+      "filename": "13_rotation_180deg.jpg",
+      "category": "rotation",
+      "description": "180 degrees rotation (upside down)",
+      "baseline_readable": true,
+      "expected_improvement": true,
+      "degradation_type": "rotation",
+      "degradation_severity": "severe",
+      "rotation_applied": 180.0
+    },
+    {
+      "filename": "14_lowlight_blur.jpg",
+      "category": "combined",
+      "description": "Low light + slight blur",
+      "baseline_readable": false,
+      "expected_improvement": true,
+      "degradation_type": "multiple",
+      "degradation_severity": "severe",
+      "rotation_applied": null
+    },
+    {
+      "filename": "15_noise_rotation.jpg",
+      "category": "combined",
+      "description": "Moderate noise + 3 degree rotation",
+      "baseline_readable": true,
+      "expected_improvement": true,
+      "degradation_type": "multiple",
+      "degradation_severity": "moderate",
+      "rotation_applied": 3.0
+    },
+    {
+      "filename": "16_jpeg_artifacts.jpg",
+      "category": "artifacts",
+      "description": "Clean image with heavy JPEG compression",
+      "baseline_readable": true,
+      "expected_improvement": true,
+      "degradation_type": "compression",
+      "degradation_severity": "moderate",
+      "rotation_applied": null
+    }
+  ]
+}

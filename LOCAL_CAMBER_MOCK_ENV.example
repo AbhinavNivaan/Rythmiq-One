@@ -1,0 +1,264 @@
+"""
+LOCAL CAMBER MOCK - CONFIGURATION & EXAMPLES
+
+This file documents all available configurations for the local mock.
+Copy relevant sections to your .env file.
+
+QUICK START:
+    export EXECUTION_BACKEND=local
+    export WEBHOOK_SECRET=your-secret-here
+    uvicorn app.api.main:app --reload
+"""
+
+# =============================================================================
+# OPTION 1: LOCAL MOCK (RECOMMENDED FOR DEV)
+# =============================================================================
+
+# Enable in-process mock instead of real Camber
+EXECUTION_BACKEND=local
+
+# Webhook signature secret (must match between mock and API)
+WEBHOOK_SECRET=dev-secret-12345-change-in-prod
+
+# Service environment
+SERVICE_ENV=dev
+
+# API port (where webhook will be POSTed back to)
+API_PORT=8000
+
+# Mock still needs these for initialization (not actually used)
+CAMBER_API_KEY=mock-key-unused
+CAMBER_API_ENDPOINT=https://api.mock.local
+CAMBER_APP_NAME=mock-app
+
+# Database (optional - can use in-memory mock)
+# SUPABASE_URL=http://localhost:54321
+# SUPABASE_ANON_KEY=test-key
+# SUPABASE_SERVICE_ROLE_KEY=test-role-key
+
+# Storage (local or S3)
+ARTIFACT_STORE_TYPE=local
+ARTIFACT_STORE_BUCKET=./test-artifacts
+
+# Optional: Enable detailed mock logging
+LOG_LEVEL=DEBUG
+
+
+# =============================================================================
+# OPTION 2: REAL CAMBER (PRODUCTION PARITY)
+# =============================================================================
+
+# This is for comparison - DON'T use both at once!
+
+# EXECUTION_BACKEND=camber
+# WEBHOOK_SECRET=<your-prod-secret>
+# SERVICE_ENV=prod
+# 
+# CAMBER_API_KEY=<your-real-camber-key>
+# CAMBER_API_ENDPOINT=https://api.camber.cloud
+# CAMBER_APP_NAME=<your-real-app-name>
+#
+# SUPABASE_URL=<your-prod-db-url>
+# SUPABASE_ANON_KEY=<your-prod-anon-key>
+# SUPABASE_SERVICE_ROLE_KEY=<your-prod-service-key>
+#
+# ARTIFACT_STORE_TYPE=s3
+# ARTIFACT_STORE_BUCKET=<your-prod-bucket>
+# AWS_REGION=us-east-1
+# AWS_ACCESS_KEY_ID=<your-key>
+# AWS_SECRET_ACCESS_KEY=<your-secret>
+
+
+# =============================================================================
+# MOCK-SPECIFIC BEHAVIOR NOTES
+# =============================================================================
+
+# When EXECUTION_BACKEND=local, the following happens:
+#
+# 1. Job submission (POST /jobs):
+#    - Creates job record with status=pending
+#    - Calls get_camber_service() → returns MockCamberClient
+#    - mock.submit_job() returns instantly with mock-{job_id}
+#
+# 2. Background processing (async task):
+#    - MockCamberClient spawns asyncio.Task()
+#    - Task runs: _process_job_async()
+#    - No actual OCR - uses mock results
+#
+# 3. Webhook delivery (~10ms later):
+#    - Mock POSTs to /internal/webhooks/camber
+#    - Includes HMAC-SHA256 signature
+#    - Webhook handler processes normally
+#    - Job status transitions to completed
+#
+# 4. Result retrieval (GET /jobs/{id}/output):
+#    - Returns mock structured data
+#    - Real signature verification still runs
+#    - No network calls to external services
+#
+# TIME TO COMPLETION: < 100ms (deterministic, no network jitter)
+# FAILURE MODES: Configurable (TODO: add env vars for failure simulation)
+
+
+# =============================================================================
+# WEBHOOK FLOW (INTERNAL)
+# =============================================================================
+
+# Mock webhook POST /internal/webhooks/camber:
+#
+# Header:
+#   X-Webhook-Secret: <HMAC-SHA256(WEBHOOK_SECRET, payload_json)>
+#   Content-Type: application/json
+#
+# Body:
+#   {
+#     "camber_job_id": "mock-550e8400",
+#     "job_id": "550e8400-e29b-41d4-a716-446655440000",
+#     "status": "success",
+#     "result": {
+#       "status": "SUCCESS",
+#       "job_id": "550e8400-e29b-41d4-a716-446655440000",
+#       "result": {
+#         "structured": {...},
+#         "confidence": {...},
+#         "quality_score": 0.92,
+#         "page_count": 1
+#       }
+#     }
+#   }
+#
+# Verification:
+#   1. API receives webhook
+#   2. Extracts X-Webhook-Secret header
+#   3. Computes HMAC-SHA256 of payload using WEBHOOK_SECRET
+#   4. Compares using constant-time comparison
+#   5. On match: transition job to completed
+#   6. On mismatch: reject with 403 Forbidden
+#
+# Idempotency:
+#   - If job already in terminal state, webhook is silently acknowledged
+#   - Safe to replay - no side effects
+#   - Use for testing webhook retry logic
+
+
+# =============================================================================
+# RUNNING TESTS WITH MOCK
+# =============================================================================
+
+# Command: pytest tests/test_e2e_pipeline.py -v
+#
+# All tests automatically use EXECUTION_BACKEND=local from fixture
+# No real Camber calls are made
+# Tests run in < 1 second total
+#
+# Test categories:
+# - Factory gating tests
+# - Mock client interface tests
+# - Webhook signature verification
+# - Concurrent job execution
+# - Job state transitions
+# - Error propagation
+#
+# Run specific test:
+#   pytest tests/test_e2e_pipeline.py::test_mock_client_submit_returns_immediately -v
+#
+# With logging:
+#   pytest tests/test_e2e_pipeline.py -v --log-cli-level=DEBUG
+
+
+# =============================================================================
+# SWITCHING BETWEEN MOCK AND REAL CAMBER
+# =============================================================================
+
+# No code changes required!
+# Just change EXECUTION_BACKEND environment variable:
+#
+# Mock:
+#   export EXECUTION_BACKEND=local
+#   uvicorn app.api.main:app --reload
+#
+# Real:
+#   export EXECUTION_BACKEND=camber
+#   export CAMBER_API_KEY=<your-key>
+#   uvicorn app.api.main:app --reload
+#
+# The factory will automatically switch implementations.
+# All other code is identical.
+
+
+# =============================================================================
+# DEBUGGING
+# =============================================================================
+
+# Enable debug logging to see mock operations:
+#   export LOG_LEVEL=DEBUG
+#
+# Look for these log messages:
+#   [MOCK CAMBER] job submitted
+#   [MOCK CAMBER] worker execution started
+#   [MOCK CAMBER] worker execution completed
+#   [MOCK CAMBER] webhook delivering
+#   [MOCK CAMBER] webhook delivered successfully
+#
+# If webhook not sent:
+#   - Check API is running on correct port (default: 8000)
+#   - Check WEBHOOK_SECRET matches
+#   - Check firewall/networking (localhost should work)
+#
+# If job never completes:
+#   - Check for async event loop errors in logs
+#   - Ensure uvicorn is running (background task needs event loop)
+#   - Try restarting the API server
+
+
+# =============================================================================
+# PERFORMANCE CHARACTERISTICS
+# =============================================================================
+
+# Job submission (submit_job):
+#   - Duration: < 1ms
+#   - Returns: instantly with mock camber_job_id
+#   - No I/O
+#
+# Background processing:
+#   - Duration: < 10ms (mock only, no OCR)
+#   - Runs concurrently with other tasks
+#   - No blocking
+#
+# Webhook delivery:
+#   - Duration: < 50ms (local HTTP post)
+#   - Retries on transient failure
+#   - Signature computed on demand
+#
+# Total job lifecycle:
+#   - Duration: 50-100ms
+#   - Deterministic (no jitter)
+#   - No network variance
+#
+# Compared to real Camber:
+#   - Real: 5-30 seconds (worker startup, OCR, network)
+#   - Mock: 50-100ms
+#   - Speed increase: 50-600x faster
+
+
+# =============================================================================
+# SECURITY NOTES
+# =============================================================================
+
+# Mock webhook signature:
+#   - Uses same HMAC-SHA256 algorithm as real Camber
+#   - Verification code is identical (no mock-specific branch)
+#   - Safe to test webhook auth paths
+#   - Ensures parity with production behavior
+#
+# Untrusted input handling:
+#   - Mock respects same validation as real Camber
+#   - Webhook handler treats mock as untrusted
+#   - All inputs are validated and sanitized
+#   - Safe for security testing
+#
+# Environment isolation:
+#   - EXECUTION_BACKEND=local must be explicitly set
+#   - No automatic fallback to mock
+#   - Production safe (can't accidentally use mock)
+#   - Clear intent in code

@@ -1,0 +1,272 @@
+[
+  {
+    "schema": "neet_ug_2026",
+    "file": "tiny.jpg",
+    "path": "neet_ug_2026/tiny.jpg",
+    "size_bytes": 1909
+  },
+  {
+    "schema": "neet_ug_2026",
+    "file": "borderline.jpg",
+    "path": "neet_ug_2026/borderline.jpg",
+    "size_bytes": 268544
+  },
+  {
+    "schema": "neet_ug_2026",
+    "file": "black.jpg",
+    "path": "neet_ug_2026/black.jpg",
+    "size_bytes": 35539
+  },
+  {
+    "schema": "neet_ug_2026",
+    "file": "noisy.jpg",
+    "path": "neet_ug_2026/noisy.jpg",
+    "size_bytes": 283266
+  },
+  {
+    "schema": "neet_ug_2026",
+    "file": "huge.jpg",
+    "path": "neet_ug_2026/huge.jpg",
+    "size_bytes": 418668
+  },
+  {
+    "schema": "neet_ug_2026",
+    "file": "corrupt.bin",
+    "path": "neet_ug_2026/corrupt.bin",
+    "size_bytes": 1003
+  },
+  {
+    "schema": "neet_ug_2026",
+    "file": "clean.jpg",
+    "path": "neet_ug_2026/clean.jpg",
+    "size_bytes": 16674
+  },
+  {
+    "schema": "neet_ug_2026",
+    "file": "large.jpg",
+    "path": "neet_ug_2026/large.jpg",
+    "size_bytes": 1785005
+  },
+  {
+    "schema": "neet_ug_2026",
+    "file": "white.jpg",
+    "path": "neet_ug_2026/white.jpg",
+    "size_bytes": 27915
+  },
+  {
+    "schema": "jee_main_2026",
+    "file": "tiny.jpg",
+    "path": "jee_main_2026/tiny.jpg",
+    "size_bytes": 2939
+  },
+  {
+    "schema": "jee_main_2026",
+    "file": "borderline.jpg",
+    "path": "jee_main_2026/borderline.jpg",
+    "size_bytes": 879047
+  },
+  {
+    "schema": "jee_main_2026",
+    "file": "black.jpg",
+    "path": "jee_main_2026/black.jpg",
+    "size_bytes": 119067
+  },
+  {
+    "schema": "jee_main_2026",
+    "file": "noisy.jpg",
+    "path": "jee_main_2026/noisy.jpg",
+    "size_bytes": 956129
+  },
+  {
+    "schema": "jee_main_2026",
+    "file": "huge.jpg",
+    "path": "jee_main_2026/huge.jpg",
+    "size_bytes": 1223268
+  },
+  {
+    "schema": "jee_main_2026",
+    "file": "corrupt.bin",
+    "path": "jee_main_2026/corrupt.bin",
+    "size_bytes": 1003
+  },
+  {
+    "schema": "jee_main_2026",
+    "file": "clean.jpg",
+    "path": "jee_main_2026/clean.jpg",
+    "size_bytes": 34624
+  },
+  {
+    "schema": "jee_main_2026",
+    "file": "large.jpg",
+    "path": "jee_main_2026/large.jpg",
+    "size_bytes": 6019659
+  },
+  {
+    "schema": "jee_main_2026",
+    "file": "white.jpg",
+    "path": "jee_main_2026/white.jpg",
+    "size_bytes": 93487
+  },
+  {
+    "schema": "aadhaar_update",
+    "file": "tiny.jpg",
+    "path": "aadhaar_update/tiny.jpg",
+    "size_bytes": 1909
+  },
+  {
+    "schema": "aadhaar_update",
+    "file": "borderline.jpg",
+    "path": "aadhaar_update/borderline.jpg",
+    "size_bytes": 268665
+  },
+  {
+    "schema": "aadhaar_update",
+    "file": "black.jpg",
+    "path": "aadhaar_update/black.jpg",
+    "size_bytes": 35487
+  },
+  {
+    "schema": "aadhaar_update",
+    "file": "noisy.jpg",
+    "path": "aadhaar_update/noisy.jpg",
+    "size_bytes": 282712
+  },
+  {
+    "schema": "aadhaar_update",
+    "file": "huge.jpg",
+    "path": "aadhaar_update/huge.jpg",
+    "size_bytes": 418668
+  },
+  {
+    "schema": "aadhaar_update",
+    "file": "corrupt.bin",
+    "path": "aadhaar_update/corrupt.bin",
+    "size_bytes": 1003
+  },
+  {
+    "schema": "aadhaar_update",
+    "file": "clean.jpg",
+    "path": "aadhaar_update/clean.jpg",
+    "size_bytes": 16674
+  },
+  {
+    "schema": "aadhaar_update",
+    "file": "large.jpg",
+    "path": "aadhaar_update/large.jpg",
+    "size_bytes": 1785557
+  },
+  {
+    "schema": "aadhaar_update",
+    "file": "white.jpg",
+    "path": "aadhaar_update/white.jpg",
+    "size_bytes": 27825
+  },
+  {
+    "schema": "passport_seva",
+    "file": "tiny.jpg",
+    "path": "passport_seva/tiny.jpg",
+    "size_bytes": 3536
+  },
+  {
+    "schema": "passport_seva",
+    "file": "borderline.jpg",
+    "path": "passport_seva/borderline.jpg",
+    "size_bytes": 1214977
+  },
+  {
+    "schema": "passport_seva",
+    "file": "black.jpg",
+    "path": "passport_seva/black.jpg",
+    "size_bytes": 165026
+  },
+  {
+    "schema": "passport_seva",
+    "file": "noisy.jpg",
+    "path": "passport_seva/noisy.jpg",
+    "size_bytes": 1327786
+  },
+  {
+    "schema": "passport_seva",
+    "file": "huge.jpg",
+    "path": "passport_seva/huge.jpg",
+    "size_bytes": 1650609
+  },
+  {
+    "schema": "passport_seva",
+    "file": "corrupt.bin",
+    "path": "passport_seva/corrupt.bin",
+    "size_bytes": 1003
+  },
+  {
+    "schema": "passport_seva",
+    "file": "clean.jpg",
+    "path": "passport_seva/clean.jpg",
+    "size_bytes": 42561
+  },
+  {
+    "schema": "passport_seva",
+    "file": "large.jpg",
+    "path": "passport_seva/large.jpg",
+    "size_bytes": 8355624
+  },
+  {
+    "schema": "passport_seva",
+    "file": "white.jpg",
+    "path": "passport_seva/white.jpg",
+    "size_bytes": 129478
+  },
+  {
+    "schema": "college_generic",
+    "file": "tiny.jpg",
+    "path": "college_generic/tiny.jpg",
+    "size_bytes": 3317
+  },
+  {
+    "schema": "college_generic",
+    "file": "borderline.jpg",
+    "path": "college_generic/borderline.jpg",
+    "size_bytes": 1106445
+  },
+  {
+    "schema": "college_generic",
+    "file": "black.jpg",
+    "path": "college_generic/black.jpg",
+    "size_bytes": 149007
+  },
+  {
+    "schema": "college_generic",
+    "file": "noisy.jpg",
+    "path": "college_generic/noisy.jpg",
+    "size_bytes": 1208305
+  },
+  {
+    "schema": "college_generic",
+    "file": "huge.jpg",
+    "path": "college_generic/huge.jpg",
+    "size_bytes": 1518488
+  },
+  {
+    "schema": "college_generic",
+    "file": "corrupt.bin",
+    "path": "college_generic/corrupt.bin",
+    "size_bytes": 1003
+  },
+  {
+    "schema": "college_generic",
+    "file": "clean.jpg",
+    "path": "college_generic/clean.jpg",
+    "size_bytes": 40103
+  },
+  {
+    "schema": "college_generic",
+    "file": "large.jpg",
+    "path": "college_generic/large.jpg",
+    "size_bytes": 7611586
+  },
+  {
+    "schema": "college_generic",
+    "file": "white.jpg",
+    "path": "college_generic/white.jpg",
+    "size_bytes": 116881
+  }
+]

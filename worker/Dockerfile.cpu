@@ -1,0 +1,106 @@
+# =============================================================================
+# Camber CPU Worker - Dockerfile
+# =============================================================================
+# 
+# This Dockerfile creates a slim, CPU-only worker image with:
+# - Python 3.11 on Debian Bookworm (slim variant)
+# - PaddleOCR with pre-downloaded models for fast cold start
+# - OpenCV with headless backend (no GUI dependencies)
+# - All dependencies pinned for reproducibility
+#
+# Build:
+#   docker build -f worker/Dockerfile.cpu -t rythmiq/worker-cpu:latest ./worker
+#
+# Run:
+#   echo '{"job_id": "...", ...}' | docker run -i --rm \
+#     -e SPACES_ENDPOINT=https://nyc3.digitaloceanspaces.com \
+#     -e SPACES_REGION=nyc3 \
+#     -e SPACES_BUCKET=rythmiq-production \
+#     -e SPACES_KEY=... \
+#     -e SPACES_SECRET=... \
+#     rythmiq/worker-cpu:latest
+# =============================================================================
+
+FROM python:3.11-slim-bookworm AS base
+
+# Prevent Python from writing pyc files and buffering stdout/stderr
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONFAULTHANDLER=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # OpenCV dependencies
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    libgomp1 \
+    # Image format support
+    libjpeg62-turbo \
+    libpng16-16 \
+    libtiff6 \
+    libwebp7 \
+    # SSL for HTTPS requests
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# -----------------------------------------------------------------------------
+# Builder stage - install Python dependencies
+# -----------------------------------------------------------------------------
+FROM base AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install Python packages
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --upgrade pip setuptools wheel \
+    && pip install -r /tmp/requirements.txt
+
+# Pre-download PaddleOCR models for fast cold start
+RUN python -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False, show_log=False)"
+
+# -----------------------------------------------------------------------------
+# Runtime stage - minimal image for execution
+# -----------------------------------------------------------------------------
+FROM base AS runtime
+
+# Create non-root user for security
+RUN useradd --create-home --shell /bin/bash worker
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy PaddleOCR models from builder
+COPY --from=builder /root/.paddleocr /home/worker/.paddleocr
+RUN chown -R worker:worker /home/worker/.paddleocr
+
+# Set working directory
+WORKDIR /app
+
+# Copy worker source code
+COPY --chown=worker:worker . /app/
+
+# Ensure processors directory exists with __init__.py
+RUN mkdir -p /app/processors && touch /app/processors/__init__.py
+
+# Switch to non-root user
+USER worker
+
+# Health check - verify Python and imports work
+RUN python -c "import worker; import processors.ocr; import processors.quality"
+
+# Set entrypoint
+# Worker reads from STDIN, writes to STDOUT, exits 0
+ENTRYPOINT ["python", "worker.py"]

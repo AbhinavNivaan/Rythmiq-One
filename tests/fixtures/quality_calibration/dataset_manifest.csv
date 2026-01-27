@@ -1,0 +1,21 @@
+filename,human_label,notes
+01_clean_scan.jpg,good,"Clean scanner output, high quality"
+02_dense_scan.jpg,good,"Dense marksheet/form scan, high quality"
+03_phone_good_light.jpg,good,Phone capture in good daylight
+04_white_bg_clean.jpg,good,"White background, sparse text, clean"
+05_phone_enhanced.jpg,good,Phone photo with auto-enhancement
+06_slight_blur.jpg,medium,"Slight blur, text still readable"
+07_phone_dim_light.jpg,medium,Phone photo in dim indoor light
+08_slight_motion.jpg,medium,Slight motion blur from shaky hands
+09_slight_overexpose.jpg,medium,"Slightly overexposed, details visible"
+10_noisy_readable.jpg,medium,Noisy but text still clear
+11_jpeg_artifacts.jpg,medium,"Heavy JPEG compression, blockiness"
+12_heavy_blur.jpg,poor,"Heavy blur, text unreadable"
+13_very_heavy_blur.jpg,poor,"Extreme blur, document unusable"
+14_low_light.jpg,poor,"Low light capture, dark and noisy"
+15_overexposed.jpg,poor,"Severely overexposed, washed out"
+16_underexposed.jpg,poor,"Severely underexposed, too dark"
+17_motion_blur.jpg,poor,Significant motion blur
+18_blur_and_noise.jpg,poor,Blur combined with high noise
+19_low_contrast.jpg,poor,"Very low contrast, text fades"
+20_extreme_noise.jpg,poor,"Extreme noise, speckled image"

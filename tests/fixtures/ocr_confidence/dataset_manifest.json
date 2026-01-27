@@ -1,0 +1,163 @@
+{
+  "description": "OCR Confidence Evaluation Dataset for Indian Documents",
+  "created": "2026-01-27",
+  "documents": [
+    {
+      "id": "aadhaar_clean",
+      "filename": "aadhaar_clean.jpg",
+      "doc_type": "Aadhaar Card",
+      "source_quality": "clean_scan",
+      "expected_quality": "high",
+      "critical_fields": {
+        "name": "RAJESH KUMAR",
+        "uid": "1234 5678 9012",
+        "dob": "01/01/1990"
+      },
+      "ground_truth_text": "GOVERNMENT OF INDIA\nRajesh Kumar\nDOB: 01/01/1990\n1234 5678 9012",
+      "notes": "Synthetic test image - clean Aadhaar-like layout"
+    },
+    {
+      "id": "pan_clean",
+      "filename": "pan_clean.jpg",
+      "doc_type": "PAN Card",
+      "source_quality": "clean_scan",
+      "expected_quality": "high",
+      "critical_fields": {
+        "name": "PRIYA SHARMA",
+        "pan": "ABCDE1234F",
+        "dob": "15/08/1985"
+      },
+      "ground_truth_text": "INCOME TAX DEPARTMENT\nPermanent Account Number\nABCDE1234F\nPRIYA SHARMA\nDate of Birth 15/08/1985",
+      "notes": "Synthetic PAN card layout"
+    },
+    {
+      "id": "marksheet_typed",
+      "filename": "marksheet_typed.jpg",
+      "doc_type": "Marksheet",
+      "source_quality": "clean_scan",
+      "expected_quality": "high",
+      "critical_fields": {
+        "name": "ANKIT VERMA",
+        "roll_no": "12345678",
+        "total": "450",
+        "percentage": "90.00%"
+      },
+      "ground_truth_text": "CENTRAL BOARD OF SECONDARY EDUCATION\nMARK SHEET\nName: ANKIT VERMA\nRoll No: 12345678\nTotal Marks: 450/500\nPercentage: 90.00%",
+      "notes": "Typed marksheet with numbers"
+    },
+    {
+      "id": "form_typed",
+      "filename": "form_typed.jpg",
+      "doc_type": "Application Form",
+      "source_quality": "clean_scan",
+      "expected_quality": "high",
+      "critical_fields": {
+        "name": "SURESH REDDY",
+        "application_no": "APP2024001234",
+        "date": "27/01/2026"
+      },
+      "ground_truth_text": "APPLICATION FORM\nApplication No: APP2024001234\nDate: 27/01/2026\nName: SURESH REDDY\nAddress: 123 Main Street, Bangalore",
+      "notes": "Typed form with mixed alphanumeric"
+    },
+    {
+      "id": "certificate_clean",
+      "filename": "certificate_clean.jpg",
+      "doc_type": "Certificate",
+      "source_quality": "clean_scan",
+      "expected_quality": "high",
+      "critical_fields": {
+        "name": "MEERA PATEL",
+        "cert_no": "CERT/2024/5678",
+        "date": "15/03/2024"
+      },
+      "ground_truth_text": "CERTIFICATE OF COMPLETION\nThis is to certify that\nMEERA PATEL\nCertificate No: CERT/2024/5678\nDate: 15/03/2024",
+      "notes": "Formal certificate layout"
+    },
+    {
+      "id": "aadhaar_phone_good",
+      "filename": "aadhaar_phone_good.jpg",
+      "doc_type": "Aadhaar Card",
+      "source_quality": "phone_good_light",
+      "expected_quality": "medium",
+      "critical_fields": {
+        "name": "VIKRAM SINGH",
+        "uid": "9876 5432 1098",
+        "dob": "20/05/1988"
+      },
+      "ground_truth_text": "GOVERNMENT OF INDIA\nVikram Singh\nDOB: 20/05/1988\n9876 5432 1098",
+      "notes": "Phone photo in good lighting"
+    },
+    {
+      "id": "pan_phone_good",
+      "filename": "pan_phone_good.jpg",
+      "doc_type": "PAN Card",
+      "source_quality": "phone_good_light",
+      "expected_quality": "medium",
+      "critical_fields": {
+        "name": "KAVITA NAIR",
+        "pan": "FGHIJ5678K",
+        "dob": "10/12/1992"
+      },
+      "ground_truth_text": "INCOME TAX DEPARTMENT\nPermanent Account Number\nFGHIJ5678K\nKAVITA NAIR\nDate of Birth 10/12/1992",
+      "notes": "Phone capture - good conditions"
+    },
+    {
+      "id": "marksheet_phone_dim",
+      "filename": "marksheet_phone_dim.jpg",
+      "doc_type": "Marksheet",
+      "source_quality": "phone_dim_light",
+      "expected_quality": "low",
+      "critical_fields": {
+        "name": "RAVI GUPTA",
+        "roll_no": "87654321",
+        "total": "380",
+        "percentage": "76.00%"
+      },
+      "ground_truth_text": "BOARD OF SECONDARY EDUCATION\nMARK SHEET\nName: RAVI GUPTA\nRoll No: 87654321\nTotal Marks: 380/500\nPercentage: 76.00%",
+      "notes": "Phone photo in dim indoor light"
+    },
+    {
+      "id": "id_mixed_numbers",
+      "filename": "id_mixed_numbers.jpg",
+      "doc_type": "ID Card",
+      "source_quality": "clean_scan",
+      "expected_quality": "high",
+      "critical_fields": {
+        "emp_id": "EMP00123456",
+        "dob": "01/02/1995",
+        "phone": "9876543210"
+      },
+      "ground_truth_text": "EMPLOYEE ID CARD\nEMP00123456\nDOB: 01/02/1995\nPhone: 9876543210\nValid Till: 31/12/2026",
+      "notes": "ID with multiple numeric fields - tests 0/O confusion"
+    },
+    {
+      "id": "form_phone_blur",
+      "filename": "form_phone_blur.jpg",
+      "doc_type": "Application Form",
+      "source_quality": "phone_slight_blur",
+      "expected_quality": "low",
+      "critical_fields": {
+        "name": "ARJUN MENON",
+        "ref_no": "REF2024X789",
+        "amount": "15000"
+      },
+      "ground_truth_text": "PAYMENT RECEIPT\nReference No: REF2024X789\nName: ARJUN MENON\nAmount: Rs. 15,000\nDate: 27/01/2026",
+      "notes": "Slightly blurry phone capture"
+    }
+  ],
+  "evaluation_notes": {
+    "critical_field_priority": [
+      "Names must match exactly (case-insensitive OK)",
+      "ID numbers must match exactly (no character substitution)",
+      "Dates must be parseable",
+      "Amounts/totals must be exact"
+    ],
+    "common_ocr_errors": [
+      "0 vs O confusion",
+      "1 vs I vs l confusion",
+      "5 vs S confusion",
+      "8 vs B confusion",
+      "Space handling in UID numbers"
+    ]
+  }
+}
