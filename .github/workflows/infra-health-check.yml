@@ -92,11 +92,11 @@ jobs:
 
           # Compare as float using Python to avoid bash float quirks
           python - <<'PY'
-import os, sys
-remaining = float(os.environ["remaining_hours"])
-threshold = float(os.environ["threshold"])
-if remaining < threshold:
-    print(f"::warning::GPU remaining hours below threshold: {remaining}h < {threshold}h")
-else:
-    print(f"GPU remaining hours healthy: {remaining}h (threshold {threshold}h)")
-PY
+          import os, sys
+          remaining = float(os.environ["remaining_hours"])
+          threshold = float(os.environ["threshold"])
+          if remaining < threshold:
+              print(f"::warning::GPU remaining hours below threshold: {remaining}h < {threshold}h")
+          else:
+              print(f"GPU remaining hours healthy: {remaining}h (threshold {threshold}h)")
+          PY
