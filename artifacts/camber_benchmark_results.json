@@ -1,0 +1,207 @@
+{
+  "test_timestamp": "2026-01-30T20:45:00Z",
+  "configuration": {
+    "engine": "BASE",
+    "node_size": "SMALL",
+    "worker_path": "stash://abhinavprakash15151692/rythmiq-worker-v2/",
+    "dependencies": "boto3 paddleocr paddlepaddle httpx opencv-python-headless numpy pillow"
+  },
+  "cold_start_measurements": [
+    {
+      "job_id": "15338",
+      "camber_duration_s": 61,
+      "processing_ms": null,
+      "status": "COMPLETED",
+      "notes": "First run of session"
+    },
+    {
+      "job_id": "15339",
+      "camber_duration_s": 70,
+      "processing_ms": null,
+      "status": "COMPLETED"
+    },
+    {
+      "job_id": "15343",
+      "camber_duration_s": 70,
+      "processing_ms": 14552,
+      "status": "COMPLETED"
+    }
+  ],
+  "cold_start_statistics": {
+    "mean_s": 67.0,
+    "min_s": 61,
+    "max_s": 70,
+    "p95_s": 70
+  },
+  "warm_start_measurements": [
+    {
+      "job_id": "15340",
+      "camber_duration_s": 65,
+      "processing_ms": null,
+      "status": "COMPLETED"
+    },
+    {
+      "job_id": "15341",
+      "camber_duration_s": 65,
+      "processing_ms": null,
+      "status": "COMPLETED"
+    },
+    {
+      "job_id": "15342",
+      "camber_duration_s": 65,
+      "processing_ms": null,
+      "status": "COMPLETED"
+    }
+  ],
+  "warm_start_statistics": {
+    "mean_s": 65.0,
+    "min_s": 65,
+    "max_s": 65,
+    "variance_s": 0
+  },
+  "idle_window_tests": {
+    "60s_idle": {
+      "job_1": {
+        "job_id": "15344",
+        "duration_s": 65
+      },
+      "job_2": {
+        "job_id": "15345",
+        "duration_s": 65
+      },
+      "difference_s": 0,
+      "result": "WARM"
+    }
+  },
+  "concurrency_tests": [
+    {
+      "test_type": "4_parallel_jobs",
+      "jobs": [
+        {
+          "job_id": "15346",
+          "start_time": "2026-01-30T15:10:11Z",
+          "finish_time": "2026-01-30T15:11:36Z",
+          "duration_s": 85,
+          "processing_ms": 13470
+        },
+        {
+          "job_id": "15347",
+          "start_time": "2026-01-30T15:10:13Z",
+          "finish_time": "2026-01-30T15:11:33Z",
+          "duration_s": 80,
+          "processing_ms": 14430
+        },
+        {
+          "job_id": "15348",
+          "start_time": "2026-01-30T15:10:14Z",
+          "finish_time": "2026-01-30T15:11:34Z",
+          "duration_s": 80,
+          "processing_ms": null
+        },
+        {
+          "job_id": "15349",
+          "start_time": "2026-01-30T15:10:15Z",
+          "finish_time": "2026-01-30T15:11:35Z",
+          "duration_s": 80,
+          "processing_ms": null
+        }
+      ],
+      "submission_window_s": 4,
+      "completion_window_s": 3,
+      "parallelism_confirmed": true
+    }
+  ],
+  "cpu_accounting": {
+    "comparison": [
+      {
+        "job_id": "15343",
+        "camber_duration_s": 70,
+        "worker_processing_ms": 14552,
+        "overhead_s": 55.5,
+        "processing_percent": 20.7
+      },
+      {
+        "job_id": "15344",
+        "camber_duration_s": 65,
+        "worker_processing_ms": 14246,
+        "overhead_s": 50.8,
+        "processing_percent": 21.8
+      },
+      {
+        "job_id": "15345",
+        "camber_duration_s": 65,
+        "worker_processing_ms": 15285,
+        "overhead_s": 49.7,
+        "processing_percent": 23.5
+      },
+      {
+        "job_id": "15346",
+        "camber_duration_s": 85,
+        "worker_processing_ms": 13470,
+        "overhead_s": 71.5,
+        "processing_percent": 15.9
+      },
+      {
+        "job_id": "15347",
+        "camber_duration_s": 80,
+        "worker_processing_ms": 14430,
+        "overhead_s": 65.6,
+        "processing_percent": 18.0
+      }
+    ],
+    "summary": {
+      "average_camber_duration_s": 73,
+      "average_worker_processing_ms": 14397,
+      "average_overhead_s": 58.6,
+      "average_processing_percent": 20.0
+    }
+  },
+  "latency_breakdown": {
+    "api_submission_ms": {
+      "min": 1098,
+      "max": 2082,
+      "mean": 1650
+    },
+    "queue_wait_s": {
+      "min": 3,
+      "max": 8,
+      "typical": 5
+    },
+    "pip_install_s": {
+      "min": 40,
+      "max": 55,
+      "typical": 45
+    },
+    "worker_processing_s": {
+      "min": 13,
+      "max": 15,
+      "typical": 14
+    }
+  },
+  "conclusions": {
+    "safe_assumptions": [
+      "Camber BASE engine executes Python workers reliably",
+      "PaddleOCR 3.4.0 initializes correctly on CPU",
+      "DigitalOcean Spaces I/O is functional",
+      "Workers stay warm for at least 60 seconds",
+      "Parallel execution is supported (4+ jobs)",
+      "Execution time is consistent for warm starts (~65s)"
+    ],
+    "dangerous_assumptions": [
+      "Assuming workers stay warm indefinitely",
+      "Assuming pip install time is constant",
+      "Assuming first job is cold start",
+      "Assuming billing equals processing (only ~20%)",
+      "Assuming unlimited concurrency"
+    ],
+    "baseline_requirements": {
+      "minimum_latency_s": 60,
+      "maximum_latency_s": 85,
+      "actual_processing_s": 14,
+      "pip_install_overhead_s": 45,
+      "cold_start_test_idle_s": 300,
+      "concurrent_job_limit": 6,
+      "cost_per_job_cpu_seconds": 65
+    }
+  }
+}

@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     # ======================
     service_env: str = Field(default="dev", alias="SERVICE_ENV")
     webhook_secret: str = Field(..., alias="WEBHOOK_SECRET")
+    webhook_base_url: str = Field(
+        default="",
+        alias="WEBHOOK_BASE_URL",
+        description="Base URL for webhook callbacks (e.g., https://api.rythmiq.app). "
+                    "If empty, Camber must be configured with the correct callback URL.",
+    )
     api_port: int = Field(
         default=8000,
         alias="API_PORT",

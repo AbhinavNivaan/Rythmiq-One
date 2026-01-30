@@ -70,6 +70,11 @@ class CamberService:
         """
         client = await self._get_client()
 
+        # Build webhook URL if base URL is configured
+        webhook_url = None
+        if self._settings.webhook_base_url:
+            webhook_url = f"{self._settings.webhook_base_url.rstrip('/')}/internal/webhooks/camber"
+
         request_payload = {
             "app": self._settings.camber_app_name,
             "input": payload,
@@ -77,6 +82,15 @@ class CamberService:
                 "job_id": str(job_id),
             },
         }
+        
+        # Include webhook configuration if URL is set
+        if webhook_url:
+            request_payload["webhook"] = {
+                "url": webhook_url,
+                "headers": {
+                    "X-Webhook-Secret": self._settings.webhook_secret,
+                },
+            }
 
         try:
             response = await client.post("/jobs", json=request_payload)

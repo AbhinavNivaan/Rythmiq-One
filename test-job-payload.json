@@ -1,0 +1,28 @@
+{
+  "job_id": "c0a80001-0001-0001-0001-000000000001",
+  "user_id": "c0a80001-0002-0002-0002-000000000002",
+  "portal_schema": {
+    "id": "schema-001",
+    "name": "Document OCR",
+    "version": 1,
+    "schema_definition": {
+      "target_width": 600,
+      "target_height": 800,
+      "target_dpi": 300,
+      "max_kb": 200,
+      "filename_pattern": "{job_id}",
+      "output_format": "jpeg",
+      "quality": 85
+    }
+  },
+  "input": {
+    "raw_path": "blobs/ca860aa8-d31a-4a15-a6ee-9de5c7ae2671",
+    "mime_type": "image/png",
+    "original_filename": "test-document.png"
+  },
+  "storage": {
+    "bucket": "rythmiq-one-artifacts",
+    "region": "sgp1",
+    "endpoint": "https://sgp1.digitaloceanspaces.com"
+  }
+}

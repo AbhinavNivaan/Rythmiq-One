@@ -2,19 +2,17 @@
 from .spaces_client import (
     WorkerSpacesClient,
     SpacesConfig,
-    create_worker_spaces_client,
+    create_client_from_spec,
     validate_artifact_source,
     ArtifactSourceError,
-    PathValidationError,
 )
 from .artifact_fetcher import fetch_artifact
 
 __all__ = [
     'WorkerSpacesClient',
     'SpacesConfig',
-    'create_worker_spaces_client',
+    'create_client_from_spec',
     'validate_artifact_source',
     'ArtifactSourceError',
-    'PathValidationError',
     'fetch_artifact',
 ]

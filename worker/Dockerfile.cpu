@@ -67,8 +67,9 @@ COPY requirements.txt /tmp/requirements.txt
 RUN pip install --upgrade pip setuptools wheel \
     && pip install -r /tmp/requirements.txt
 
-# Pre-download PaddleOCR models for fast cold start
-RUN python -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False, show_log=False)"
+# NOTE: PaddleOCR models are downloaded at first run (~100MB)
+# Pre-download is skipped due to ARM64 emulation issues during build
+# First job will have ~30s extra latency for model download
 
 # -----------------------------------------------------------------------------
 # Runtime stage - minimal image for execution
@@ -82,9 +83,8 @@ RUN useradd --create-home --shell /bin/bash worker
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy PaddleOCR models from builder
-COPY --from=builder /root/.paddleocr /home/worker/.paddleocr
-RUN chown -R worker:worker /home/worker/.paddleocr
+# Create PaddleOCR model directory (models download at first run)
+RUN mkdir -p /home/worker/.paddleocr && chown -R worker:worker /home/worker/.paddleocr
 
 # Set working directory
 WORKDIR /app

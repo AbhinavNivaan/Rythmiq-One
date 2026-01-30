@@ -15,8 +15,12 @@ Pillow>=10.2.0,<11.0.0
 numpy>=1.26.0,<2.0.0
 
 # OCR - CPU only
-paddlepaddle>=2.6.0,<3.0.0
-paddleocr>=2.7.0,<3.0.0
+# Note: PaddleOCR 3.x has breaking API changes. Our code supports both 2.x and 3.x.
+# - PaddleOCR 2.x uses: show_log, use_gpu, enable_mkldnn, etc.
+# - PaddleOCR 3.x uses: new logging system, device parameter, etc.
+# The ocr.py module auto-detects version and uses appropriate parameters.
+paddlepaddle>=2.6.0  # No upper bound - let pip resolve compatible version
+paddleocr>=2.7.0     # No upper bound - supports 2.x and 3.x APIs
 
 # Type checking (optional, for development)
 # mypy>=1.8.0

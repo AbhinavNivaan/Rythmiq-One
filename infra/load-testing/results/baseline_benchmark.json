@@ -1,0 +1,180 @@
+{
+  "benchmark_date": "2026-01-30 03:39:28",
+  "summary": {
+    "total_runs": 10,
+    "files_tested": 2,
+    "warm_avg_cpu_seconds": 0.4197613333333334,
+    "cold_avg_cpu_seconds": 1.824862,
+    "cold_start_penalty_seconds": 1.4051006666666666,
+    "min_cpu_seconds": 0.06220299999999934,
+    "max_cpu_seconds": 0.8714160000000004,
+    "projected_monthly_1000": 3.498011111111111,
+    "max_sustainable_docs_day": 57175,
+    "budget_status": "UNDER",
+    "decision": "GO"
+  },
+  "stage_averages": {
+    "quality": 0.07922611111111132,
+    "pre_ocr": 0.017948555555555263,
+    "enhancement": 0.3066274444444445,
+    "ocr": 0.01595922222222226
+  },
+  "path_breakdown": {
+    "fast_count": 0,
+    "fast_avg": null,
+    "standard_count": 9,
+    "standard_avg": 0.4197613333333334
+  },
+  "runs": [
+    {
+      "file": "Id Card.jpg",
+      "run": 1,
+      "temp": "cold",
+      "path": "standard",
+      "total": 1.824862,
+      "quality": 0.6075125623792249,
+      "ocr_conf": 0.0,
+      "stages": {
+        "quality": 0.25159600000000004,
+        "pre_ocr": 0.7913749999999999,
+        "enhancement": 0.751684,
+        "ocr": 0.030207000000000095
+      }
+    },
+    {
+      "file": "Id Card.jpg",
+      "run": 2,
+      "temp": "warm",
+      "path": "standard",
+      "total": 0.8635730000000001,
+      "quality": 0.6075125623792249,
+      "ocr_conf": 0.0,
+      "stages": {
+        "quality": 0.16294100000000045,
+        "pre_ocr": 0.0332899999999996,
+        "enhancement": 0.6357690000000003,
+        "ocr": 0.03157299999999985
+      }
+    },
+    {
+      "file": "Id Card.jpg",
+      "run": 3,
+      "temp": "warm",
+      "path": "standard",
+      "total": 0.8663499999999997,
+      "quality": 0.6075125623792249,
+      "ocr_conf": 0.0,
+      "stages": {
+        "quality": 0.16024100000000008,
+        "pre_ocr": 0.03289999999999971,
+        "enhancement": 0.6422660000000002,
+        "ocr": 0.03094299999999972
+      }
+    },
+    {
+      "file": "Id Card.jpg",
+      "run": 4,
+      "temp": "warm",
+      "path": "standard",
+      "total": 0.8714160000000004,
+      "quality": 0.6075125623792249,
+      "ocr_conf": 0.0,
+      "stages": {
+        "quality": 0.16186699999999998,
+        "pre_ocr": 0.033112000000000474,
+        "enhancement": 0.6452249999999999,
+        "ocr": 0.031212000000000018
+      }
+    },
+    {
+      "file": "Id Card.jpg",
+      "run": 5,
+      "temp": "warm",
+      "path": "standard",
+      "total": 0.8569270000000007,
+      "quality": 0.6075125623792249,
+      "ocr_conf": 0.0,
+      "stages": {
+        "quality": 0.16094500000000078,
+        "pre_ocr": 0.03319299999999892,
+        "enhancement": 0.6322619999999999,
+        "ocr": 0.03052700000000108
+      }
+    },
+    {
+      "file": "test_invoice.png",
+      "run": 1,
+      "temp": "warm",
+      "path": "standard",
+      "total": 0.06687599999999971,
+      "quality": 0.6992488521280116,
+      "ocr_conf": 0.0,
+      "stages": {
+        "quality": 0.013754000000000488,
+        "pre_ocr": 0.006361000000000061,
+        "enhancement": 0.04285099999999975,
+        "ocr": 0.003909999999999414
+      }
+    },
+    {
+      "file": "test_invoice.png",
+      "run": 2,
+      "temp": "warm",
+      "path": "standard",
+      "total": 0.06338000000000044,
+      "quality": 0.6992488521280116,
+      "ocr_conf": 0.0,
+      "stages": {
+        "quality": 0.01394300000000026,
+        "pre_ocr": 0.005526999999999838,
+        "enhancement": 0.04005299999999945,
+        "ocr": 0.0038570000000008875
+      }
+    },
+    {
+      "file": "test_invoice.png",
+      "run": 3,
+      "temp": "warm",
+      "path": "standard",
+      "total": 0.06220299999999934,
+      "quality": 0.6992488521280116,
+      "ocr_conf": 0.0,
+      "stages": {
+        "quality": 0.013056000000000623,
+        "pre_ocr": 0.005507999999998958,
+        "enhancement": 0.03981600000000096,
+        "ocr": 0.0038229999999987996
+      }
+    },
+    {
+      "file": "test_invoice.png",
+      "run": 4,
+      "temp": "warm",
+      "path": "standard",
+      "total": 0.06425699999999956,
+      "quality": 0.6992488521280116,
+      "ocr_conf": 0.0,
+      "stages": {
+        "quality": 0.012937999999999228,
+        "pre_ocr": 0.00571799999999989,
+        "enhancement": 0.04157499999999992,
+        "ocr": 0.004026000000000529
+      }
+    },
+    {
+      "file": "test_invoice.png",
+      "run": 5,
+      "temp": "warm",
+      "path": "standard",
+      "total": 0.0628700000000002,
+      "quality": 0.6992488521280116,
+      "ocr_conf": 0.0,
+      "stages": {
+        "quality": 0.013349999999999973,
+        "pre_ocr": 0.005927999999999933,
+        "enhancement": 0.039830000000000254,
+        "ocr": 0.003762000000000043
+      }
+    }
+  ]
+}

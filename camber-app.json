@@ -1,12 +1,41 @@
 {
-  "name": "rythmiq-worker-python-v2",
-  "engineType": "base",
-  "command": "python entrypoint.py",
-  "bundle": "stash://abhinavprakash15151692/rythmiq-worker-code",
-  "runtime": "python",
-  "env": {
-    "SERVICE_ENV": "prod",
-    "EXECUTION_BACKEND": "camber",
-    "ARTIFACT_STORE_TYPE": "s3"
-  }
+  "name": "rythmiq-worker-python-v3",
+  "title": "Rythmiq OCR Worker",
+  "description": "Document OCR processing worker that extracts text from images and applies schema mapping",
+  "content": "Processes document images through OCR and schema extraction pipeline",
+  "engineType": "MPI",
+  "command": "echo \"$JOB_PAYLOAD\" | python worker.py",
+  "spec": [
+    {
+      "type": "Textarea",
+      "label": "Job Payload",
+      "name": "JOB_PAYLOAD",
+      "description": "JSON payload containing job_id, artifact_url, and schema",
+      "defaultValue": "",
+      "hidden": false,
+      "required": true,
+      "disabled": false
+    }
+  ],
+  "jobConfig": [
+    {
+      "type": "Select",
+      "label": "System Size",
+      "name": "system_size",
+      "hidden": true,
+      "description": "Select the configuration for the job",
+      "options": [
+        {
+          "label": "Small",
+          "value": "small",
+          "mapValue": {
+            "nodeSize": "XXSMALL",
+            "numNodes": 1,
+            "withGpu": false
+          }
+        }
+      ],
+      "defaultValue": "small"
+    }
+  ]
 }
