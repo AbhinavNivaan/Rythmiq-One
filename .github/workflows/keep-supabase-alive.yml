@@ -34,14 +34,22 @@ jobs:
             }
             try {
               const { createClient } = require('@supabase/supabase-js');
+              const { randomUUID } = require('crypto');
               const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
               
-              const { data, error } = await supabase.from('jobs').select('job_id').limit(1);
+              const dummyJob = {
+                job_id: randomUUID(),
+                blob_id: '00000000-0000-0000-0000-000000000000',
+                user_id: 'keep-alive-bot',
+                state: 'FAILED'
+              };
+
+              const { data, error } = await supabase.from('jobs').insert(dummyJob).select();
               
               if (error) throw error;
-              console.log('Ping successful:', data);
+              console.log('Keep-alive WRITE successful:', data);
             } catch (err) {
-              console.error('Error pinging Supabase:', err.message);
+              console.error('Error pinging Supabase with WRITE:', err.message);
               process.exit(1);
             }
           })();
