@@ -118,10 +118,3 @@ class WebhookResponse(BaseModel):
     acknowledged: bool = True
 
 
-# Legacy model for backwards compatibility
-class WebhookJobCompleteRequest(BaseModel):
-    """Legacy webhook model. Use CamberWebhookRequest instead."""
-    job_id: UUID
-    status: str = Field(..., pattern=r"^(completed|failed)$")
-    error_details: dict[str, Any] | None = None
-    output_storage_path: str | None = None

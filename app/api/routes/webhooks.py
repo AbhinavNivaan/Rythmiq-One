@@ -333,15 +333,3 @@ def _persist_worker_output(
             },
         )
         # Don't fail the webhook - this can be recovered
-
-
-# Legacy endpoint for backwards compatibility
-@router.post("/job-complete", response_model=WebhookResponse)
-async def webhook_job_complete_legacy(
-    request: Request,
-    body: CamberWebhookRequest,
-    _auth: Annotated[bool, Depends(verify_webhook_secret)],
-    packaging: Annotated[PackagingService, Depends(get_packaging_service)],
-) -> WebhookResponse:
-    """Legacy endpoint. Redirects to /camber."""
-    return await webhook_camber(request, body, _auth, packaging)

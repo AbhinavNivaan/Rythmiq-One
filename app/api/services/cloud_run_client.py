@@ -253,26 +253,3 @@ class CloudRunClient:
         if self._client and not self._client.is_closed:
             await self._client.aclose()
             self._client = None
-
-
-# Singleton instance
-_cloud_run_client: CloudRunClient | None = None
-
-
-def get_cloud_run_client() -> CloudRunClient:
-    """
-    Factory: Get singleton CloudRunClient instance.
-    
-    Returns:
-        CloudRunClient configured with settings from environment
-    """
-    global _cloud_run_client
-    if _cloud_run_client is None:
-        settings = get_settings()
-        logger.info(
-            "[CLOUD RUN] Using Cloud Run worker backend",
-            extra={"worker_url": settings.cloud_run_worker_url},
-        )
-        _cloud_run_client = CloudRunClient(settings)
-    
-    return _cloud_run_client
