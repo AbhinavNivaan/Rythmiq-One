@@ -35,16 +35,27 @@ class Settings(BaseSettings):
     # ======================
     # Camber / Execution Backend
     # ======================
-    camber_api_url: str = Field(..., alias="CAMBER_API_URL")
-    camber_api_key: str = Field(..., alias="CAMBER_API_KEY")
+    camber_api_url: str = Field(
+        default="", alias="CAMBER_API_URL",
+        description="Camber API URL. Only required when EXECUTION_BACKEND=camber.",
+    )
+    camber_api_key: str = Field(
+        default="", alias="CAMBER_API_KEY",
+        description="Camber API key. Only required when EXECUTION_BACKEND=camber.",
+    )
     camber_app_name: str = Field(
         default="rythmiq-worker-python-v2",
         alias="CAMBER_APP_NAME",
     )
     execution_backend: str = Field(
-        default="camber",
+        default="cloudrun",
         alias="EXECUTION_BACKEND",
-        description="Execution backend: 'local' (mock) or 'camber' (real)",
+        description="Execution backend: 'local' (mock), 'cloudrun' (Cloud Run worker), or 'camber' (Camber API)",
+    )
+    cloud_run_worker_url: str = Field(
+        default="",
+        alias="CLOUD_RUN_WORKER_URL",
+        description="Cloud Run worker service URL. Required when EXECUTION_BACKEND=cloudrun.",
     )
 
     # ======================

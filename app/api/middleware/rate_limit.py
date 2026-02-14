@@ -6,7 +6,6 @@ Prevents API abuse and protects against DDoS.
 """
 
 import time
-from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict
 
@@ -75,12 +74,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     
     def __init__(self, app):
         super().__init__(app)
-        self.buckets: Dict[str, TokenBucket] = defaultdict(self._create_default_bucket)
-    
-    def _create_default_bucket(self) -> TokenBucket:
-        """Create a default rate limit bucket."""
-        capacity, period = self.RATE_LIMITS["default"]
-        return TokenBucket(capacity=capacity, refill_rate=capacity / period)
+        self.buckets: Dict[str, TokenBucket] = {}
+        self._max_buckets = 10_000  # Cap to prevent unbounded growth
+        self._eviction_interval = 300  # 5 minutes
+        self._last_eviction = time.time()
     
     def _get_bucket_key(self, request: Request) -> str:
         """Generate a unique key for the client."""
@@ -106,10 +103,26 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 return limit
         return self.RATE_LIMITS["default"]
     
+    def _evict_stale_buckets(self) -> None:
+        """Remove buckets that haven't been accessed in 5+ minutes."""
+        now = time.time()
+        if now - self._last_eviction < self._eviction_interval:
+            return
+        self._last_eviction = now
+        stale_keys = [
+            k for k, b in self.buckets.items()
+            if now - b.last_update > self._eviction_interval
+        ]
+        for k in stale_keys:
+            del self.buckets[k]
+    
     async def dispatch(self, request: Request, call_next) -> Response:
         # Skip rate limiting for excluded paths
         if request.url.path in self.EXCLUDED_PATHS:
             return await call_next(request)
+        
+        # Periodically evict stale buckets to prevent memory leak
+        self._evict_stale_buckets()
         
         bucket_key = self._get_bucket_key(request)
         

@@ -1,8 +1,8 @@
 """
 Webhook routes.
-Owns: Internal worker callbacks from Camber.
+Owns: Internal worker callbacks from Cloud Run worker.
 
-Camber is NOT TRUSTED. All webhook payloads are treated as untrusted input.
+Webhooks are NOT TRUSTED. All payloads are treated as untrusted input.
 """
 
 import hmac
@@ -16,7 +16,6 @@ from app.api.config import Settings, get_settings
 from app.api.db import (
     get_service_db_client,
     transition_job_state,
-    get_job_by_camber_id,
     TERMINAL_STATES,
 )
 from app.api.errors import (
@@ -111,30 +110,16 @@ async def webhook_camber(
 
     job_result = (
         db.table("jobs")
-        .select("id, status, user_id, camber_job_id")
+        .select("id, status, user_id")
         .eq("id", str(body.job_id))
         .limit(1)
         .execute()
     )
 
     if not job_result.data:
-        # Try lookup by camber_job_id as fallback
-        if body.camber_job_id:
-            job = get_job_by_camber_id(body.camber_job_id)
-            if job:
-                logger.info(
-                    "Job found by camber_job_id",
-                    extra={
-                        "job_id": job["id"],
-                        "camber_job_id": body.camber_job_id,
-                    },
-                )
-            else:
-                raise NotFoundException(f"Job {body.job_id} not found")
-        else:
-            raise NotFoundException(f"Job {body.job_id} not found")
-    else:
-        job = job_result.data[0]
+        raise NotFoundException(f"Job {body.job_id} not found")
+
+    job = job_result.data[0]
 
     current_status = job["status"]
     job_id = UUID(job["id"])

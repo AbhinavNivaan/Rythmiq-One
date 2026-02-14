@@ -191,24 +191,21 @@ async def create_job(
         transition_job_state(
             job_id=job_id,
             new_state="processing",
-            camber_job_id=camber_job_id,
         )
     except Exception as e:
         logger.error(
             "Failed to transition job to processing",
             extra={
                 "job_id": str(job_id),
-                "camber_job_id": camber_job_id,
                 "error": str(e),
             },
         )
         # Job is submitted but state update failed - this is recoverable via webhook
 
     logger.info(
-        "Job submitted to Camber",
+        "Job submitted for processing",
         extra={
             "job_id": str(job_id),
-            "camber_job_id": camber_job_id,
             "user_id": str(user.id),
             "portal_schema_name": body.portal_schema_name,
             "correlation_id": correlation_id,

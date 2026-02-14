@@ -167,7 +167,7 @@ async def adapt_document(
     # 5. Transition to processing
     # -------------------------------------------------------------------------
     try:
-        transition_job_state(job_id=job_id, new_state="processing", camber_job_id=camber_job_id)
+        transition_job_state(job_id=job_id, new_state="processing")
     except Exception as e:
         logger.error("Failed to transition adaptation job", extra={"error": str(e)})
     

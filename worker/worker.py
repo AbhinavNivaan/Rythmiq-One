@@ -60,16 +60,6 @@ logger = logging.getLogger(__name__)
 OCR_ROLLBACK_THRESHOLD = 0.10  # Rollback if confidence drops by more than 10%
 
 
-def read_stdin() -> str:
-    """
-    Read raw input from STDIN.
-    
-    Returns:
-        Raw string from STDIN
-    """
-    return sys.stdin.read()
-
-
 def parse_payload(raw: str) -> Dict[str, Any]:
     """
     Parse raw STDIN input as JSON.
@@ -279,63 +269,3 @@ def write_output(result: Dict[str, Any]) -> None:
     """
     output = json.dumps(result, separators=(",", ":"), ensure_ascii=False)
     print(output)
-
-
-def main() -> int:
-    """
-    Main entry point for the worker.
-    
-    Orchestrates the full execution flow:
-    1. Read STDIN
-    2. Parse JSON
-    3. Validate payload
-    4. Process job
-    5. Write result to STDOUT
-    6. Exit with code 0
-    
-    CRITICAL: This function NEVER raises exceptions.
-    All failures are converted to structured JSON responses.
-    
-    Returns:
-        Exit code (always 0)
-    """
-    job_id: Optional[str] = None
-    
-    try:
-        # Read and parse payload
-        raw = read_stdin()
-        data = parse_payload(raw)
-        
-        # Extract job_id early for error reporting
-        job_id = data.get("job_id")
-        
-        # Validate payload
-        payload = validate_payload(data)
-        job_id = payload.job_id  # Now we have the validated job_id
-        
-        # Process job
-        result = process_job(payload)
-        
-        # Write success result
-        write_output(result.to_dict())
-        
-    except WorkerError as e:
-        # Known error - return structured failure
-        failure = build_failure_result(job_id, e)
-        write_output(failure.to_dict())
-        
-    except Exception as e:
-        # Unknown error - wrap as internal error
-        # This should NEVER happen, but we catch everything
-        # to guarantee JSON output
-        error = internal_error(f"{type(e).__name__}: {str(e)}")
-        failure = build_failure_result(job_id, error)
-        write_output(failure.to_dict())
-    
-    # Always exit with code 0
-    # Success/failure is communicated via JSON body
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
