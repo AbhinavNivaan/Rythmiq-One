@@ -1,0 +1,21 @@
+steps:
+  # Step 1: Build Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'asia-south1-docker.pkg.dev/rythmiq-one/rythmiq-images/worker:latest'
+      - '-f'
+      - 'Dockerfile.cloudrun'
+      - '.'
+
+  # Step 2: Push to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'asia-south1-docker.pkg.dev/rythmiq-one/rythmiq-images/worker:latest']
+
+images:
+  - 'asia-south1-docker.pkg.dev/rythmiq-one/rythmiq-images/worker:latest'
+
+timeout: 1200s
+options:
+  machineType: 'E2_HIGHCPU_8'

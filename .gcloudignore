@@ -1,0 +1,48 @@
+# .gcloudignore - Files to exclude from Cloud Build upload
+
+# Node modules
+node_modules/
+app/mobile/node_modules/
+app-v2/node_modules/
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Git
+.git/
+.gitignore
+
+# Docker
+.docker/
+
+# Cache and logs
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.log
+*.tmp
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Test results
+test_results/
+
+# Temporary files
+.env.local
+tmp/

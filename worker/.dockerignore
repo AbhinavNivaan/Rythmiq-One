@@ -1,0 +1,63 @@
+# .dockerignore for worker production build
+# Prevents unnecessary files from being copied into Docker context
+
+# Git
+.git/
+.gitignore
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+*.egg
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Docs (keep minimal)
+*.md
+!README.md
+
+# Build artifacts
+*.tar
+*.tar.gz
+dist/
+build/
+
+# Test data
+test-*.json
+tests/
+test_*.py
+
+# Scripts (not needed in container)
+*.sh
+
+# Alternate Dockerfiles
+Dockerfile.*
+!Dockerfile.production
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp

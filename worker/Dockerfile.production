@@ -1,0 +1,171 @@
+# =============================================================================
+# Rythmiq Worker - Production Dockerfile
+# =============================================================================
+# 
+# Pre-baked image with ALL dependencies and PaddleOCR models.
+# Zero runtime pip installs. Zero runtime model downloads.
+#
+# Target: linux/amd64 ONLY
+# Base: python:3.11-slim-bookworm
+# Size target: < 2GB
+#
+# Build (REQUIRED - use buildx for cross-platform):
+#   docker buildx build \
+#     --platform linux/amd64 \
+#     --load \
+#     -f worker/Dockerfile.production \
+#     -t rythmiq/worker:production \
+#     ./worker
+#
+# Run:
+#   echo '{"job_id": "...", ...}' | docker run -i --rm \
+#     -e SPACES_ENDPOINT=https://sgp1.digitaloceanspaces.com \
+#     -e SPACES_REGION=sgp1 \
+#     -e SPACES_BUCKET=rythmiq-one-artifacts \
+#     -e SPACES_KEY=... \
+#     -e SPACES_SECRET=... \
+#     rythmiq/worker:production
+#
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Stage 1: Base with system dependencies
+# -----------------------------------------------------------------------------
+FROM --platform=linux/amd64 python:3.11-slim-bookworm AS base
+
+# Prevent Python from writing pyc files and buffering stdout/stderr
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONFAULTHANDLER=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Install ONLY required system dependencies for OpenCV + Paddle + SSL
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # OpenCV headless requirements
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    libgomp1 \
+    # Image format codecs
+    libjpeg62-turbo \
+    libpng16-16 \
+    libtiff6 \
+    libwebp7 \
+    # SSL/TLS for boto3
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# -----------------------------------------------------------------------------
+# Stage 2: Builder - Install Python packages
+# -----------------------------------------------------------------------------
+FROM base AS builder
+
+# Build tools for compiling native extensions
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create venv
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy pinned requirements
+COPY requirements-pinned.txt /tmp/requirements.txt
+
+# Install Python packages - no cache, no upgrade checks
+RUN pip install --upgrade pip setuptools wheel \
+    && pip install -r /tmp/requirements.txt \
+    && find /opt/venv -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true \
+    && find /opt/venv -type f -name "*.pyc" -delete 2>/dev/null || true \
+    && find /opt/venv -type f -name "*.pyo" -delete 2>/dev/null || true
+
+# -----------------------------------------------------------------------------
+# Stage 3: Model Downloader - Pre-fetch PaddleOCR models
+# -----------------------------------------------------------------------------
+FROM base AS model-downloader
+
+# Copy venv from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Create model cache directory
+RUN mkdir -p /root/.paddleocr
+
+# Download models by initializing PaddleOCR
+# This downloads: det (detection), rec (recognition), cls (angle classification)
+# Total size: ~100MB
+RUN python -c "\
+import os; \
+os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'; \
+from paddleocr import PaddleOCR; \
+print('Downloading PaddleOCR models...'); \
+ocr = PaddleOCR(use_angle_cls=True, lang='en'); \
+print('Models downloaded successfully'); \
+"
+
+# Verify models exist
+RUN ls -la /root/.paddleocr/ && \
+    find /root/.paddleocr -name "*.onnx" -o -name "*.pdmodel" -o -name "*.pdiparams" | head -20
+
+# -----------------------------------------------------------------------------
+# Stage 4: Runtime - Minimal production image
+# -----------------------------------------------------------------------------
+FROM base AS runtime
+
+# Create non-root user
+RUN useradd --create-home --shell /bin/bash --uid 1000 worker
+
+# Copy venv from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy pre-downloaded models from model-downloader stage
+# PaddleOCR 3.x stores models in .paddlex, not .paddleocr
+COPY --from=model-downloader /root/.paddlex /home/worker/.paddlex
+RUN chown -R worker:worker /home/worker/.paddlex
+
+# Set PaddleOCR to use local models and disable network connectivity check
+ENV HOME=/home/worker \
+    PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
+
+# Working directory
+WORKDIR /app
+
+# Copy worker source code
+COPY --chown=worker:worker . /app/
+
+# Ensure Python path includes app directory
+ENV PYTHONPATH=/app
+
+# Switch to non-root user
+USER worker
+
+# Verify installation at build time
+RUN python -c "\
+import sys; \
+print(f'Python: {sys.version}'); \
+import boto3; print(f'boto3: {boto3.__version__}'); \
+import cv2; print(f'opencv: {cv2.__version__}'); \
+import numpy; print(f'numpy: {numpy.__version__}'); \
+import PIL; print(f'pillow: {PIL.__version__}'); \
+import paddleocr; print(f'paddleocr: {paddleocr.__version__}'); \
+import httpx; print(f'httpx: {httpx.__version__}'); \
+print('All imports successful'); \
+"
+
+# Verify OCR engine initializes from cached models
+RUN python -c "\
+import os; \
+os.environ['PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK'] = 'True'; \
+from paddleocr import PaddleOCR; \
+print('Initializing PaddleOCR from cached models...'); \
+ocr = PaddleOCR(use_angle_cls=True, lang='en'); \
+print('PaddleOCR initialized successfully from cache'); \
+"
+
+# Entrypoint: Read JSON from STDIN, write JSON to STDOUT
+ENTRYPOINT ["python", "worker.py"]
