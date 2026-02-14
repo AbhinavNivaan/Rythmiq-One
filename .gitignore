@@ -39,3 +39,6 @@ test_results/
 
 # Build artifacts
 *.tar.gz
+
+# Secrets / Keys
+*.pem
