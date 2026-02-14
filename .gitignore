@@ -23,6 +23,19 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+
 # Expo
 .expo/
 web-build/
+
+# Test artifacts
+test_results/
+
+# Build artifacts
+*.tar.gz
