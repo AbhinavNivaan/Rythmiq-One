@@ -37,11 +37,13 @@ jobs:
               const { randomUUID } = require('crypto');
               const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
               
+              // Use a fixed UUID for keep-alive user (must exist in auth.users or use service_role to bypass RLS)
+              const keepAliveUserId = '00000000-0000-0000-0000-000000000001';
+              
               const dummyJob = {
-                job_id: randomUUID(),
-                blob_id: '00000000-0000-0000-0000-000000000000',
-                user_id: 'keep-alive-bot',
-                state: 'FAILED'
+                user_id: keepAliveUserId,
+                status: 'failed',
+                input_metadata: { source: 'keep-alive-bot', timestamp: new Date().toISOString() }
               };
 
               const { data, error } = await supabase.from('jobs').insert(dummyJob).select();
