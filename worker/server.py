@@ -34,12 +34,16 @@ from pydantic import BaseModel, Field
 # Add worker directory to path so we can import worker modules
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Add parent directory to path for importing from app.api
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from worker import (
     parse_payload,
     process_job,
 )
 from models import JobPayload, SuccessResult, FailureResult
 from errors import WorkerError
+from app.api.utils.logging import RedactingFormatter, setup_redacting_logger
 
 # ============================================================================
 # Logging
@@ -50,6 +54,18 @@ logging.basicConfig(
     format='{"timestamp": "%(asctime)s", "level": "%(levelname)s", "logger": "%(name)s", "message": "%(message)s"}',
 )
 logger = logging.getLogger(__name__)
+
+# Enable redacting formatter to prevent SEK and tokens from appearing in logs
+root_logger = logging.getLogger()
+for handler in root_logger.handlers:
+    handler.setFormatter(
+        RedactingFormatter(
+            fmt='{"timestamp": "%(asctime)s", "level": "%(levelname)s", "logger": "%(name)s", "message": "%(message)s"}',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+    )
+setup_redacting_logger(root_logger)
+logger.info("SECURITY: Log redaction enabled - sensitive data will be filtered from all logs")
 
 # ============================================================================
 # FastAPI App
@@ -254,25 +270,20 @@ async def process_document(request: ProcessRequest) -> ProcessResponse:
         
         # Return result (success or failure from pipeline)
         if isinstance(result, SuccessResult):
+            result_dict = result.to_dict()
             return ProcessResponse(
                 success=True,
                 job_id=str(result.job_id),
                 status="completed",
-                output=result.output.dict() if hasattr(result.output, 'dict') else result.output,
-                metrics=result.metrics.dict() if hasattr(result.metrics, 'dict') else result.metrics,
+                output=result_dict,
+                metrics=result.metrics.to_dict(),
             )
         elif isinstance(result, FailureResult):
             return ProcessResponse(
                 success=False,
                 job_id=str(result.job_id),
                 status="failed",
-                error={
-                    "code": result.error.code,
-                    "message": result.error.message,
-                    "stage": result.error.stage,
-                    "details": result.error.details,
-                },
-                metrics=result.metrics.dict() if hasattr(result.metrics, 'dict') else result.metrics,
+                error=result.error.to_dict(),
             )
         else:
             # Unexpected result type

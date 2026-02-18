@@ -347,6 +347,40 @@ class WorkerSpacesClient:
             raise upload_failed(f"Failed to upload preview ({error_code}): {str(e)}")
         except Exception as e:
             raise upload_failed(f"Unexpected error uploading preview: {str(e)}")
+    
+    def delete(self, path: str) -> bool:
+        """
+        Delete an object from Spaces.
+        
+        SECURITY: Used to clean up raw plaintext uploads after processing.
+        
+        Args:
+            path: Storage path (e.g., raw/{user_id}/{job_id}/file.jpg)
+            
+        Returns:
+            True if deleted, False if file didn't exist
+            
+        Raises:
+            WorkerError: If deletion fails for reasons other than "not found"
+        """
+        try:
+            self._client.delete_object(
+                Bucket=self._config.bucket,
+                Key=path,
+            )
+            return True
+            
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            
+            if error_code == '404' or error_code == 'NoSuchKey':
+                # File doesn't exist - that's fine, nothing to delete
+                return False
+            else:
+                # Real error - propagate
+                raise upload_failed(f"Failed to delete object: {path} ({error_code}): {str(e)}")
+        except Exception as e:
+            raise upload_failed(f"Unexpected error deleting object: {str(e)}")
 
 
 def create_client_from_env() -> WorkerSpacesClient:

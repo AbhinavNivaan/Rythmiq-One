@@ -52,6 +52,7 @@ from processors.quality import assess_quality, check_quality_warning, QUALITY_WA
 from processors.ocr import extract_text_safe
 from processors.enhancement import enhance_image, EnhancementOptions
 from processors.schema import adapt_to_schema
+from crypto import encrypt_file as crypto_encrypt, sek_from_base64, nonce_to_base64
 
 
 logger = logging.getLogger(__name__)
@@ -201,9 +202,34 @@ def process_job(payload: JobPayload) -> SuccessResult:
         original_filename=payload.input.original_filename,
     )
     
-    # Stage 6: UPLOAD - Upload results
+    # Stage 6: ENCRYPT - Encrypt output before storage (if SEK provided)
+    upload_data = schema_result.image_data
+    is_encrypted = False
+    encryption_nonce_b64: str | None = None
+    
+    if payload.sek_b64:
+        try:
+            sek = sek_from_base64(payload.sek_b64)
+            ciphertext, nonce = crypto_encrypt(upload_data, sek)
+            upload_data = ciphertext
+            encryption_nonce_b64 = nonce_to_base64(nonce)
+            is_encrypted = True
+            logger.info("Output encrypted with AES-256-GCM")
+            # Zero sensitive key material
+            del sek
+        except Exception as e:
+            logger.error(f"Encryption failed: {e}")
+            raise WorkerError(
+                code=ErrorCode.UPLOAD_FAILED,
+                stage=ProcessingStage.UPLOAD,
+                message=f"Encryption failed: {str(e)}",
+            )
+    else:
+        logger.warning("No SEK provided — uploading unencrypted (legacy mode)")
+    
+    # Stage 7: UPLOAD - Upload results
     master_path = storage.upload_master(
-        data=schema_result.image_data,
+        data=upload_data,
         user_id=payload.user_id,
         job_id=payload.job_id,
     )
@@ -213,6 +239,36 @@ def process_job(payload: JobPayload) -> SuccessResult:
         user_id=payload.user_id,
         job_id=payload.job_id,
     )
+    
+    # ============================================
+    # CRITICAL SECURITY FIX: Delete raw upload
+    # ============================================
+    # After successful encryption and upload, delete the raw plaintext upload
+    # to prevent plaintext files from persisting in storage indefinitely
+    raw_upload_deleted = False
+    if payload.input.raw_path:
+        try:
+            logger.info(f"Deleting raw upload: {payload.input.raw_path}")
+            storage.delete(payload.input.raw_path)
+            logger.info(f"Successfully deleted raw upload: {payload.input.raw_path}")
+            raw_upload_deleted = True
+        except Exception as cleanup_error:
+            # Log but don't fail the job if deletion fails
+            # The encrypted master was already created successfully
+            logger.error(
+                "SECURITY WARNING: Failed to delete raw upload",
+                extra={
+                    "error": str(cleanup_error),
+                    "job_id": payload.job_id,
+                    "user_id": payload.user_id,
+                    "raw_path": payload.input.raw_path,
+                }
+            )
+            # TODO: Trigger alert for manual cleanup
+    # ============================================
+    
+    # Clean up sensitive data from memory
+    del upload_data, final_image_data
     
     # Calculate processing time
     processing_ms = int((time.time() - start_time) * 1000)
@@ -224,6 +280,8 @@ def process_job(payload: JobPayload) -> SuccessResult:
         artifacts=Artifacts(
             master_path=master_path,
             preview_path=preview_path,
+            encrypted=is_encrypted,
+            encryption_nonce=encryption_nonce_b64,
         ),
         metrics=Metrics(
             ocr_confidence=final_ocr_confidence,
