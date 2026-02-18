@@ -60,7 +60,6 @@ RUN pip install --upgrade pip setuptools wheel && \
 # Application Code
 # =============================================================================
 COPY worker/ ./worker/
-COPY shared/ ./shared/
 
 # =============================================================================
 # Cloud Run Configuration
