@@ -1,0 +1,28 @@
+# =============================================================================
+# Rythmiq Platform Evaluation - Dependencies
+# =============================================================================
+# Full stack for testing all processing paths on Camber
+# =============================================================================
+
+# Image Processing - Core
+Pillow>=10.2.0,<11.0.0
+opencv-python-headless>=4.9.0,<5.0.0
+numpy>=1.26.0,<2.0.0
+
+# PDF Processing
+PyMuPDF>=1.23.0,<2.0.0
+img2pdf>=0.5.1,<1.0.0
+
+# Background Removal (ML Model - ~170MB)
+rembg>=2.0.50,<3.0.0
+
+# OCR - PaddleOCR (ML Model - ~150MB, 44s init)
+paddlepaddle>=2.6.0,<3.0.0
+paddleocr>=2.7.0,<3.0.0
+
+# OCR - Google Cloud Vision (Cloud API)
+google-cloud-vision>=3.7.0,<4.0.0
+
+# HTTP Client (for API calls)
+httpx>=0.26.0,<1.0.0
+boto3>=1.34.0,<2.0.0

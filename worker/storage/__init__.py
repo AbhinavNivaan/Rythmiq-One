@@ -6,7 +6,6 @@ from .spaces_client import (
     validate_artifact_source,
     ArtifactSourceError,
 )
-from .artifact_fetcher import fetch_artifact
 
 __all__ = [
     'WorkerSpacesClient',
@@ -14,5 +13,4 @@ __all__ = [
     'create_client_from_spec',
     'validate_artifact_source',
     'ArtifactSourceError',
-    'fetch_artifact',
 ]

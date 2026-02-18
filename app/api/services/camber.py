@@ -236,31 +236,39 @@ _camber_service: CamberService | None = None
 
 def get_camber_service() -> CamberService:
     """
-    Factory: Get singleton CamberService instance.
+    Factory: Get singleton execution backend instance.
     
     Returns:
-    - MockCamberClient if EXECUTION_BACKEND=local
+    - MockCamberClient  if EXECUTION_BACKEND=local
+    - CloudRunClient    if EXECUTION_BACKEND=cloudrun
     - Real CamberService if EXECUTION_BACKEND=camber
     
     Gating:
     - NO conditionals scattered in code
     - ONE clean factory entry point
-    - Interface-compatible (both implement submit_job, get_job_status)
+    - Interface-compatible (all implement submit_job, get_job_status)
     """
     global _camber_service
     if _camber_service is None:
         settings = get_settings()
+        backend = settings.execution_backend.lower()
         
-        if settings.execution_backend.lower() == "local":
+        if backend == "local":
             logger.info(
-                "[MOCK CAMBER] Using in-process mock client (EXECUTION_BACKEND=local)"
+                "[MOCK] Using in-process mock client (EXECUTION_BACKEND=local)"
             )
-            # Import here to avoid circular dependency at module load time
             from app.api.services.mock_camber_client import MockCamberClient
             _camber_service = MockCamberClient(settings)  # type: ignore
+        elif backend == "cloudrun":
+            logger.info(
+                "[CLOUD RUN] Using Cloud Run worker (EXECUTION_BACKEND=cloudrun)"
+            )
+            from app.api.services.cloud_run_client import CloudRunClient
+            _camber_service = CloudRunClient(settings)  # type: ignore
         else:
             logger.info(
-                "[CAMBER] Using real Camber integration (EXECUTION_BACKEND=camber)"
+                "[CAMBER] Using real Camber integration (EXECUTION_BACKEND=%s)",
+                backend,
             )
             _camber_service = CamberService(settings)
     

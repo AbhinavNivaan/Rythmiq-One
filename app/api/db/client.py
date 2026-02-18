@@ -54,8 +54,6 @@ def transition_job_state(
     job_id: UUID,
     new_state: str,
     payload: dict[str, Any] | None = None,
-    *,
-    camber_job_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Atomically transition a job to a new state with enforcement.
@@ -70,7 +68,6 @@ def transition_job_state(
         job_id: The job UUID
         new_state: Target state (pending, processing, completed, failed)
         payload: Optional data to persist (error_details for failed, output_metadata for completed)
-        camber_job_id: Optional Camber job ID to store
         
     Returns:
         Updated job record
@@ -92,7 +89,7 @@ def transition_job_state(
     try:
         result = (
             db.table("jobs")
-            .select("id, status, camber_job_id")
+            .select("id, status")
             .eq("id", str(job_id))
             .limit(1)
             .execute()
@@ -137,8 +134,6 @@ def transition_job_state(
 
     if new_state == "processing":
         update_data["started_at"] = now
-        if camber_job_id:
-            update_data["camber_job_id"] = camber_job_id
 
     if new_state in TERMINAL_STATES:
         update_data["completed_at"] = now
@@ -203,19 +198,6 @@ def get_job_by_id(job_id: UUID, *, use_service_role: bool = False) -> dict[str, 
         db.table("jobs")
         .select("*")
         .eq("id", str(job_id))
-        .limit(1)
-        .execute()
-    )
-    return result.data[0] if result.data else None
-
-
-def get_job_by_camber_id(camber_job_id: str) -> dict[str, Any] | None:
-    """Fetch a job by Camber job ID."""
-    db = get_service_db_client()
-    result = (
-        db.table("jobs")
-        .select("*")
-        .eq("camber_job_id", camber_job_id)
         .limit(1)
         .execute()
     )

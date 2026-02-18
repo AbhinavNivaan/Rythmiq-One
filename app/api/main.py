@@ -17,19 +17,31 @@ from app.api.routes import (
     portal_schemas_router,
     webhooks_router,
 )
+from app.api.utils.logging import RedactingFormatter, setup_redacting_logger
 
 
 def configure_logging() -> None:
+    # ============================================
+    # CRITICAL SECURITY: Enable log redaction
+    # ============================================
+    # Redact SEK, tokens, passwords from all logs
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(
-        logging.Formatter(
-            '{"timestamp": "%(asctime)s", "level": "%(levelname)s", "logger": "%(name)s", "message": "%(message)s"}'
+        RedactingFormatter(
+            fmt='{"timestamp": "%(asctime)s", "level": "%(levelname)s", "logger": "%(name)s", "message": "%(message)s"}',
+            datefmt='%Y-%m-%d %H:%M:%S'
         )
     )
 
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
     root_logger.handlers = [handler]
+    
+    # Setup redacting logger (mirrors the formatter but also redacts extra fields)
+    setup_redacting_logger(root_logger)
+    
+    root_logger.info("SECURITY: Log redaction enabled - sensitive data will be filtered from all logs")
+    # ============================================
 
     # Suppress noisy libraries
     logging.getLogger("httpx").setLevel(logging.WARNING)

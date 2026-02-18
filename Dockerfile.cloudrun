@@ -1,0 +1,81 @@
+# Dockerfile.cloudrun
+# Rythmiq One — Cloud Run Worker
+#
+# Pre-bakes ALL dependencies to eliminate cold-start pip install overhead.
+# Designed for Google Cloud Run deployment.
+#
+# Build:
+#   gcloud builds submit --tag asia-south1-docker.pkg.dev/PROJECT/REPO/worker:latest --timeout=1200 -f Dockerfile.cloudrun .
+#
+# Deploy:
+#   gcloud run deploy rythmiq-worker --image asia-south1-docker.pkg.dev/PROJECT/REPO/worker:latest --region asia-south1 ...
+
+FROM python:3.11-slim
+
+# =============================================================================
+# System Dependencies
+# =============================================================================
+# Required for image processing and OCR pipeline
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    libgomp1 \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# =============================================================================
+# Python Environment Setup
+# =============================================================================
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONPATH=/app
+
+WORKDIR /app
+
+# =============================================================================
+# Python Dependencies
+# =============================================================================
+COPY worker/requirements.txt .
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir fastapi uvicorn pydantic pydantic-settings
+
+# =============================================================================
+# Pre-download ML Models (Optional Future Enhancement)
+# =============================================================================
+# When Phase 2+ adds PaddleOCR and rembg, uncomment:
+#
+# RUN python -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=True, lang='en')" && \
+#     python -c "from rembg import remove; from PIL import Image; import io; img = Image.new('RGB', (10, 10)); remove(img)"
+
+# =============================================================================
+# Application Code
+# =============================================================================
+COPY worker/ ./worker/
+COPY shared/ ./shared/
+
+# =============================================================================
+# Cloud Run Configuration
+# =============================================================================
+# Cloud Run requires listening on PORT env var (default 8080)
+ENV PORT=8080
+EXPOSE 8080
+
+# =============================================================================
+# Health Check
+# =============================================================================
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:${PORT}/health || exit 1
+
+# =============================================================================
+# Startup Command
+# =============================================================================
+CMD ["python", "-u", "worker/server.py"]

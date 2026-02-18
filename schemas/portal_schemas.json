@@ -1,0 +1,264 @@
+{
+  "version": "1.0",
+  "updated_at": "2026-02-06",
+  "schemas": [
+    {
+      "id": "upsc_photo",
+      "name": "UPSC Photo",
+      "portal": "UPSC",
+      "document_type": "photo",
+      "is_active": true,
+      "requirements": {
+        "target_width": 140,
+        "target_height": 180,
+        "target_dpi": 300,
+        "max_kb": 40,
+        "output_format": "jpeg",
+        "quality": 85,
+        "filename_pattern": "photo_{job_id}"
+      },
+      "constraints": {
+        "aspect_ratio": "3.5x4.5cm",
+        "background": "white",
+        "face_coverage_percent": 70
+      }
+    },
+    {
+      "id": "upsc_signature",
+      "name": "UPSC Signature",
+      "portal": "UPSC",
+      "document_type": "signature",
+      "is_active": true,
+      "requirements": {
+        "target_width": 140,
+        "target_height": 60,
+        "target_dpi": 300,
+        "max_kb": 20,
+        "output_format": "jpeg",
+        "quality": 85,
+        "filename_pattern": "signature_{job_id}"
+      },
+      "constraints": {
+        "aspect_ratio": "3.5x1.5cm",
+        "background": "white"
+      }
+    },
+    {
+      "id": "ssc_photo",
+      "name": "SSC Photo",
+      "portal": "SSC",
+      "document_type": "photo",
+      "is_active": true,
+      "requirements": {
+        "target_width": 100,
+        "target_height": 120,
+        "target_dpi": 200,
+        "max_kb": 50,
+        "output_format": "jpeg",
+        "quality": 80,
+        "filename_pattern": "ssc_photo_{job_id}"
+      },
+      "constraints": {
+        "aspect_ratio": "2.5x3cm"
+      }
+    },
+    {
+      "id": "ssc_signature",
+      "name": "SSC Signature",
+      "portal": "SSC",
+      "document_type": "signature",
+      "is_active": true,
+      "requirements": {
+        "target_width": 140,
+        "target_height": 60,
+        "target_dpi": 200,
+        "max_kb": 30,
+        "output_format": "jpeg",
+        "quality": 80,
+        "filename_pattern": "ssc_sig_{job_id}"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "ibps_photo",
+      "name": "IBPS Photo",
+      "portal": "IBPS",
+      "document_type": "photo",
+      "is_active": true,
+      "requirements": {
+        "target_width": 200,
+        "target_height": 230,
+        "target_dpi": 200,
+        "max_kb": 50,
+        "output_format": "jpeg",
+        "quality": 80,
+        "filename_pattern": "ibps_photo_{job_id}"
+      },
+      "constraints": {
+        "aspect_ratio": "200x230px"
+      }
+    },
+    {
+      "id": "ibps_signature",
+      "name": "IBPS Signature",
+      "portal": "IBPS",
+      "document_type": "signature",
+      "is_active": true,
+      "requirements": {
+        "target_width": 140,
+        "target_height": 60,
+        "target_dpi": 200,
+        "max_kb": 20,
+        "output_format": "jpeg",
+        "quality": 80,
+        "filename_pattern": "ibps_sig_{job_id}"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "rrb_photo",
+      "name": "RRB Photo",
+      "portal": "RRB",
+      "document_type": "photo",
+      "is_active": true,
+      "requirements": {
+        "target_width": 165,
+        "target_height": 213,
+        "target_dpi": 200,
+        "max_kb": 50,
+        "output_format": "jpeg",
+        "quality": 80,
+        "filename_pattern": "rrb_photo_{job_id}"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "rrb_signature",
+      "name": "RRB Signature",
+      "portal": "RRB",
+      "document_type": "signature",
+      "is_active": true,
+      "requirements": {
+        "target_width": 165,
+        "target_height": 55,
+        "target_dpi": 200,
+        "max_kb": 30,
+        "output_format": "jpeg",
+        "quality": 80,
+        "filename_pattern": "rrb_sig_{job_id}"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "neet_photo",
+      "name": "NEET Photo",
+      "portal": "NTA NEET",
+      "document_type": "photo",
+      "is_active": true,
+      "requirements": {
+        "target_width": 181,
+        "target_height": 244,
+        "target_dpi": 200,
+        "max_kb": 200,
+        "output_format": "jpeg",
+        "quality": 85,
+        "filename_pattern": "neet_photo_{job_id}"
+      },
+      "constraints": {
+        "notes": "10KB to 200KB"
+      }
+    },
+    {
+      "id": "neet_signature",
+      "name": "NEET Signature",
+      "portal": "NTA NEET",
+      "document_type": "signature",
+      "is_active": true,
+      "requirements": {
+        "target_width": 181,
+        "target_height": 89,
+        "target_dpi": 200,
+        "max_kb": 50,
+        "output_format": "jpeg",
+        "quality": 80,
+        "filename_pattern": "neet_sig_{job_id}"
+      },
+      "constraints": {
+        "notes": "4KB to 50KB"
+      }
+    },
+    {
+      "id": "jee_photo",
+      "name": "JEE Photo",
+      "portal": "NTA JEE",
+      "document_type": "photo",
+      "is_active": true,
+      "requirements": {
+        "target_width": 181,
+        "target_height": 244,
+        "target_dpi": 200,
+        "max_kb": 200,
+        "output_format": "jpeg",
+        "quality": 85,
+        "filename_pattern": "jee_photo_{job_id}"
+      },
+      "constraints": {
+        "notes": "10KB to 200KB"
+      }
+    },
+    {
+      "id": "jee_signature",
+      "name": "JEE Signature",
+      "portal": "NTA JEE",
+      "document_type": "signature",
+      "is_active": true,
+      "requirements": {
+        "target_width": 181,
+        "target_height": 89,
+        "target_dpi": 200,
+        "max_kb": 50,
+        "output_format": "jpeg",
+        "quality": 80,
+        "filename_pattern": "jee_sig_{job_id}"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "passport_photo",
+      "name": "Passport Photo",
+      "portal": "Passport Seva",
+      "document_type": "photo",
+      "is_active": true,
+      "requirements": {
+        "target_width": 413,
+        "target_height": 531,
+        "target_dpi": 300,
+        "max_kb": 300,
+        "output_format": "jpeg",
+        "quality": 90,
+        "filename_pattern": "passport_photo_{job_id}"
+      },
+      "constraints": {
+        "aspect_ratio": "3.5x4.5cm at 300dpi",
+        "background": "white or off-white"
+      }
+    },
+    {
+      "id": "aadhaar_photo",
+      "name": "Aadhaar Photo",
+      "portal": "UIDAI",
+      "document_type": "photo",
+      "is_active": true,
+      "requirements": {
+        "target_width": 165,
+        "target_height": 213,
+        "target_dpi": 200,
+        "max_kb": 50,
+        "output_format": "jpeg",
+        "quality": 80,
+        "filename_pattern": "aadhaar_photo_{job_id}"
+      },
+      "constraints": {}
+    }
+  ]
+}
