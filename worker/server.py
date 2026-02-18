@@ -34,8 +34,6 @@ from pydantic import BaseModel, Field
 # Add worker directory to path so we can import worker modules
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Add parent directory to path for importing from app.api
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from worker import (
     parse_payload,
@@ -43,7 +41,7 @@ from worker import (
 )
 from models import JobPayload, SuccessResult, FailureResult
 from errors import WorkerError
-from app.api.utils.logging import RedactingFormatter, setup_redacting_logger
+from logging_utils import RedactingFormatter, setup_redacting_logger
 
 # ============================================================================
 # Logging
