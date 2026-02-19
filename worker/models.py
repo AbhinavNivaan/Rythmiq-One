@@ -157,6 +157,7 @@ class JobPayload:
     """
     job_id: str
     user_id: str
+    sek_b64: Optional[str]
     portal_schema: PortalSchema
     input: InputSpec
     storage: StorageSpec
@@ -189,6 +190,7 @@ class JobPayload:
         return JobPayload(
             job_id=str(job_id),
             user_id=str(user_id),
+            sek_b64=data.get("sek_b64"),
             portal_schema=PortalSchema.from_dict(data.get("portal_schema", {})),
             input=InputSpec.from_dict(data.get("input", {})),
             storage=StorageSpec.from_dict(data.get("storage", {})),

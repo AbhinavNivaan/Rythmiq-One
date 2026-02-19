@@ -298,21 +298,21 @@ async def process_document(request: ProcessRequest) -> ProcessResponse:
     except WorkerError as e:
         # Handled worker error
         logger.error(
-            f"Worker error: {e.error.code}",
+            f"Worker error: {e.code.value}",
             extra={
                 "job_id": request.__dict__.get("job_id", "unknown"),
-                "error_code": e.error.code,
-                "error_message": e.error.message,
+                "error_code": e.code.value,
+                "error_message": e.message,
             },
         )
         return ProcessResponse(
             success=False,
             job_id=request.__dict__.get("job_id"),
             error={
-                "code": e.error.code,
-                "message": e.error.message,
-                "stage": e.error.stage,
-                "details": e.error.details,
+                "code": e.code.value,
+                "message": e.message,
+                "stage": e.stage.value,
+                "details": e.details,
             },
         )
     except Exception as e:
