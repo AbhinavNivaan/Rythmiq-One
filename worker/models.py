@@ -206,12 +206,18 @@ class Artifacts:
     """Output artifact paths."""
     master_path: str
     preview_path: str
+    encrypted: bool = False
+    encryption_nonce: Optional[str] = None
 
     def to_dict(self) -> Dict[str, str]:
-        return {
+        result = {
             "master_path": self.master_path,
             "preview_path": self.preview_path,
+            "encrypted": self.encrypted,
         }
+        if self.encryption_nonce is not None:
+            result["encryption_nonce"] = self.encryption_nonce
+        return result
 
 
 @dataclass(frozen=True)
