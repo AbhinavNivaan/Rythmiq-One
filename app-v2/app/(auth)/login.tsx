@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View, TouchableOpacity, Image, Alert } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity } from 'react-native';
 import { Link, router } from 'expo-router';
 import Colors from '../../constants/Colors';
 import Input from '../../components/ui/Input';
@@ -18,7 +18,7 @@ export default function LoginScreen() {
     const [password, setPassword] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
-    const { login } = useAuth();
+    const { login, loginWithGoogle, loginWithApple } = useAuth();
 
     const handleLogin = async () => {
         setError('');
@@ -40,6 +40,34 @@ export default function LoginScreen() {
             router.replace('/(tabs)/dashboard');
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : 'Login failed';
+            setError(errorMessage);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleGoogleLogin = async () => {
+        setError('');
+        setIsLoading(true);
+        try {
+            await loginWithGoogle();
+            router.replace('/(tabs)/dashboard');
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : 'Google login failed';
+            setError(errorMessage);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleAppleLogin = async () => {
+        setError('');
+        setIsLoading(true);
+        try {
+            await loginWithApple();
+            router.replace('/(tabs)/dashboard');
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : 'Apple login failed';
             setError(errorMessage);
         } finally {
             setIsLoading(false);
@@ -100,10 +128,18 @@ export default function LoginScreen() {
                     </View>
 
                     <View style={styles.socialButtons}>
-                        <TouchableOpacity style={[styles.socialButton, styles.googleButton]}>
+                        <TouchableOpacity
+                            style={[styles.socialButton, styles.googleButton]}
+                            onPress={handleGoogleLogin}
+                            disabled={isLoading}
+                        >
                             <GoogleIcon size={24} />
                         </TouchableOpacity>
-                        <TouchableOpacity style={[styles.socialButton, styles.appleButton]}>
+                        <TouchableOpacity
+                            style={[styles.socialButton, styles.appleButton]}
+                            onPress={handleAppleLogin}
+                            disabled={isLoading}
+                        >
                             <AppleIcon size={24} />
                         </TouchableOpacity>
                     </View>
@@ -230,7 +266,7 @@ const styles = StyleSheet.create({
         fontSize: 12,
     },
     signupText: {
-        color: Colors.palette.mayaBlue,
+        color: '#89C7FE',
         fontSize: 12,
         fontWeight: 'bold',
     },
@@ -264,5 +300,10 @@ const styles = StyleSheet.create({
         color: '#FFD700',
         fontSize: 11,
         fontWeight: '600',
+    },
+    devRedirectText: {
+        color: '#666',
+        fontSize: 10,
+        textAlign: 'center',
     },
 });

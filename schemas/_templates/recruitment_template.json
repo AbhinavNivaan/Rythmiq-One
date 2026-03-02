@@ -1,0 +1,212 @@
+{
+  "_comment": "RECRUITMENT TEMPLATE — Copy this file, rename to {org}_{post}_{year}.json, fill in all REQUIRED fields, remove all _comment keys before injecting.",
+
+  "schema_id":      "REQUIRED — e.g. ssc_cgl_2026",
+  "schema_type":    "recruitment",
+  "schema_version": "1.0.0",
+  "status":         "active",
+
+  "metadata": {
+    "display_name":    "REQUIRED — e.g. SSC CGL 2026 Application Form",
+    "short_name":      "REQUIRED — e.g. SSC CGL 2026",
+    "conducting_body": "REQUIRED — e.g. Staff Selection Commission (SSC)",
+    "official_website":"OPTIONAL — e.g. https://ssc.nic.in",
+    "category":        "REQUIRED — one of: central_govt | state_govt | banking | insurance | railways | defence | police | teaching | psu | other_recruitment",
+    "applicable_year": 2026,
+    "country":         "IN",
+    "language":        "en"
+  },
+
+  "key_dates": {
+    "_comment": "All dates in YYYY-MM-DD format.",
+    "registration_opens":      "YYYY-MM-DD",
+    "registration_closes":     "YYYY-MM-DD",
+    "correction_window_start": "YYYY-MM-DD",
+    "correction_window_end":   "YYYY-MM-DD",
+    "exam_date":               "YYYY-MM-DD",
+    "result_date":             "YYYY-MM-DD"
+  },
+
+  "form_sections": [
+    {
+      "section_id": "personal_details",
+      "title":      "Personal Details",
+      "order":      1,
+      "fields": [
+        { "field_id": "full_name",     "label": "Full Name",     "type": "string",  "required": true },
+        { "field_id": "date_of_birth", "label": "Date of Birth", "type": "date",    "required": true, "validation": { "format": "DD/MM/YYYY" } },
+        { "field_id": "gender",        "label": "Gender",        "type": "enum",    "required": true, "enum_values": ["Male", "Female", "Third Gender"] },
+        { "field_id": "nationality",   "label": "Nationality",   "type": "enum",    "required": true, "enum_values": ["Indian", "Other"] },
+        {
+          "field_id":    "category",
+          "label":       "Category",
+          "type":        "enum",
+          "required":    true,
+          "enum_values": ["UR", "OBC", "SC", "ST", "EWS"]
+        },
+        { "field_id": "ex_serviceman", "label": "Ex-Serviceman",            "type": "boolean", "required": false },
+        { "field_id": "pwd_status",    "label": "Person with Disability",   "type": "boolean", "required": true }
+      ]
+    },
+    {
+      "section_id": "contact_details",
+      "title":      "Contact Details",
+      "order":      2,
+      "fields": [
+        { "field_id": "mobile_number", "label": "Mobile Number", "type": "string", "required": true, "verification": "OTP", "validation": { "pattern": "^[6-9][0-9]{9}$" } },
+        { "field_id": "email_id",      "label": "Email ID",      "type": "string", "required": true, "verification": "OTP" },
+        { "field_id": "address_line1", "label": "Address Line 1","type": "string", "required": true },
+        { "field_id": "city",          "label": "City",          "type": "string", "required": true },
+        { "field_id": "state",         "label": "State",         "type": "string", "required": true },
+        { "field_id": "pin_code",      "label": "PIN Code",      "type": "string", "required": true, "validation": { "pattern": "^[1-9][0-9]{5}$" } }
+      ]
+    },
+    {
+      "section_id": "educational_qualification",
+      "title":      "Educational Qualification",
+      "order":      3,
+      "fields": [
+        {
+          "field_id": "highest_qualification",
+          "label":    "Highest Qualification",
+          "type":     "enum",
+          "required": true,
+          "enum_values": ["10th", "12th", "Graduate", "Post Graduate", "ADD_MORE_AS_APPLICABLE"]
+        },
+        {
+          "field_id": "graduation_details",
+          "label":    "Graduation Details",
+          "type":     "object",
+          "required": false,
+          "fields": [
+            { "field_id": "degree",           "label": "Degree",           "type": "string",  "required": true },
+            { "field_id": "specialization",   "label": "Specialization",   "type": "string",  "required": false },
+            { "field_id": "university",        "label": "University",       "type": "string",  "required": true },
+            { "field_id": "year_of_passing",  "label": "Year of Passing",  "type": "integer", "required": true }
+          ]
+        }
+      ]
+    },
+    {
+      "section_id": "post_preferences",
+      "title":      "Post Preferences",
+      "order":      4,
+      "fields": [
+        {
+          "field_id":    "preferred_post",
+          "label":       "Preferred Post",
+          "type":        "enum",
+          "required":    true,
+          "enum_values": ["ADD_POST_NAMES"]
+        },
+        {
+          "field_id":    "preferred_state_cadre",
+          "label":       "Preferred State Cadre",
+          "type":        "enum",
+          "required":    false,
+          "enum_values": ["ADD_STATE_NAMES"]
+        }
+      ]
+    },
+    {
+      "section_id": "previous_attempts",
+      "title":      "Previous Attempts",
+      "order":      5,
+      "fields": [
+        { "field_id": "number_of_previous_attempts", "label": "Number of Previous Attempts", "type": "integer", "required": true, "validation": { "minimum": 0 } },
+        { "field_id": "years_of_appearance",          "label": "Years of Appearance",          "type": "array",   "required": false }
+      ]
+    }
+  ],
+
+  "document_uploads": [
+    {
+      "doc_id":          "photograph_passport",
+      "label":           "Passport-size Photograph",
+      "allowed_formats": ["JPG", "JPEG"],
+      "size_min_kb":     10,
+      "size_max_kb":     200,
+      "required":        true,
+      "required_if":     null,
+      "specifications":  ["White background", "Taken within last 3 months"]
+    },
+    {
+      "doc_id":          "signature",
+      "label":           "Signature",
+      "allowed_formats": ["JPG", "JPEG"],
+      "size_min_kb":     4,
+      "size_max_kb":     30,
+      "required":        true,
+      "required_if":     null
+    },
+    {
+      "doc_id":          "id_proof",
+      "label":           "Identity Proof",
+      "description":     "Aadhaar, Passport, Voter ID, or Driving Licence",
+      "allowed_formats": ["PDF"],
+      "size_min_kb":     50,
+      "size_max_kb":     300,
+      "required":        true,
+      "required_if":     null
+    },
+    {
+      "doc_id":          "class_10_certificate",
+      "label":           "Class 10 Certificate (Age Proof)",
+      "allowed_formats": ["PDF"],
+      "size_min_kb":     50,
+      "size_max_kb":     300,
+      "required":        true,
+      "required_if":     null
+    },
+    {
+      "doc_id":          "category_certificate",
+      "label":           "Category Certificate (OBC / SC / ST / EWS)",
+      "allowed_formats": ["PDF"],
+      "size_min_kb":     50,
+      "size_max_kb":     300,
+      "required":        false,
+      "required_if":     "category != UR"
+    },
+    {
+      "doc_id":          "pwd_medical_certificate",
+      "label":           "PwD Medical Certificate",
+      "allowed_formats": ["PDF"],
+      "size_min_kb":     50,
+      "size_max_kb":     300,
+      "required":        false,
+      "required_if":     "pwd_status == true"
+    },
+    {
+      "doc_id":          "ex_serviceman_certificate",
+      "label":           "Ex-Serviceman Discharge Certificate",
+      "allowed_formats": ["PDF"],
+      "size_min_kb":     50,
+      "size_max_kb":     300,
+      "required":        false,
+      "required_if":     "ex_serviceman == true"
+    }
+  ],
+
+  "fee_structure": {
+    "currency":      "INR",
+    "payment_modes": ["Net Banking", "UPI", "Credit Card", "Debit Card"],
+    "tiers": [
+      { "category": "UR",           "amount": 0 },
+      { "category": "OBC",          "amount": 0 },
+      { "category": "SC",           "amount": 0 },
+      { "category": "ST",           "amount": 0 },
+      { "category": "EWS",          "amount": 0 },
+      { "category": "PwBD",         "amount": 0 },
+      { "category": "Ex-Serviceman","amount": 0 },
+      { "category": "Female",       "amount": 0 }
+    ]
+  },
+
+  "correction_window": {
+    "_comment": "OPTIONAL — remove this section if no correction window exists",
+    "editable_field_ids":     ["full_name", "date_of_birth", "category"],
+    "non_editable_field_ids": ["mobile_number", "email_id"],
+    "correction_fee":         null,
+    "notes": ["Corrections allowed only once"]
+  }
+}

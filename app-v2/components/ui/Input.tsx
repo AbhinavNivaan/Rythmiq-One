@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { StyleSheet, TextInput, View, Text, TextInputProps } from 'react-native';
+import { StyleSheet, TextInput, View, Text, TextInputProps, TouchableOpacity } from 'react-native';
 import Colors from '../../constants/Colors';
-import { LucideIcon } from 'lucide-react-native';
+import { LucideIcon, Eye, EyeOff } from 'lucide-react-native';
 
 interface InputProps extends TextInputProps {
     label?: string;
@@ -9,8 +9,9 @@ interface InputProps extends TextInputProps {
     error?: string;
 }
 
-export default function Input({ label, icon: Icon, error, style, onFocus, onBlur, ...props }: InputProps) {
+export default function Input({ label, icon: Icon, error, style, onFocus, onBlur, secureTextEntry, ...props }: InputProps) {
     const [isFocused, setIsFocused] = useState(false);
+    const [isPasswordVisible, setIsPasswordVisible] = useState(false);
 
     const handleFocus = (e: any) => {
         setIsFocused(true);
@@ -34,7 +35,7 @@ export default function Input({ label, icon: Icon, error, style, onFocus, onBlur
             >
                 {Icon && (
                     <View style={styles.iconContainer}>
-                        <Icon size={20} color={isFocused ? Colors.palette.mayaBlue : 'rgba(255, 255, 255, 0.5)'} />
+                        <Icon size={20} color={isFocused ? '#89C7FE' : 'rgba(255, 255, 255, 0.5)'} />
                     </View>
                 )}
                 <TextInput
@@ -42,8 +43,21 @@ export default function Input({ label, icon: Icon, error, style, onFocus, onBlur
                     placeholderTextColor="rgba(255, 255, 255, 0.4)"
                     onFocus={handleFocus}
                     onBlur={handleBlur}
+                    secureTextEntry={secureTextEntry && !isPasswordVisible}
                     {...props}
                 />
+                {secureTextEntry && (
+                    <TouchableOpacity
+                        style={styles.eyeContainer}
+                        onPress={() => setIsPasswordVisible(v => !v)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                        {isPasswordVisible
+                            ? <EyeOff size={18} color="rgba(255, 255, 255, 0.5)" />
+                            : <Eye size={18} color="rgba(255, 255, 255, 0.5)" />
+                        }
+                    </TouchableOpacity>
+                )}
             </View>
             {error && <Text style={styles.errorText}>{error}</Text>}
         </View>
@@ -73,7 +87,7 @@ const styles = StyleSheet.create({
         height: 56,
     },
     inputContainerFocused: {
-        borderColor: Colors.palette.trueCobalt, // Focus color
+        borderColor: '#1A2595', // Focus color
         backgroundColor: '#1E202E', // Slightly lighter on focus
     },
     inputContainerError: {
@@ -82,6 +96,10 @@ const styles = StyleSheet.create({
     iconContainer: {
         paddingLeft: 16,
         paddingRight: 8,
+    },
+    eyeContainer: {
+        paddingRight: 16,
+        paddingLeft: 8,
     },
     input: {
         flex: 1,

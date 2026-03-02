@@ -20,7 +20,7 @@ async def app_exception_handler(request: Request, exc: AppException) -> JSONResp
         "Application error",
         extra={
             "error_code": exc.error_code,
-            "message": exc.message,
+            "error_message": exc.message,
             "correlation_id": correlation_id,
         },
     )

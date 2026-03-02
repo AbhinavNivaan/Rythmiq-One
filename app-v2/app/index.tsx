@@ -79,7 +79,7 @@ const styles = StyleSheet.create({
     titleAccent: {
         fontSize: 56,
         fontWeight: '300',
-        color: Colors.dark.primary, // Using primary color for accent
+        color: '#1A2595', // True Cobalt
         marginTop: -10,
         letterSpacing: 2,
     },
@@ -109,12 +109,12 @@ const styles = StyleSheet.create({
         width: '100%',
     },
     button: {
-        backgroundColor: Colors.dark.primary,
+        backgroundColor: '#1A2595',
         paddingVertical: 18,
         borderRadius: 16,
         width: '100%',
         alignItems: 'center',
-        shadowColor: Colors.dark.primary,
+        shadowColor: '#1A2595',
         shadowOffset: { width: 0, height: 8 },
         shadowOpacity: 0.4,
         shadowRadius: 16,

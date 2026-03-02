@@ -70,7 +70,7 @@ const TOAST_CONFIG: Record<ToastType, ToastConfig> = {
   },
   info: {
     icon: Info,
-    color: Colors.palette.mayaBlue,
+    color: '#89C7FE',
     backgroundColor: 'rgba(137, 199, 254, 0.15)',
   },
 };

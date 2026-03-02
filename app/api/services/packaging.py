@@ -83,29 +83,44 @@ class PackagingService:
 
         # Upload ZIP
         try:
+            logger.debug(
+                "Uploading ZIP to storage",
+                extra={"job_id": str(job_id), "output_path": output_path},
+            )
+            zip_size = len(zip_buffer.getvalue()) if isinstance(zip_buffer, BytesIO) else len(zip_buffer)
+            logger.debug(
+                "ZIP ready for upload",
+                extra={"job_id": str(job_id), "zip_size_bytes": zip_size},
+            )
             self._storage.upload_object(
                 storage_path=output_path,
                 data=zip_buffer,
                 content_type="application/zip",
             )
+            logger.info(
+                "Job output packaged successfully",
+                extra={
+                    "job_id": str(job_id),
+                    "output_path": output_path,
+                    "artifact_count": len(artifact_paths),
+                    "zip_size_bytes": zip_size,
+                },
+            )
         except Exception as e:
             logger.error(
-                "Failed to upload ZIP",
-                extra={"job_id": str(job_id), "output_path": output_path, "error": str(e)},
+                "Failed to upload ZIP to storage",
+                extra={
+                    "job_id": str(job_id),
+                    "output_path": output_path,
+                    "error_type": type(e).__name__,
+                    "error": str(e),
+                },
+                exc_info=True,  # Include full traceback
             )
             raise PackagingException(
                 "Failed to upload output package",
                 details={"job_id": str(job_id)},
-            )
-
-        logger.info(
-            "Job output packaged successfully",
-            extra={
-                "job_id": str(job_id),
-                "output_path": output_path,
-                "artifact_count": len(artifact_paths),
-            },
-        )
+            ) from e
 
         return output_path
 

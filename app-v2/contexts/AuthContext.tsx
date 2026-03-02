@@ -10,7 +10,9 @@ import type { User, AuthState } from '../types';
 
 interface AuthContextType extends AuthState {
   login: (email: string, password: string) => Promise<void>;
-  signup: (email: string, password: string) => Promise<void>;
+  signup: (email: string, password: string, name?: string) => Promise<void>;
+  loginWithGoogle: () => Promise<void>;
+  loginWithApple: () => Promise<void>;
   logout: () => Promise<void>;
   refreshSession: () => Promise<void>;
 }
@@ -39,11 +41,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
 
       const session = await authApi.getSession();
-      if (session.valid && session.user) {
+      if (session.user_id) {
         setUser({
-          id: session.user.id,
-          email: session.user.email,
-          created_at: '', // Session doesn't return this
+          id: session.user_id,
+          email: session.email ?? '',
+          name: session.name ?? undefined,
+          created_at: '',
         });
         setIsAuthenticated(true);
       } else {
@@ -80,8 +83,33 @@ export function AuthProvider({ children }: AuthProviderProps) {
   /**
    * Sign up with email and password
    */
-  const signup = useCallback(async (email: string, password: string) => {
-    const response = await authApi.signup(email, password);
+  const signup = useCallback(async (email: string, password: string, name?: string) => {
+    const response = await authApi.signup(email, password, name);
+
+    if (!response.access_token) {
+      setUser(null);
+      setIsAuthenticated(false);
+      throw new Error('Account created. Please check your email and verify your account before signing in.');
+    }
+
+    setUser(response.user);
+    setIsAuthenticated(true);
+  }, []);
+
+  /**
+   * Login with Google OAuth
+   */
+  const loginWithGoogle = useCallback(async () => {
+    const response = await authApi.loginWithOAuth('google');
+    setUser(response.user);
+    setIsAuthenticated(true);
+  }, []);
+
+  /**
+   * Login with Apple OAuth
+   */
+  const loginWithApple = useCallback(async () => {
+    const response = await authApi.loginWithOAuth('apple');
     setUser(response.user);
     setIsAuthenticated(true);
   }, []);
@@ -106,6 +134,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
     isAuthenticated,
     login,
     signup,
+    loginWithGoogle,
+    loginWithApple,
     logout,
     refreshSession,
   };

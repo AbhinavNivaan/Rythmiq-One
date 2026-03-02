@@ -11,16 +11,191 @@
  */
 
 import * as SecureStore from 'expo-secure-store';
+import * as WebBrowser from 'expo-web-browser';
+import { makeRedirectUri } from 'expo-auth-session';
+import { createClient } from '@supabase/supabase-js';
+import { Platform } from 'react-native';
+
+WebBrowser.maybeCompleteAuthSession();
 
 // API Configuration
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
 
 // Dev sandbox mode - set via environment variable
 const DEV_SANDBOX_MODE = process.env.EXPO_PUBLIC_DEV_SANDBOX === 'true';
+const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
 // Token storage keys
 const AUTH_TOKEN_KEY = 'rythmiq_auth_token';
 const REFRESH_TOKEN_KEY = 'rythmiq_refresh_token';
+const OAUTH_TIMEOUT_MS = 120000;
+const webMemoryStorage = new Map<string, string>();
+
+function isWebStorageAvailable(): boolean {
+  return Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+}
+
+async function setStoredValue(key: string, value: string): Promise<void> {
+  if (Platform.OS === 'web') {
+    try {
+      if (isWebStorageAvailable()) {
+        window.localStorage.setItem(key, value);
+      } else {
+        webMemoryStorage.set(key, value);
+      }
+    } catch {
+      webMemoryStorage.set(key, value);
+    }
+    return;
+  }
+
+  await SecureStore.setItemAsync(key, value);
+}
+
+async function getStoredValue(key: string): Promise<string | null> {
+  if (Platform.OS === 'web') {
+    try {
+      if (isWebStorageAvailable()) {
+        return window.localStorage.getItem(key);
+      }
+    } catch {
+      return webMemoryStorage.get(key) ?? null;
+    }
+
+    return webMemoryStorage.get(key) ?? null;
+  }
+
+  return SecureStore.getItemAsync(key);
+}
+
+async function deleteStoredValue(key: string): Promise<void> {
+  if (Platform.OS === 'web') {
+    try {
+      if (isWebStorageAvailable()) {
+        window.localStorage.removeItem(key);
+      }
+    } catch {
+      webMemoryStorage.delete(key);
+    }
+
+    webMemoryStorage.delete(key);
+    return;
+  }
+
+  await SecureStore.deleteItemAsync(key);
+}
+
+function getOAuthRedirectUri(): string {
+  return makeRedirectUri({
+    scheme: 'rythmiq',
+    path: 'auth/callback',
+  });
+}
+
+function normalizeRedirectUri(uri: string): string {
+  return uri.endsWith('/') ? uri.slice(0, -1) : uri;
+}
+
+function isExpoGoRedirectUri(uri: string): boolean {
+  return uri.startsWith('exp://');
+}
+
+function extractOAuthCallbackData(callbackUrl: string): {
+  code: string | null;
+  accessToken: string | null;
+  refreshToken: string | null;
+} {
+  const parsed = new URL(callbackUrl);
+  const hashParams = new URLSearchParams(parsed.hash.replace(/^#/, ''));
+
+  return {
+    code: parsed.searchParams.get('code'),
+    accessToken: hashParams.get('access_token') || parsed.searchParams.get('access_token'),
+    refreshToken: hashParams.get('refresh_token') || parsed.searchParams.get('refresh_token'),
+  };
+}
+
+function toAuthResponse(
+  session: { access_token: string; refresh_token: string },
+  user: { id: string; email?: string | null; created_at?: string; user_metadata?: Record<string, unknown>; email_confirmed_at?: string | null }
+): AuthResponse {
+  return {
+    user: {
+      id: user.id,
+      email: user.email || '',
+      created_at: user.created_at,
+      name: (user.user_metadata?.name as string | undefined) || null,
+      email_confirmed: user.email_confirmed_at != null,
+    },
+    access_token: session.access_token,
+    refresh_token: session.refresh_token,
+  };
+}
+
+export function getCurrentOAuthRedirectUri(): string {
+  return getOAuthRedirectUri();
+}
+
+const supabase = SUPABASE_URL && SUPABASE_ANON_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  : null;
+
+type OAuthProvider = 'google' | 'apple';
+
+function getOAuthProviderLabel(provider: OAuthProvider): string {
+  return provider === 'google' ? 'Google' : 'Apple';
+}
+
+function normalizeOAuthStartError(provider: OAuthProvider, message?: string): ApiError {
+  const providerLabel = getOAuthProviderLabel(provider);
+  const lower = (message || '').toLowerCase();
+  const redirectUri = getOAuthRedirectUri();
+  const isExpoGoRedirect = isExpoGoRedirectUri(redirectUri);
+  const redirectHint = isExpoGoRedirect
+    ? `Current Expo Go redirect is ${redirectUri}. Add this exact URL (or exp://**) to Supabase Redirect URLs.`
+    : `Current app redirect is ${redirectUri}. Add this exact URL (or matching wildcard) in Supabase Redirect URLs.`;
+
+  if (lower.includes('not enabled') || lower.includes('provider is not enabled') || lower.includes('unsupported provider')) {
+    return new ApiError(
+      400,
+      'OAUTH_PROVIDER_NOT_ENABLED',
+      `${providerLabel} sign-in is not enabled in Supabase yet. Complete ${providerLabel} provider setup first.`
+    );
+  }
+
+  if (lower.includes('redirect') || lower.includes('callback')) {
+    return new ApiError(
+      400,
+      'OAUTH_REDIRECT_MISMATCH',
+      `${providerLabel} sign-in redirect is not configured. ${redirectHint}`
+    );
+  }
+
+  return new ApiError(400, 'OAUTH_START_FAILED', message || `Could not start ${providerLabel} sign-in.`);
+}
+
+function ensureSupabaseClient() {
+  if (!supabase) {
+    throw new ApiError(
+      500,
+      'SUPABASE_NOT_CONFIGURED',
+      'Social login is not configured. Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY.'
+    );
+  }
+
+  return supabase;
+}
+
+async function storeAuthTokens(accessToken: string, refreshToken?: string | null): Promise<void> {
+  if (accessToken) {
+    await setAuthToken(accessToken);
+  }
+
+  if (refreshToken) {
+    await setStoredValue(REFRESH_TOKEN_KEY, refreshToken);
+  }
+}
 
 /**
  * Check if running in dev sandbox mode
@@ -49,7 +224,7 @@ export class ApiError extends Error {
  */
 export async function getAuthToken(): Promise<string | null> {
   try {
-    return await SecureStore.getItemAsync(AUTH_TOKEN_KEY);
+    return await getStoredValue(AUTH_TOKEN_KEY);
   } catch {
     return null;
   }
@@ -59,15 +234,15 @@ export async function getAuthToken(): Promise<string | null> {
  * Store auth token securely
  */
 export async function setAuthToken(token: string): Promise<void> {
-  await SecureStore.setItemAsync(AUTH_TOKEN_KEY, token);
+  await setStoredValue(AUTH_TOKEN_KEY, token);
 }
 
 /**
  * Clear auth tokens (logout)
  */
 export async function clearAuthTokens(): Promise<void> {
-  await SecureStore.deleteItemAsync(AUTH_TOKEN_KEY);
-  await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
+  await deleteStoredValue(AUTH_TOKEN_KEY);
+  await deleteStoredValue(REFRESH_TOKEN_KEY);
 }
 
 /**
@@ -92,19 +267,40 @@ async function apiRequest<T>(
     (headers as Record<string, string>)['Authorization'] = `Bearer ${token}`;
   }
   
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    ...options,
-    headers,
-  });
-  
-  const data = await response.json();
+  const requestUrl = `${API_BASE_URL}${endpoint}`;
+
+  let response: Response;
+  try {
+    response = await fetch(requestUrl, {
+      ...options,
+      headers,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Network request failed';
+    throw new ApiError(
+      0,
+      'NETWORK_ERROR',
+      `Cannot reach API at ${API_BASE_URL}. ${message}. Ensure backend is running and reachable from your device (for LAN access start API with --host 0.0.0.0).`
+    );
+  }
+
+  let data: Record<string, any> = {};
+  try {
+    data = await response.json();
+  } catch {
+    data = {};
+  }
   
   if (!response.ok) {
+    const detail = (data.detail && typeof data.detail === 'object')
+      ? data.detail
+      : data;
+
     throw new ApiError(
       response.status,
-      data.code || 'UNKNOWN_ERROR',
-      data.message || 'An error occurred',
-      data.details
+      detail.error_code || detail.code || 'UNKNOWN_ERROR',
+      detail.message || data.message || 'An error occurred',
+      detail.details || data.details
     );
   }
   
@@ -119,35 +315,32 @@ export interface AuthResponse {
   user: {
     id: string;
     email: string;
-    created_at: string;
+    created_at?: string;
+    name?: string | null;
+    email_confirmed?: boolean;
   };
   access_token: string;
   refresh_token: string;
 }
 
 export interface SessionResponse {
-  user: {
-    id: string;
-    email: string;
-  } | null;
-  valid: boolean;
+  user_id: string;
+  email?: string | null;
+  name?: string | null;
+  expires_at: number;
 }
 
 export const authApi = {
   /**
    * Sign up with email and password
    */
-  async signup(email: string, password: string): Promise<AuthResponse> {
+  async signup(email: string, password: string, name?: string): Promise<AuthResponse> {
     const response = await apiRequest<AuthResponse>('/auth/signup', {
       method: 'POST',
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, name }),
     });
-    
-    // Store tokens
-    await setAuthToken(response.access_token);
-    if (response.refresh_token) {
-      await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, response.refresh_token);
-    }
+
+    await storeAuthTokens(response.access_token, response.refresh_token);
     
     return response;
   },
@@ -160,14 +353,165 @@ export const authApi = {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });
-    
-    // Store tokens
-    await setAuthToken(response.access_token);
-    if (response.refresh_token) {
-      await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, response.refresh_token);
-    }
+
+    await storeAuthTokens(response.access_token, response.refresh_token);
     
     return response;
+  },
+
+  /**
+   * Login with social OAuth provider
+   */
+  async loginWithOAuth(provider: OAuthProvider): Promise<AuthResponse> {
+    const client = ensureSupabaseClient();
+    const redirectTo = getOAuthRedirectUri();
+    const useImplicitFlow = Platform.OS !== 'web';
+
+    const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    const tryRecoverExistingSession = async (maxAttempts = 1): Promise<AuthResponse | null> => {
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const { data: existingSessionData, error: existingSessionError } = await client.auth.getSession();
+        if (!existingSessionError && existingSessionData.session) {
+          const sessionUser = existingSessionData.session.user;
+
+          if (sessionUser) {
+            await storeAuthTokens(
+              existingSessionData.session.access_token,
+              existingSessionData.session.refresh_token
+            );
+            return toAuthResponse(existingSessionData.session, sessionUser);
+          }
+
+          const { data: existingUserData, error: existingUserError } = await client.auth.getUser(
+            existingSessionData.session.access_token
+          );
+
+          if (!existingUserError && existingUserData.user) {
+            await storeAuthTokens(
+              existingSessionData.session.access_token,
+              existingSessionData.session.refresh_token
+            );
+            return toAuthResponse(existingSessionData.session, existingUserData.user);
+          }
+        }
+
+        if (attempt < maxAttempts) {
+          await wait(500);
+        }
+      }
+
+      return null;
+    };
+
+    const { data, error } = await client.auth.signInWithOAuth({
+      provider,
+      options: {
+        redirectTo,
+        skipBrowserRedirect: true,
+        ...(useImplicitFlow ? { queryParams: { flow_type: 'implicit' } } : {}),
+      },
+    });
+
+    if (error || !data.url) {
+      throw normalizeOAuthStartError(provider, error?.message);
+    }
+
+    try {
+      const authorizeUrl = new URL(data.url);
+      const redirectParam = authorizeUrl.searchParams.get('redirect_to');
+      if (!redirectParam) {
+        throw new ApiError(
+          400,
+          'OAUTH_REDIRECT_MISSING',
+          `OAuth redirect parameter is missing. Current app redirect is ${redirectTo}. Add this exact value in Supabase Redirect URLs.`
+        );
+      }
+
+      const normalizedExpected = normalizeRedirectUri(redirectTo);
+      const normalizedActual = normalizeRedirectUri(redirectParam);
+
+      const isAcceptedNativeScheme =
+        redirectParam.startsWith('rythmiq://') || redirectParam.startsWith('exp://');
+      const isExactMatch = normalizedActual === normalizedExpected;
+
+      if (!isAcceptedNativeScheme && !isExactMatch) {
+        throw new ApiError(
+          400,
+          'OAUTH_REDIRECT_UNEXPECTED',
+          `OAuth redirect is set to ${redirectParam}, but app expects ${redirectTo}. Add ${redirectTo} in Supabase Redirect URLs.`
+        );
+      }
+    } catch (err) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+    }
+
+    const result = await Promise.race([
+      WebBrowser.openAuthSessionAsync(data.url, redirectTo),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(
+            new ApiError(
+              408,
+              'OAUTH_TIMEOUT',
+              `Google sign-in timed out waiting for app callback (${redirectTo}). If browser redirects to Site URL, add ${redirectTo} exactly in Supabase Redirect URLs and retry.`
+            )
+          );
+        }, OAUTH_TIMEOUT_MS);
+      }),
+    ]);
+
+    if (result.type !== 'success' || !result.url) {
+      const recoveredSession = await tryRecoverExistingSession(20);
+      if (recoveredSession) {
+        return recoveredSession;
+      }
+
+      throw new ApiError(
+        400,
+        'OAUTH_CANCELLED',
+        `Social sign-in was cancelled (${result.type}). Current app redirect is ${redirectTo}. If browser went to Site URL/localhost, add ${redirectTo} exactly in Supabase Redirect URLs.`
+      );
+    }
+
+    const callbackData = extractOAuthCallbackData(result.url);
+
+    if (callbackData.code) {
+      const { data: sessionData, error: exchangeError } = await client.auth.exchangeCodeForSession(callbackData.code);
+      if (exchangeError || !sessionData.session || !sessionData.user) {
+        throw new ApiError(401, 'OAUTH_EXCHANGE_FAILED', exchangeError?.message || 'Could not complete social sign-in.');
+      }
+
+      await storeAuthTokens(sessionData.session.access_token, sessionData.session.refresh_token);
+      return toAuthResponse(sessionData.session, sessionData.user);
+    }
+
+    if (callbackData.accessToken && callbackData.refreshToken) {
+      const { data: sessionData, error: setSessionError } = await client.auth.setSession({
+        access_token: callbackData.accessToken,
+        refresh_token: callbackData.refreshToken,
+      });
+
+      if (setSessionError || !sessionData.session || !sessionData.user) {
+        throw new ApiError(401, 'OAUTH_SET_SESSION_FAILED', setSessionError?.message || 'Could not establish social sign-in session.');
+      }
+
+      await storeAuthTokens(sessionData.session.access_token, sessionData.session.refresh_token);
+      return toAuthResponse(sessionData.session, sessionData.user);
+    }
+
+    const recoveredSession = await tryRecoverExistingSession(6);
+    if (recoveredSession) {
+      return recoveredSession;
+    }
+
+    throw new ApiError(
+      400,
+      'OAUTH_CALLBACK_INVALID',
+      `OAuth callback did not include auth code or tokens. Callback URL: ${result.url}`
+    );
   },
   
   /**
@@ -249,20 +593,24 @@ export interface JobStatus {
   job_type?: 'master' | 'adapt';
   document_type?: 'photo' | 'signature' | 'document';
   document_name?: string;
+  portal_schema_name?: string;
   quality_score?: number;
   created_at?: string;
+  started_at?: string;
+  completed_at?: string;
   updated_at?: string;
   output_file_path?: string;
+  download_url?: string;
+  preview_url?: string;
+  error_details?: {
+    code?: string;
+    message?: string;
+  };
   error?: {
     code: string;
     message: string;
   };
 }
-
-// Default schema used for master documents (Scan flow)
-// In production, this should be a generic "master" schema that does quality enhancement
-// without specific portal constraints.
-const MASTER_DOCUMENT_SCHEMA = 'passport_photo';
 
 export const documentsApi = {
   /**
@@ -278,16 +626,26 @@ export const documentsApi = {
     mimeType: string,
     fileSizeBytes: number
   ): Promise<{ job_id: string; upload_url: string; expires_at: string }> {
-    // Use the generic master schema - this will be enhanced without strict constraints
-    // The backend doesn't support job_type: 'master' yet, so we use legacy API
     return apiRequest<{ job_id: string; upload_url: string; expires_at: string }>('/jobs', {
       method: 'POST',
       body: JSON.stringify({
-        portal_schema_name: MASTER_DOCUMENT_SCHEMA,
+        job_type: 'master',
+        document_type: documentType,
         filename,
         mime_type: mimeType,
         file_size_bytes: fileSizeBytes,
+        defer_processing: true,
       }),
+    });
+  },
+
+  /**
+   * Submit a previously created pending job for processing.
+   * Used after uploading to the presigned URL.
+   */
+  async submitJob(jobId: string): Promise<{ job_id: string; status: string }> {
+    return apiRequest<{ job_id: string; status: string }>(`/jobs/${jobId}/submit`, {
+      method: 'POST',
     });
   },
 
@@ -360,7 +718,7 @@ export const documentsApi = {
    * Get job status
    */
   async getJobStatus(jobId: string): Promise<JobStatus> {
-    return apiRequest<JobStatus>(`/jobs/${jobId}/status`);
+    return apiRequest<JobStatus>(`/jobs/${jobId}`);
   },
   
   /**

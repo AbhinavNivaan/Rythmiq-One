@@ -182,7 +182,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: Colors.palette.trueCobalt,
+    backgroundColor: '#1A2595',
     paddingHorizontal: 32,
     paddingVertical: 16,
     borderRadius: 12,
@@ -202,13 +202,13 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: Colors.palette.mayaBlue,
+    borderColor: '#89C7FE',
     gap: 8,
   },
   secondaryButtonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: Colors.palette.mayaBlue,
+    color: '#89C7FE',
   },
 });
 

@@ -1,0 +1,202 @@
+{
+  "_comment": "EXAM FORM TEMPLATE — Copy this file, rename to {exam}_{year}_registration.json, fill in all fields marked REQUIRED, remove all _comment keys before injecting.",
+
+  "schema_id":      "REQUIRED — snake_case slug, e.g. jee_main_2026_registration",
+  "schema_type":    "exam_form",
+  "schema_version": "1.0.0",
+  "status":         "active",
+
+  "metadata": {
+    "display_name":    "REQUIRED — Full exam name, e.g. JEE Main 2026 Registration Form",
+    "short_name":      "REQUIRED — Short label, e.g. JEE Main 2026",
+    "conducting_body": "REQUIRED — e.g. National Testing Agency (NTA)",
+    "official_website":"OPTIONAL — e.g. https://jeemain.nta.nic.in",
+    "category":        "REQUIRED — one of: medical_entrance | engineering_entrance | civil_services | law_entrance | management_entrance | other_exam",
+    "applicable_year": 2026,
+    "country":         "IN",
+    "language":        "en"
+  },
+
+  "key_dates": {
+    "_comment": "All dates in YYYY-MM-DD format. Include only dates that are known.",
+    "registration_opens":      "YYYY-MM-DD",
+    "registration_closes":     "YYYY-MM-DD",
+    "correction_window_start": "YYYY-MM-DD",
+    "correction_window_end":   "YYYY-MM-DD",
+    "exam_date":               "YYYY-MM-DD"
+  },
+
+  "form_sections": [
+    {
+      "_comment": "Add one object per section. 'order' controls display sequence (1-based).",
+      "section_id":  "personal_details",
+      "title":       "Personal Details",
+      "description": "OPTIONAL — guidance shown above the section",
+      "order":       1,
+      "fields": [
+        {
+          "_comment": "String field example",
+          "field_id": "full_name",
+          "label":    "Full Name",
+          "type":     "string",
+          "required": true,
+          "validation": {
+            "pattern": "^[A-Za-z ]{2,100}$",
+            "note":    "OPTIONAL — shown to user"
+          }
+        },
+        {
+          "_comment": "Date field example",
+          "field_id": "date_of_birth",
+          "label":    "Date of Birth",
+          "type":     "date",
+          "required": true,
+          "validation": { "format": "DD/MM/YYYY" }
+        },
+        {
+          "_comment": "Enum field example — must include enum_values",
+          "field_id":    "gender",
+          "label":       "Gender",
+          "type":        "enum",
+          "required":    true,
+          "enum_values": ["Male", "Female", "Third Gender"]
+        },
+        {
+          "_comment": "Boolean field example",
+          "field_id": "pwd_status",
+          "label":    "Person with Disability (PwD)",
+          "type":     "boolean",
+          "required": true
+        },
+        {
+          "_comment": "OTP-verified string field example",
+          "field_id":     "mobile_number",
+          "label":        "Mobile Number",
+          "type":         "string",
+          "required":     true,
+          "verification": "OTP",
+          "validation":   { "pattern": "^[6-9][0-9]{9}$" }
+        }
+      ]
+    },
+    {
+      "section_id": "academic_qualification",
+      "title":      "Academic Qualification",
+      "order":      2,
+      "fields": [
+        {
+          "_comment": "Enum with qualification codes",
+          "field_id":    "qualification_code",
+          "label":       "Qualification Status",
+          "type":        "enum",
+          "required":    true,
+          "enum_values": [
+            "Appearing in qualifying exam this year",
+            "Already passed qualifying exam"
+          ]
+        },
+        {
+          "_comment": "Object field example — nested fields for Class 12",
+          "field_id": "class_12",
+          "label":    "Class 12 Details",
+          "type":     "object",
+          "required": true,
+          "fields": [
+            { "field_id": "school_name",              "label": "School Name",              "type": "string",  "required": true },
+            { "field_id": "board",                    "label": "Board",                    "type": "string",  "required": true },
+            { "field_id": "roll_number",              "label": "Roll Number",              "type": "string",  "required": true },
+            { "field_id": "year_of_passing",          "label": "Year of Passing / Appearing", "type": "integer", "required": true }
+          ]
+        }
+      ]
+    },
+    {
+      "section_id": "exam_preferences",
+      "title":      "Exam Preferences",
+      "order":      3,
+      "fields": [
+        { "field_id": "exam_centre_city_1",    "label": "Preferred Exam Centre (1st choice)", "type": "string", "required": true },
+        { "field_id": "exam_centre_city_2",    "label": "Preferred Exam Centre (2nd choice)", "type": "string", "required": false },
+        {
+          "field_id":    "question_paper_medium",
+          "label":       "Question Paper Language",
+          "type":        "enum",
+          "required":    true,
+          "enum_values": ["English", "Hindi", "ADD_MORE_AS_APPLICABLE"]
+        }
+      ]
+    }
+  ],
+
+  "document_uploads": [
+    {
+      "_comment": "Photo upload example",
+      "doc_id":          "photograph_passport",
+      "label":           "Passport-size Photograph",
+      "description":     "2x2 inch, white background, taken within last 6 months",
+      "allowed_formats": ["JPG", "JPEG"],
+      "size_min_kb":     10,
+      "size_max_kb":     200,
+      "required":        true,
+      "required_if":     null,
+      "specifications":  [
+        "White background",
+        "Face clearly visible",
+        "No caps or goggles"
+      ]
+    },
+    {
+      "_comment": "Signature upload example",
+      "doc_id":          "signature",
+      "label":           "Signature",
+      "description":     "Black ink on white paper, running signature (not capitals)",
+      "allowed_formats": ["JPG", "JPEG"],
+      "size_min_kb":     4,
+      "size_max_kb":     30,
+      "required":        true,
+      "required_if":     null
+    },
+    {
+      "_comment": "Certificate upload example",
+      "doc_id":          "class_10_certificate",
+      "label":           "Class 10 Certificate / Marksheet",
+      "description":     "Used as Date of Birth proof",
+      "allowed_formats": ["PDF"],
+      "size_min_kb":     50,
+      "size_max_kb":     300,
+      "required":        true,
+      "required_if":     null
+    },
+    {
+      "_comment": "Conditional upload example — only required if a condition is met",
+      "doc_id":          "pwd_medical_certificate",
+      "label":           "PwD / PwBD Medical Certificate",
+      "allowed_formats": ["PDF"],
+      "size_min_kb":     50,
+      "size_max_kb":     300,
+      "required":        false,
+      "required_if":     "pwd_status == true"
+    }
+  ],
+
+  "fee_structure": {
+    "currency":      "INR",
+    "payment_modes": ["Net Banking", "UPI", "Credit Card", "Debit Card"],
+    "tiers": [
+      { "category": "General",     "amount": 0 },
+      { "category": "OBC-NCL",     "amount": 0 },
+      { "category": "SC",          "amount": 0 },
+      { "category": "ST",          "amount": 0 },
+      { "category": "PwBD",        "amount": 0 },
+      { "category": "Third Gender","amount": 0 }
+    ]
+  },
+
+  "correction_window": {
+    "_comment": "OPTIONAL section — remove entirely if the exam has no correction window",
+    "editable_field_ids":     ["full_name", "date_of_birth", "gender"],
+    "non_editable_field_ids": ["mobile_number", "email_id"],
+    "correction_fee":         null,
+    "notes": ["Corrections allowed only once"]
+  }
+}

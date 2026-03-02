@@ -9,7 +9,9 @@
 export interface User {
   id: string;
   email: string;
-  created_at: string;
+  created_at?: string;
+  name?: string | null;
+  email_confirmed?: boolean;
 }
 
 export interface AuthState {

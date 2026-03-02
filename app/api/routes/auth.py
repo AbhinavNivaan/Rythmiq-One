@@ -48,6 +48,7 @@ class AuthResponse(BaseModel):
 class SessionResponse(BaseModel):
     user_id: str
     email: str | None
+    name: str | None = None
     expires_at: int
 
 
@@ -175,6 +176,12 @@ async def login(
     except Exception as e:
         error_msg = str(e)
         logger.error(f"Login error: {error_msg}")
+
+        if "email not confirmed" in error_msg.lower() or "email not confirmed" in error_msg.replace("_", " ").lower():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error_code": "EMAIL_NOT_CONFIRMED", "message": "Please verify your email before signing in"},
+            )
         
         if "invalid" in error_msg.lower() or "incorrect" in error_msg.lower():
             raise HTTPException(
@@ -243,6 +250,7 @@ async def get_session(
     return SessionResponse(
         user_id=str(user.id),
         email=user.email,
+        name=user.name,
         expires_at=user.exp,
     )
 

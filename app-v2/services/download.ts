@@ -4,7 +4,7 @@
  * Handles file downloads with progress tracking, caching, and sharing.
  */
 
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { Alert, Platform } from 'react-native';
 
@@ -22,15 +22,20 @@ export interface DownloadResult {
 }
 
 // Cache directory for downloads
-const DOWNLOAD_CACHE_DIR = `${FileSystem.cacheDirectory}downloads/`;
+// Using app's document directory which is guaranteed to be writable
+const DOWNLOAD_CACHE_DIR = `${FileSystem.documentDirectory}downloads/`;
 
 /**
  * Ensure download directory exists
  */
 async function ensureDownloadDir(): Promise<void> {
-  const dirInfo = await FileSystem.getInfoAsync(DOWNLOAD_CACHE_DIR);
-  if (!dirInfo.exists) {
-    await FileSystem.makeDirectoryAsync(DOWNLOAD_CACHE_DIR, { intermediates: true });
+  try {
+    const dirInfo = await FileSystem.getInfoAsync(DOWNLOAD_CACHE_DIR);
+    if (!dirInfo.exists) {
+      await FileSystem.makeDirectoryAsync(DOWNLOAD_CACHE_DIR, { intermediates: true });
+    }
+  } catch (error) {
+    console.error('Error creating download directory:', error);
   }
 }
 
@@ -50,6 +55,7 @@ export async function downloadFile(
   url: string,
   filename: string,
   onProgress?: (progress: DownloadProgress) => void,
+  extension?: string,
 ): Promise<DownloadResult> {
   try {
     await ensureDownloadDir();
@@ -123,9 +129,10 @@ export async function downloadJobOutput(
   jobId: string,
   downloadUrl: string,
   onProgress?: (progress: DownloadProgress) => void,
+  extension: string = 'zip',
 ): Promise<DownloadResult> {
-  const filename = getLocalFilename(jobId, 'zip');
-  return downloadFile(downloadUrl, filename, onProgress);
+  const filename = getLocalFilename(jobId, extension);
+  return downloadFile(downloadUrl, filename, onProgress, extension);
 }
 
 /**

@@ -148,9 +148,10 @@ export default function CaptureScreen() {
       pathname: '/(tabs)/upload',
       params: {
         images: JSON.stringify(capturedImages.map(img => img.uri)),
+        docType: selectedDocType,
       },
     });
-  }, [capturedImages]);
+  }, [capturedImages, selectedDocType]);
 
   // Permission handling
   if (!permission) {

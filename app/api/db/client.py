@@ -67,7 +67,7 @@ def transition_job_state(
     Args:
         job_id: The job UUID
         new_state: Target state (pending, processing, completed, failed)
-        payload: Optional data to persist (error_details for failed, output_metadata for completed)
+        payload: Optional data to persist (error_details for failed, metadata for completed)
         
     Returns:
         Updated job record
@@ -142,7 +142,7 @@ def transition_job_state(
         update_data["error_details"] = payload
 
     if new_state == "completed" and payload:
-        update_data["output_metadata"] = payload
+        update_data["metadata"] = payload
 
     # Perform update with optimistic locking on status
     try:

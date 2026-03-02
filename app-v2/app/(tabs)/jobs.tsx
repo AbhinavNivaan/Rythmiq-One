@@ -1,7 +1,7 @@
 /**
  * Jobs Screen
- * 
- * Lists all user jobs with status and allows downloading results.
+ *
+ * Lists all user jobs with status and allows viewing results.
  */
 
 import React, { useCallback, useMemo } from 'react';
@@ -12,58 +12,54 @@ import {
   TouchableOpacity,
   FlatList,
   ActivityIndicator,
-  RefreshControl,
   Alert,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import {
+  RefreshCw,
+  CheckCircle,
+  Clock,
+  XCircle,
+  ChevronRight,
+  FileText,
+  Camera,
+} from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system';
+import Colors from '../../constants/Colors';
 import { documentsApi, JobStatus } from '../../services/api';
 
 type JobStatusType = 'pending' | 'processing' | 'completed' | 'failed';
 
 interface StatusConfig {
-  icon: keyof typeof Ionicons.glyphMap;
   color: string;
   label: string;
 }
 
 const STATUS_CONFIG: Record<JobStatusType, StatusConfig> = {
-  pending: { icon: 'time-outline', color: '#FF9500', label: 'Pending' },
-  processing: { icon: 'sync-outline', color: '#007AFF', label: 'Processing' },
-  completed: { icon: 'checkmark-circle', color: '#34C759', label: 'Completed' },
-  failed: { icon: 'close-circle', color: '#FF3B30', label: 'Failed' },
+  pending:    { color: Colors.palette.amber,  label: 'Pending'    },
+  processing: { color: '#89C7FE',             label: 'Processing' },
+  completed:  { color: Colors.palette.green,  label: 'Completed'  },
+  failed:     { color: Colors.palette.red,    label: 'Failed'     },
 };
 
 export default function JobsScreen() {
   const params = useLocalSearchParams<{ newJobIds?: string }>();
-  
-  // Fetch jobs
-  const { 
-    data, 
-    isLoading, 
-    refetch, 
-    isRefetching 
-  } = useQuery({
+
+  const { data, isLoading, refetch, isRefetching } = useQuery({
     queryKey: ['jobs'],
     queryFn: documentsApi.listJobs,
-    refetchInterval: 10000, // Poll every 10 seconds for status updates
+    refetchInterval: 10000,
   });
 
-  const jobs = useMemo(() => {
-    return data?.jobs || [];
-  }, [data]);
+  const jobs = useMemo(() => data?.jobs || [], [data]);
 
-  // Highlight newly created jobs
   const newJobIds = useMemo(() => {
     if (params.newJobIds) {
-      try {
-        return JSON.parse(params.newJobIds) as string[];
-      } catch {
-        return [];
-      }
+      try { return JSON.parse(params.newJobIds) as string[]; }
+      catch { return []; }
     }
     return [];
   }, [params.newJobIds]);
@@ -73,350 +69,358 @@ export default function JobsScreen() {
       Alert.alert('Not Ready', 'This job is not yet complete.');
       return;
     }
-
     try {
-      // Get download URL
       const { download_url } = await documentsApi.getJobOutput(job.job_id);
-      
-      // Download the file
       const filename = `rythmiq_${job.job_id.substring(0, 8)}.zip`;
-      // Use type assertion for FileSystem properties that may vary by version
       const fs = FileSystem as any;
       const cacheDir = fs.cacheDirectory || fs.documentDirectory || '';
-      const downloadPath = `${cacheDir}${filename}`;
-      
-      const downloadResult = await FileSystem.downloadAsync(
-        download_url,
-        downloadPath
-      );
-
-      if (downloadResult.status !== 200) {
-        throw new Error('Download failed');
-      }
-
-      // Share the file
+      const result = await FileSystem.downloadAsync(download_url, `${cacheDir}${filename}`);
+      if (result.status !== 200) throw new Error('Download failed');
       if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(downloadPath, {
-          mimeType: 'application/zip',
-          dialogTitle: 'Save Processed Documents',
-        });
+        await Sharing.shareAsync(result.uri, { mimeType: 'application/zip', dialogTitle: 'Save Processed Documents' });
       } else {
-        Alert.alert('Success', 'File downloaded to: ' + downloadPath);
+        Alert.alert('Success', 'File downloaded to: ' + result.uri);
       }
     } catch (error) {
-      console.error('Download error:', error);
       Alert.alert('Download Failed', 'Could not download the file. Please try again.');
     }
   }, []);
 
   const handleJobPress = useCallback((job: JobStatus) => {
-    router.push({
-      pathname: '/(tabs)/job-detail',
-      params: { jobId: job.job_id },
-    });
+    router.push({ pathname: '/(tabs)/job-detail', params: { jobId: job.job_id } });
   }, []);
 
+  const completed  = jobs.filter(j => j.status === 'completed').length;
+  const processing = jobs.filter(j => j.status === 'processing').length;
+  const pending    = jobs.filter(j => j.status === 'pending').length;
+
   const renderJob = useCallback(({ item }: { item: JobStatus }) => {
-    const statusConfig = STATUS_CONFIG[item.status] || STATUS_CONFIG.pending;
+    const cfg = STATUS_CONFIG[item.status as JobStatusType] || STATUS_CONFIG.pending;
     const isNew = newJobIds.includes(item.job_id);
-    const isProcessing = item.status === 'processing';
+    const isActive = item.status === 'processing' || item.status === 'pending';
+
+    const hasQuality = item.quality_score !== undefined && item.status === 'completed';
+    const qualityColor = (item.quality_score ?? 0) >= 0.8 ? Colors.palette.green : Colors.palette.amber;
 
     return (
       <TouchableOpacity
-        style={[styles.jobItem, isNew && styles.jobItemNew]}
+        style={[styles.jobCard, { borderColor: isNew ? cfg.color + '40' : 'rgba(255,255,255,0.05)' }]}
         onPress={() => handleJobPress(item)}
+        activeOpacity={0.75}
       >
-        <View style={styles.jobIcon}>
-          {isProcessing ? (
-            <ActivityIndicator size="small" color={statusConfig.color} />
-          ) : (
-            <Ionicons name={statusConfig.icon} size={24} color={statusConfig.color} />
-          )}
+        {/* Status icon */}
+        <View style={[styles.jobIconWrap, { backgroundColor: cfg.color + '18' }]}>
+          {isActive
+            ? <ActivityIndicator size="small" color={cfg.color} />
+            : item.status === 'completed'
+              ? <CheckCircle size={22} color={cfg.color} />
+              : item.status === 'failed'
+                ? <XCircle size={22} color={cfg.color} />
+                : <Clock size={22} color={cfg.color} />
+          }
         </View>
-        
+
+        {/* Info */}
         <View style={styles.jobInfo}>
-          <Text style={styles.jobId}>
-            Job #{item.job_id.substring(0, 8)}
-          </Text>
-          <View style={styles.statusRow}>
-            <Text style={[styles.statusText, { color: statusConfig.color }]}>
-              {statusConfig.label}
-            </Text>
-            {item.quality_score !== undefined && item.status === 'completed' && (
-              <Text style={styles.qualityScore}>
-                Quality: {Math.round(item.quality_score * 100)}%
-              </Text>
+          <Text style={styles.jobId}>#{item.job_id.substring(0, 8)}</Text>
+          <View style={styles.jobMeta}>
+            <Text style={[styles.statusChip, { color: cfg.color }]}>{cfg.label}</Text>
+            {hasQuality && (
+              <View style={[styles.qualityBadge, { backgroundColor: qualityColor + '18' }]}>
+                <Text style={[styles.qualityText, { color: qualityColor }]}>
+                  {Math.round((item.quality_score ?? 0) * 100)}%
+                </Text>
+              </View>
             )}
           </View>
           {item.error && (
-            <Text style={styles.errorText} numberOfLines={2}>
-              {item.error.message}
-            </Text>
+            <Text style={styles.errorSnippet} numberOfLines={1}>{item.error.message}</Text>
           )}
         </View>
 
-        <Ionicons 
-          name={item.status === 'completed' ? 'chevron-forward' : 'chevron-forward-outline'} 
-          size={20} 
-          color={item.status === 'completed' ? '#007AFF' : '#C7C7CC'} 
-        />
+        <ChevronRight size={16} color="#333" />
       </TouchableOpacity>
     );
   }, [newJobIds, handleJobPress]);
 
-  const ListEmptyComponent = useCallback(() => (
-    <View style={styles.emptyContainer}>
-      <Ionicons name="document-text-outline" size={64} color="#C7C7CC" />
-      <Text style={styles.emptyTitle}>No Documents Yet</Text>
-      <Text style={styles.emptyMessage}>
-        Capture or upload documents to get started
-      </Text>
-      <TouchableOpacity
-        style={styles.emptyButton}
-        onPress={() => router.push('/(tabs)/capture')}
-      >
-        <Ionicons name="camera" size={20} color="white" />
-        <Text style={styles.emptyButtonText}>Scan Document</Text>
-      </TouchableOpacity>
-    </View>
-  ), []);
-
   if (isLoading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#007AFF" />
-        <Text style={styles.loadingText}>Loading jobs...</Text>
-      </View>
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color="#89C7FE" />
+          <Text style={styles.hint}>Loading documents…</Text>
+        </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>My Documents</Text>
-        <TouchableOpacity onPress={() => refetch()}>
-          <Ionicons name="refresh" size={24} color="#007AFF" />
-        </TouchableOpacity>
+        <View style={styles.headerTop}>
+          <Text style={styles.titleSub}>
+            {jobs.length === 0 ? 'Nothing here yet' : `${jobs.length} job${jobs.length !== 1 ? 's' : ''}`}
+          </Text>
+          <TouchableOpacity
+            onPress={() => refetch()}
+            style={styles.iconButton}
+            activeOpacity={0.7}
+          >
+            {isRefetching
+              ? <ActivityIndicator size="small" color="#555" />
+              : <RefreshCw size={20} color="#555" />}
+          </TouchableOpacity>
+        </View>
+        <Text style={styles.titleMain}>Processing Jobs</Text>
       </View>
 
-      {/* Stats */}
-      {jobs.length > 0 && (
-        <View style={styles.statsContainer}>
-          <View style={styles.statItem}>
-            <Text style={styles.statValue}>
-              {jobs.filter(j => j.status === 'completed').length}
-            </Text>
-            <Text style={styles.statLabel}>Completed</Text>
-          </View>
-          <View style={styles.statDivider} />
-          <View style={styles.statItem}>
-            <Text style={styles.statValue}>
-              {jobs.filter(j => j.status === 'processing').length}
-            </Text>
-            <Text style={styles.statLabel}>Processing</Text>
-          </View>
-          <View style={styles.statDivider} />
-          <View style={styles.statItem}>
-            <Text style={styles.statValue}>
-              {jobs.filter(j => j.status === 'pending').length}
-            </Text>
-            <Text style={styles.statLabel}>Pending</Text>
-          </View>
-        </View>
-      )}
-
-      {/* Jobs List */}
       <FlatList
         data={jobs}
         keyExtractor={(item) => item.job_id}
         renderItem={renderJob}
-        ListEmptyComponent={ListEmptyComponent}
-        contentContainerStyle={jobs.length === 0 ? styles.emptyList : styles.list}
-        refreshControl={
-          <RefreshControl
-            refreshing={isRefetching}
-            onRefresh={refetch}
-            tintColor="#007AFF"
-          />
-        }
+        onRefresh={refetch}
+        refreshing={isRefetching}
         showsVerticalScrollIndicator={false}
-      />
+        contentContainerStyle={jobs.length === 0 ? styles.emptyContent : styles.listContent}
+        ListHeaderComponent={jobs.length > 0 ? (
+          <>
+            {/* Stats strip */}
+            <View style={styles.statsCard}>
+              <View style={styles.statCol}>
+                <Text style={[styles.statNum, { color: Colors.palette.green }]}>{completed}</Text>
+                <Text style={styles.statLbl}>Done</Text>
+              </View>
+              <View style={styles.divider} />
+              <View style={styles.statCol}>
+                <Text style={[styles.statNum, { color: '#89C7FE' }]}>{processing}</Text>
+                <Text style={styles.statLbl}>Active</Text>
+              </View>
+              <View style={styles.divider} />
+              <View style={styles.statCol}>
+                <Text style={[styles.statNum, { color: Colors.palette.amber }]}>{pending}</Text>
+                <Text style={styles.statLbl}>Queued</Text>
+              </View>
+            </View>
 
-      {/* FAB */}
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={() => router.push('/(tabs)/capture')}
-      >
-        <Ionicons name="add" size={28} color="white" />
-      </TouchableOpacity>
-    </View>
+            <Text style={styles.sectionLabel}>Recent</Text>
+          </>
+        ) : null}
+        ListEmptyComponent={(
+          <View style={styles.emptyBox}>
+            <View style={styles.emptyIconWrap}>
+              <FileText size={36} color="#333" />
+            </View>
+            <Text style={styles.emptyTitle}>No documents yet</Text>
+            <Text style={styles.emptyHint}>Capture or upload documents to get started.</Text>
+            <TouchableOpacity
+              style={styles.emptyButton}
+              onPress={() => router.push('/(tabs)/capture')}
+              activeOpacity={0.85}
+            >
+              <Camera size={18} color={Colors.palette.inkBlack} />
+              <Text style={styles.emptyButtonText}>Scan Document</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      />
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F2F2F7',
+    backgroundColor: Colors.palette.inkBlack,
   },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#F2F2F7',
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 16,
-    color: '#8E8E93',
-  },
+
+  // ── Header ─────────────────────────────────────────────
   header: {
+    paddingHorizontal: 24,
+    paddingTop: 8,
+    paddingBottom: 28,
+  },
+  headerTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: 60,
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-    backgroundColor: 'white',
+    marginBottom: 2,
   },
-  headerTitle: {
-    fontSize: 28,
-    fontWeight: '700',
-  },
-  statsContainer: {
-    flexDirection: 'row',
-    backgroundColor: 'white',
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    marginBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E5EA',
-  },
-  statItem: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  statValue: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#000',
-  },
-  statLabel: {
-    fontSize: 12,
-    color: '#8E8E93',
-    marginTop: 2,
-  },
-  statDivider: {
-    width: 1,
-    backgroundColor: '#E5E5EA',
-    marginHorizontal: 16,
-  },
-  list: {
-    padding: 16,
-  },
-  emptyList: {
-    flex: 1,
-    justifyContent: 'center',
-    padding: 16,
-  },
-  jobItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'white',
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  jobItemNew: {
-    borderWidth: 2,
-    borderColor: '#34C759',
-  },
-  jobIcon: {
+  iconButton: {
     width: 40,
     height: 40,
-    borderRadius: 20,
-    backgroundColor: '#F2F2F7',
-    justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
+    justifyContent: 'center',
+  },
+  titleSub: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#666',
+  },
+  titleMain: {
+    fontSize: 32,
+    fontWeight: '700',
+    color: Colors.palette.white,
+    lineHeight: 38,
+  },
+
+  // ── List / empty content ───────────────────────────────
+  listContent: {
+    paddingHorizontal: 24,
+    paddingBottom: 40,
+  },
+  emptyContent: {
+    flexGrow: 1,
+    paddingHorizontal: 24,
+  },
+
+  // ── Stats card ─────────────────────────────────────────
+  statsCard: {
+    flexDirection: 'row',
+    backgroundColor: Colors.palette.shadowGrey,
+    borderRadius: 22,
+    marginBottom: 12,
+    paddingVertical: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
+  statCol: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  statNum: {
+    fontSize: 26,
+    fontWeight: '700',
+  },
+  statLbl: {
+    fontSize: 11,
+    color: '#555',
+    marginTop: 3,
+    letterSpacing: 0.4,
+  },
+  divider: {
+    width: 1,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    marginVertical: 4,
+  },
+
+  // ── Section label ──────────────────────────────────────
+  sectionLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#555',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 10,
+  },
+
+  // ── Job card ───────────────────────────────────────────
+  jobCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.palette.shadowGrey,
+    borderRadius: 20,
+    padding: 16,
+    marginBottom: 10,
+    borderWidth: 1,
+    gap: 14,
+  },
+  jobIconWrap: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   jobInfo: {
     flex: 1,
   },
   jobId: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
-    color: '#000',
+    color: Colors.palette.white,
+    marginBottom: 5,
+    fontFamily: 'monospace',
   },
-  statusRow: {
+  jobMeta: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 4,
-    gap: 12,
+    gap: 8,
   },
-  statusText: {
-    fontSize: 14,
+  statusChip: {
+    fontSize: 13,
     fontWeight: '500',
   },
-  qualityScore: {
-    fontSize: 12,
-    color: '#8E8E93',
+  qualityBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
   },
-  errorText: {
+  qualityText: {
     fontSize: 12,
-    color: '#FF3B30',
+    fontWeight: '600',
+  },
+  errorSnippet: {
+    fontSize: 12,
+    color: Colors.palette.red,
     marginTop: 4,
   },
-  emptyContainer: {
+
+  // ── Empty state ────────────────────────────────────────
+  emptyBox: {
+    flex: 1,
     alignItems: 'center',
-    padding: 32,
+    justifyContent: 'center',
+    paddingBottom: 80,
+  },
+  emptyIconWrap: {
+    width: 88,
+    height: 88,
+    borderRadius: 28,
+    backgroundColor: Colors.palette.shadowGrey,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
   },
   emptyTitle: {
     fontSize: 20,
-    fontWeight: '600',
-    color: '#000',
-    marginTop: 16,
+    fontWeight: '700',
+    color: Colors.palette.white,
+    marginBottom: 8,
   },
-  emptyMessage: {
-    fontSize: 16,
-    color: '#8E8E93',
-    marginTop: 8,
+  emptyHint: {
+    fontSize: 14,
+    color: '#555',
     textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 28,
   },
   emptyButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 24,
-    paddingVertical: 14,
-    borderRadius: 12,
-    marginTop: 24,
     gap: 8,
+    backgroundColor: Colors.palette.green,
+    paddingHorizontal: 28,
+    height: 52,
+    borderRadius: 26,
   },
   emptyButtonText: {
-    color: 'white',
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
+    color: Colors.palette.inkBlack,
   },
-  fab: {
-    position: 'absolute',
-    right: 20,
-    bottom: 100,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#007AFF',
+
+  // ── Loading ────────────────────────────────────────────
+  centered: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#007AFF',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
+    gap: 14,
+  },
+  hint: {
+    fontSize: 14,
+    color: '#555',
   },
 });

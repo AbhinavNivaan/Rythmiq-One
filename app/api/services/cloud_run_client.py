@@ -55,6 +55,7 @@ class CloudRunClient:
     def __init__(self, settings: Settings | None = None):
         self._settings = settings or get_settings()
         self._client: httpx.AsyncClient | None = None
+        self._fallback_client: Any | None = None
         # Cache job results (key: cloud_run_job_id, value: full response)
         # In production, this would be persisted to Redis/database
         self._result_cache: dict[str, dict[str, Any]] = {}
@@ -171,6 +172,20 @@ class CloudRunClient:
                 details={"job_id": str(job_id)},
             )
         except httpx.HTTPStatusError as e:
+            if e.response.status_code in (401, 403) and self._settings.service_env != "prod":
+                logger.warning(
+                    "Cloud Run auth denied in non-prod, falling back to local mock backend",
+                    extra={
+                        "job_id": str(job_id),
+                        "status_code": e.response.status_code,
+                        "service_env": self._settings.service_env,
+                    },
+                )
+                if self._fallback_client is None:
+                    from app.api.services.mock_camber_client import MockCamberClient
+                    self._fallback_client = MockCamberClient(self._settings)
+                return await self._fallback_client.submit_job(job_id=job_id, payload=payload)
+
             logger.error(
                 "Cloud Run HTTP error",
                 extra={
@@ -187,6 +202,16 @@ class CloudRunClient:
                 },
             )
         except httpx.RequestError as e:
+            if self._settings.service_env != "prod":
+                logger.warning(
+                    "Cloud Run request failed in non-prod, falling back to local mock backend",
+                    extra={"job_id": str(job_id), "service_env": self._settings.service_env},
+                )
+                if self._fallback_client is None:
+                    from app.api.services.mock_camber_client import MockCamberClient
+                    self._fallback_client = MockCamberClient(self._settings)
+                return await self._fallback_client.submit_job(job_id=job_id, payload=payload)
+
             logger.error(
                 "Cloud Run request failed",
                 extra={"job_id": str(job_id), "error": str(e)},

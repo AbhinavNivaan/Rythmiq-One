@@ -206,7 +206,7 @@ async def webhook_camber(
             # Store output metadata in job record
             try:
                 db.table("jobs").update({
-                    "output_metadata": {
+                    "metadata": {
                         "output_path": output_path,
                         "packaged": True,
                     }
@@ -222,10 +222,25 @@ async def webhook_camber(
                 "Failed to package output",
                 extra={
                     "job_id": str(job_id),
+                    "error_type": type(e).__name__,
                     "error": str(e),
                     "correlation_id": correlation_id,
                 },
+                exc_info=True,  # Include full traceback
             )
+            # Store error in metadata for debugging
+            try:
+                db.table("jobs").update({
+                    "metadata": {
+                        "packaging_error": str(e),
+                        "error_type": type(e).__name__,
+                    }
+                }).eq("id", str(job_id)).execute()
+            except Exception as meta_error:
+                logger.warning(
+                    "Could not update job with packaging error",
+                    extra={"job_id": str(job_id), "error": str(meta_error)},
+                )
             # Don't fail the webhook - job is still completed
             # Packaging can be retried later
 

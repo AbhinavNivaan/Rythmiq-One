@@ -21,7 +21,7 @@ import numpy as np
 from numpy.typing import NDArray
 from PIL import Image
 
-from models import SchemaDefinition, SchemaResult
+from models import SchemaDefinition, SchemaResult, MasterConstraints
 from errors import WorkerError, ErrorCode, ProcessingStage
 
 
@@ -382,6 +382,60 @@ def adapt_to_schema(
         )
 
 
+def adapt_master_document(
+    data: bytes,
+    constraints: MasterConstraints,
+    job_id: str,
+    user_id: str = "",
+    original_filename: str = "",
+) -> SchemaResult:
+    """
+    Optimize a master document for best quality under the configured size cap.
+
+    Unlike portal adaptation, this mode does NOT force fixed dimensions.
+    """
+    try:
+        cv_img, _ = decode_image(data)
+        h, w = cv_img.shape[:2]
+
+        compressed_data, _ = compress_to_size(
+            cv_img,
+            dpi=constraints.target_dpi,
+            max_kb=constraints.max_kb,
+            format=constraints.output_format,
+            initial_quality=constraints.quality,
+        )
+
+        filename = normalize_filename(
+            constraints.filename_pattern,
+            job_id=job_id,
+            user_id=user_id,
+            original_filename=original_filename,
+        )
+
+        ext = ".jpg" if constraints.output_format.lower() in ("jpeg", "jpg") else f".{constraints.output_format.lower()}"
+        if not filename.lower().endswith(ext):
+            filename = f"{filename}{ext}"
+
+        return SchemaResult(
+            image_data=compressed_data,
+            final_width=w,
+            final_height=h,
+            final_dpi=constraints.target_dpi,
+            final_size_kb=len(compressed_data) / 1024,
+            filename=filename,
+        )
+    except WorkerError:
+        raise
+    except Exception as e:
+        raise WorkerError(
+            code=ErrorCode.SCHEMA_FAILED,
+            stage=ProcessingStage.SCHEMA,
+            message=f"Master optimization failed: {str(e)}",
+            details={"exception_type": type(e).__name__},
+        )
+
+
 def verify_schema_compliance(
     data: bytes,
     schema: SchemaDefinition,
@@ -439,6 +493,7 @@ def verify_schema_compliance(
 
 __all__ = [
     'adapt_to_schema',
+    'adapt_master_document',
     'verify_schema_compliance',
     'normalize_filename',
     'resize_exact',

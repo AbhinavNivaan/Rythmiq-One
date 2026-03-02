@@ -182,7 +182,7 @@ export default function ErrorReportScreen() {
                   </>
                 ) : (
                   <>
-                    <Copy size={14} color={Colors.palette.mayaBlue} />
+                    <Copy size={14} color='#89C7FE' />
                     <Text style={styles.copyText}>Copy</Text>
                   </>
                 )}
@@ -328,7 +328,7 @@ const styles = StyleSheet.create({
   },
   copyText: {
     fontSize: 12,
-    color: Colors.palette.mayaBlue,
+    color: '#89C7FE',
   },
   debugBox: {
     backgroundColor: 'rgba(0, 0, 0, 0.3)',
@@ -347,7 +347,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: Colors.palette.trueCobalt,
+    backgroundColor: '#1A2595',
     paddingVertical: 16,
     borderRadius: 12,
     gap: 8,

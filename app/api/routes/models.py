@@ -4,7 +4,7 @@ Owns: Request/response schemas for all routes.
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -16,10 +16,16 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class CreateJobRequest(BaseModel):
-    portal_schema_name: str = Field(..., min_length=1, max_length=100)
+    job_type: Literal["master", "adapt"] = Field(default="master")
+    document_type: Literal["photo", "signature", "document"] = Field(default="document")
+    portal_schema_name: str | None = Field(default=None, min_length=1, max_length=100)
     filename: str = Field(..., min_length=1, max_length=255)
     mime_type: str = Field(..., pattern=r"^(image|application)/(jpeg|jpg|png|pdf)$")
     file_size_bytes: int = Field(..., gt=0, le=52_428_800)  # 50MB max
+    defer_processing: bool = Field(
+        default=False,
+        description="If true, creates pending job + upload URL without dispatching processing. Client must call /jobs/{job_id}/submit after upload.",
+    )
 
     @field_validator("filename")
     @classmethod
@@ -28,11 +34,24 @@ class CreateJobRequest(BaseModel):
             raise ValueError("Invalid filename")
         return v
 
+    @field_validator("portal_schema_name")
+    @classmethod
+    def validate_portal_schema_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        value = v.strip()
+        return value or None
+
 
 class CreateJobResponse(BaseModel):
     job_id: UUID
     upload_url: str
     upload_expires_at: datetime
+
+
+class SubmitJobResponse(BaseModel):
+    job_id: UUID
+    status: str
 
 
 class JobStatusResponse(BaseModel):
@@ -52,6 +71,7 @@ class JobStatusResponse(BaseModel):
     completed_at: datetime | None = None
     error_details: dict[str, Any] | None = None
     download_url: str | None = None
+    preview_url: str | None = None
 
 
 class JobOutputResponse(BaseModel):

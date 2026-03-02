@@ -152,18 +152,52 @@ class StorageService:
         Raises:
             StorageException: Upload failed
         """
-        body = data if isinstance(data, bytes) else data
+        # Convert BytesIO to bytes if needed
+        if isinstance(data, BytesIO):
+            data.seek(0)  # Reset to beginning
+            body = data.read()
+            logger.debug(
+                "Converted BytesIO to bytes",
+                extra={"storage_path": storage_path, "size_bytes": len(body)}
+            )
+        else:
+            body = data
+            logger.debug(
+                "Using bytes directly",
+                extra={"storage_path": storage_path, "size_bytes": len(body) if isinstance(body, bytes) else "unknown"}
+            )
+        
         try:
+            logger.debug(
+                "Starting S3 put_object",
+                extra={
+                    "storage_path": storage_path,
+                    "bucket": self._settings.spaces_bucket,
+                    "content_type": content_type,
+                }
+            )
             self._client.put_object(
                 Bucket=self._settings.spaces_bucket,
                 Key=storage_path,
                 Body=body,
                 ContentType=content_type,
             )
-            logger.info("Object uploaded", extra={"storage_path": storage_path})
+            logger.info(
+                "Object uploaded successfully",
+                extra={"storage_path": storage_path, "size_bytes": len(body) if isinstance(body, bytes) else "unknown"},
+            )
         except (BotoCoreError, ClientError) as e:
-            logger.error("Failed to upload object", extra={"storage_path": storage_path, "error": str(e)})
-            raise StorageException("Failed to upload object")
+            logger.error(
+                "Failed to upload object to S3",
+                extra={
+                    "storage_path": storage_path,
+                    "bucket": self._settings.spaces_bucket,
+                    "error_type": type(e).__name__,
+                    "error": str(e),
+                    "error_code": getattr(e, 'response', {}).get('Error', {}).get('Code', 'unknown'),
+                }
+            )
+            raise StorageException("Failed to upload object") from e
 
     def list_objects(self, prefix: str) -> Iterator[dict]:
         """

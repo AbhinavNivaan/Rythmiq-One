@@ -133,7 +133,7 @@ export function ErrorState({
             onPress={actions[0].onPress}
             activeOpacity={0.7}
           >
-            <RefreshCw size={18} color={Colors.palette.mayaBlue} />
+            <RefreshCw size={18} color='#89C7FE' />
           </TouchableOpacity>
         )}
       </View>
@@ -176,13 +176,13 @@ export function ErrorState({
               {action.label === 'Retry' && (
                 <RefreshCw 
                   size={18} 
-                  color={action.variant === 'secondary' ? Colors.palette.mayaBlue : Colors.palette.white} 
+                  color={action.variant === 'secondary' ? '#89C7FE' : Colors.palette.white} 
                 />
               )}
               {action.label === 'Retake Photo' && (
                 <Camera 
                   size={18} 
-                  color={action.variant === 'secondary' ? Colors.palette.mayaBlue : Colors.palette.white} 
+                  color={action.variant === 'secondary' ? '#89C7FE' : Colors.palette.white} 
                 />
               )}
               <Text style={[
@@ -274,12 +274,12 @@ const styles = StyleSheet.create({
     minWidth: 120,
   },
   primaryButton: {
-    backgroundColor: Colors.palette.trueCobalt,
+    backgroundColor: '#1A2595',
   },
   secondaryButton: {
     backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: Colors.palette.mayaBlue,
+    borderColor: '#89C7FE',
   },
   actionText: {
     fontSize: 16,
@@ -289,7 +289,7 @@ const styles = StyleSheet.create({
     color: Colors.palette.white,
   },
   secondaryText: {
-    color: Colors.palette.mayaBlue,
+    color: '#89C7FE',
   },
   reportButton: {
     flexDirection: 'row',

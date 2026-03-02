@@ -42,6 +42,27 @@ class SchemaDefinition:
 
 
 @dataclass(frozen=True)
+class MasterConstraints:
+    """Master document optimization constraints."""
+    max_kb: int = 2000
+    target_dpi: int = 300
+    output_format: str = "jpeg"
+    quality: int = 92
+    filename_pattern: str = "{job_id}_master"
+
+    @staticmethod
+    def from_dict(data: Dict[str, Any] | None) -> MasterConstraints:
+        payload = data or {}
+        return MasterConstraints(
+            max_kb=int(payload.get("max_kb", 2000)),
+            target_dpi=int(payload.get("target_dpi", 300)),
+            output_format=str(payload.get("output_format", "jpeg")),
+            quality=int(payload.get("quality", 92)),
+            filename_pattern=str(payload.get("filename_pattern", "{job_id}_master")),
+        )
+
+
+@dataclass(frozen=True)
 class PortalSchema:
     """Complete portal schema with metadata."""
     id: str
@@ -157,10 +178,13 @@ class JobPayload:
     """
     job_id: str
     user_id: str
-    sek_b64: Optional[str]
-    portal_schema: PortalSchema
+    master_constraints: MasterConstraints
     input: InputSpec
     storage: StorageSpec
+    sek_b64: Optional[str]
+    portal_schema: Optional[PortalSchema]
+    mode: Literal["master", "adapt"] = "master"
+    document_type: Literal["photo", "signature", "document"] = "document"
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> JobPayload:
@@ -187,11 +211,31 @@ class JobPayload:
         except ValueError:
             raise ValueError(f"user_id must be a valid UUIDv4: {user_id}")
         
+        mode = str(data.get("mode", "master")).lower()
+        if mode not in ("master", "adapt"):
+            raise ValueError(f"mode must be 'master' or 'adapt', got: {mode}")
+
+        document_type = str(data.get("document_type", "document")).lower()
+        if document_type not in ("photo", "signature", "document"):
+            raise ValueError(
+                f"document_type must be one of ['photo', 'signature', 'document'], got: {document_type}"
+            )
+
+        portal_schema_data = data.get("portal_schema", {})
+        portal_schema = None
+        if mode == "adapt":
+            portal_schema = PortalSchema.from_dict(portal_schema_data)
+        elif portal_schema_data:
+            portal_schema = PortalSchema.from_dict(portal_schema_data)
+
         return JobPayload(
             job_id=str(job_id),
             user_id=str(user_id),
+            mode=mode,
+            document_type=document_type,
             sek_b64=data.get("sek_b64"),
-            portal_schema=PortalSchema.from_dict(data.get("portal_schema", {})),
+            portal_schema=portal_schema,
+            master_constraints=MasterConstraints.from_dict(data.get("master_constraints")),
             input=InputSpec.from_dict(data.get("input", {})),
             storage=StorageSpec.from_dict(data.get("storage", {})),
         )

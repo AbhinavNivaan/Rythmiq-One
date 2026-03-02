@@ -47,7 +47,7 @@ const STATUS_CONFIG: Record<AdaptStatus, {
   },
   processing: {
     icon: RefreshCw,
-    color: Colors.palette.mayaBlue,
+    color: '#89C7FE',
     title: 'Adapting',
     subtitle: 'Preparing your documents...',
   },
@@ -252,7 +252,7 @@ export default function AdaptStatusScreen() {
         {isComplete && adaptStatus?.zip_url && (
           <View style={styles.fileInfo}>
             <View style={styles.fileIcon}>
-              <FileArchive size={24} color={Colors.palette.mayaBlue} />
+              <FileArchive size={24} color='#89C7FE' />
             </View>
             <View>
               <Text style={styles.fileName}>{portalName || 'Portal'}_export.zip</Text>
@@ -287,7 +287,7 @@ export default function AdaptStatusScreen() {
               onPress={handleShare}
               activeOpacity={0.8}
             >
-              <Share2 size={20} color={Colors.palette.mayaBlue} />
+              <Share2 size={20} color='#89C7FE' />
               <Text style={styles.secondaryButtonText}>Share</Text>
             </TouchableOpacity>
           </>
@@ -381,7 +381,7 @@ const styles = StyleSheet.create({
   },
   progressBarStatic: {
     height: '100%',
-    backgroundColor: Colors.palette.mayaBlue,
+    backgroundColor: '#89C7FE',
     borderRadius: 3,
   },
   progressText: {
@@ -402,7 +402,7 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 12,
-    backgroundColor: Colors.palette.mayaBlue + '20',
+    backgroundColor: '#89C7FE20',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -425,7 +425,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: Colors.palette.trueCobalt,
+    backgroundColor: '#1A2595',
     borderRadius: 16,
     height: 56,
     gap: 8,
@@ -447,7 +447,7 @@ const styles = StyleSheet.create({
   secondaryButtonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: Colors.palette.mayaBlue,
+    color: '#89C7FE',
   },
   linkButton: {
     alignItems: 'center',

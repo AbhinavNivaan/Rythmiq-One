@@ -11,8 +11,6 @@ Only for dev/test - production uses real Camber client.
 """
 
 import asyncio
-import hashlib
-import hmac
 import json
 import logging
 from datetime import datetime
@@ -245,13 +243,6 @@ class MockCamberClient:
             "timestamp": datetime.utcnow().isoformat(),
         }
 
-        # Compute webhook signature
-        secret = self._settings.webhook_secret.encode()
-        payload_json = json.dumps(webhook_payload, separators=(",", ":"))
-        signature = hmac.new(
-            secret, payload_json.encode(), hashlib.sha256
-        ).hexdigest()
-
         logger.info(
             "[MOCK CAMBER] webhook delivering",
             extra={
@@ -267,7 +258,7 @@ class MockCamberClient:
                 webhook_url,
                 json=webhook_payload,
                 headers={
-                    "X-Webhook-Secret": signature,
+                    "X-Webhook-Secret": self._settings.webhook_secret,
                 },
                 timeout=5.0,
             )

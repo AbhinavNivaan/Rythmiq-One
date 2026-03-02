@@ -51,7 +51,7 @@ from storage.spaces_client import (
 from processors.quality import assess_quality, check_quality_warning, QUALITY_WARNING_THRESHOLD
 from processors.ocr import extract_text_safe
 from processors.enhancement import enhance_image, EnhancementOptions
-from processors.schema import adapt_to_schema
+from processors.schema import adapt_to_schema, adapt_master_document
 from crypto import encrypt_file as crypto_encrypt, sek_from_base64, nonce_to_base64
 
 
@@ -193,14 +193,28 @@ def process_job(payload: JobPayload) -> SuccessResult:
     if ocr_warning:
         warnings.append(ocr_warning)
     
-    # Stage 5: SCHEMA - Adapt to target format
-    schema_result = adapt_to_schema(
-        data=final_image_data,
-        schema=payload.portal_schema.schema_definition,
-        job_id=payload.job_id,
-        user_id=payload.user_id,
-        original_filename=payload.input.original_filename,
-    )
+    # Stage 5: OUTPUT TRANSFORM
+    # - master mode: optimize best possible output under size cap
+    # - adapt mode: enforce portal schema constraints
+    if payload.mode == "master":
+        schema_result = adapt_master_document(
+            data=final_image_data,
+            constraints=payload.master_constraints,
+            job_id=payload.job_id,
+            user_id=payload.user_id,
+            original_filename=payload.input.original_filename,
+        )
+    else:
+        if payload.portal_schema is None:
+            raise payload_invalid("portal_schema is required for adapt mode")
+
+        schema_result = adapt_to_schema(
+            data=final_image_data,
+            schema=payload.portal_schema.schema_definition,
+            job_id=payload.job_id,
+            user_id=payload.user_id,
+            original_filename=payload.input.original_filename,
+        )
     
     # Stage 6: ENCRYPT - Encrypt output before storage (if SEK provided)
     upload_data = schema_result.image_data

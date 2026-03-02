@@ -1,0 +1,166 @@
+{
+  "_comment": "GOVERNMENT ID TEMPLATE — Copy this file, rename to {doc_type}_{country}_{variant}.json, fill in all REQUIRED fields, remove all _comment keys before injecting.",
+
+  "schema_id":      "REQUIRED — e.g. passport_india_fresh",
+  "schema_type":    "government_id",
+  "schema_version": "1.0.0",
+  "status":         "active",
+
+  "metadata": {
+    "display_name":    "REQUIRED — e.g. Indian Passport Application (Fresh)",
+    "short_name":      "REQUIRED — e.g. Passport (Fresh)",
+    "conducting_body": "REQUIRED — e.g. Ministry of External Affairs, Govt. of India",
+    "official_website":"OPTIONAL — e.g. https://passportindia.gov.in",
+    "category":        "REQUIRED — one of: passport | visa | aadhaar | pan | voter_id | driving_licence | birth_certificate | other_govt_id",
+    "applicable_year": 2026,
+    "country":         "IN",
+    "language":        "en"
+  },
+
+  "_comment_key_dates": "key_dates is OPTIONAL for government_id. Include if there are application windows or deadlines.",
+  "key_dates": {
+    "application_window_opens": "YYYY-MM-DD",
+    "application_window_closes":"YYYY-MM-DD"
+  },
+
+  "form_sections": [
+    {
+      "section_id": "applicant_details",
+      "title":      "Applicant Details",
+      "order":      1,
+      "fields": [
+        { "field_id": "given_name",        "label": "Given Name (as in Aadhaar)",   "type": "string",  "required": true },
+        { "field_id": "surname",           "label": "Surname",                      "type": "string",  "required": false },
+        { "field_id": "date_of_birth",     "label": "Date of Birth",                "type": "date",    "required": true, "validation": { "format": "DD/MM/YYYY" } },
+        { "field_id": "place_of_birth",    "label": "Place of Birth (City)",        "type": "string",  "required": true },
+        { "field_id": "gender",            "label": "Gender",                       "type": "enum",    "required": true, "enum_values": ["Male", "Female", "Third Gender"] },
+        { "field_id": "marital_status",    "label": "Marital Status",               "type": "enum",    "required": true, "enum_values": ["Single", "Married", "Divorced", "Widowed"] },
+        { "field_id": "nationality",       "label": "Nationality",                  "type": "string",  "required": true },
+        { "field_id": "aadhaar_number",    "label": "Aadhaar Number",               "type": "string",  "required": true, "validation": { "pattern": "^[0-9]{12}$" } }
+      ]
+    },
+    {
+      "section_id": "contact_and_address",
+      "title":      "Contact & Address",
+      "order":      2,
+      "fields": [
+        { "field_id": "mobile_number",     "label": "Mobile Number",  "type": "string", "required": true,  "verification": "OTP", "validation": { "pattern": "^[6-9][0-9]{9}$" } },
+        { "field_id": "email_id",          "label": "Email ID",       "type": "string", "required": true,  "verification": "OTP" },
+        { "field_id": "present_address",   "label": "Present Address",
+          "type": "object", "required": true,
+          "fields": [
+            { "field_id": "address_line1", "label": "Address Line 1", "type": "string",  "required": true },
+            { "field_id": "address_line2", "label": "Address Line 2", "type": "string",  "required": false },
+            { "field_id": "city",          "label": "City / Town",    "type": "string",  "required": true },
+            { "field_id": "state",         "label": "State",          "type": "string",  "required": true },
+            { "field_id": "pin_code",      "label": "PIN Code",       "type": "string",  "required": true, "validation": { "pattern": "^[1-9][0-9]{5}$" } }
+          ]
+        }
+      ]
+    },
+    {
+      "section_id": "emergency_contact",
+      "title":      "Emergency Contact",
+      "order":      3,
+      "fields": [
+        { "field_id": "emergency_contact_name",   "label": "Full Name",     "type": "string", "required": true },
+        { "field_id": "emergency_contact_mobile", "label": "Mobile Number", "type": "string", "required": true, "validation": { "pattern": "^[6-9][0-9]{9}$" } },
+        { "field_id": "emergency_contact_relation","label": "Relationship",  "type": "string", "required": true }
+      ]
+    },
+    {
+      "section_id": "application_type",
+      "title":      "Application Type",
+      "order":      4,
+      "fields": [
+        {
+          "field_id":    "application_type",
+          "label":       "Application Type",
+          "type":        "enum",
+          "required":    true,
+          "enum_values": ["Fresh", "Re-issue (Normal)", "Re-issue (Tatkaal)", "ADD_MORE_AS_APPLICABLE"]
+        },
+        {
+          "field_id":    "passport_booklet_type",
+          "label":       "Passport Booklet Type",
+          "type":        "enum",
+          "required":    false,
+          "enum_values": ["36 pages", "60 pages"]
+        }
+      ]
+    }
+  ],
+
+  "document_uploads": [
+    {
+      "doc_id":          "photograph",
+      "label":           "Passport-size Photograph",
+      "description":     "35mm x 45mm, white background, printed on matte paper",
+      "allowed_formats": ["JPG", "JPEG"],
+      "size_min_kb":     10,
+      "size_max_kb":     500,
+      "required":        true,
+      "required_if":     null,
+      "specifications":  [
+        "35mm x 45mm size",
+        "White background",
+        "Face clearly visible, no shadows",
+        "No glasses, cap, or headgear (unless for religious reasons)"
+      ]
+    },
+    {
+      "doc_id":          "proof_of_identity",
+      "label":           "Proof of Identity",
+      "description":     "Aadhaar card, Voter ID, or PAN card",
+      "allowed_formats": ["PDF"],
+      "size_min_kb":     50,
+      "size_max_kb":     500,
+      "required":        true,
+      "required_if":     null
+    },
+    {
+      "doc_id":          "proof_of_address",
+      "label":           "Proof of Present Address",
+      "description":     "Aadhaar, utility bill (not older than 3 months), bank statement",
+      "allowed_formats": ["PDF"],
+      "size_min_kb":     50,
+      "size_max_kb":     500,
+      "required":        true,
+      "required_if":     null
+    },
+    {
+      "doc_id":          "proof_of_date_of_birth",
+      "label":           "Proof of Date of Birth",
+      "description":     "Birth certificate, Class 10 marksheet, or Aadhaar",
+      "allowed_formats": ["PDF"],
+      "size_min_kb":     50,
+      "size_max_kb":     500,
+      "required":        true,
+      "required_if":     null
+    },
+    {
+      "doc_id":          "existing_passport",
+      "label":           "Existing Passport (for Re-issue)",
+      "description":     "Scan of all used pages of the old passport",
+      "allowed_formats": ["PDF"],
+      "size_min_kb":     50,
+      "size_max_kb":     2000,
+      "required":        false,
+      "required_if":     "application_type != Fresh"
+    }
+  ],
+
+  "fee_structure": {
+    "currency":      "INR",
+    "payment_modes": ["Net Banking", "UPI", "Credit Card", "Debit Card", "SBI Bank Challan"],
+    "tiers": [
+      { "category": "Fresh — 36 pages",             "amount": 0 },
+      { "category": "Fresh — 60 pages",             "amount": 0 },
+      { "category": "Re-issue — Normal, 36 pages",  "amount": 0 },
+      { "category": "Re-issue — Normal, 60 pages",  "amount": 0 },
+      { "category": "Re-issue — Tatkaal, 36 pages", "amount": 0 },
+      { "category": "Re-issue — Tatkaal, 60 pages", "amount": 0 },
+      { "category": "Minor (below 18 years)",        "amount": 0 }
+    ]
+  }
+}

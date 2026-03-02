@@ -1,37 +1,98 @@
 import React from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, Image } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, Image, Animated, Keyboard } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { HelpCircle, Bell, Search, Mic, User, Plus } from 'lucide-react-native';
+import { Bell, Search, Mic, User } from 'lucide-react-native';
 import Colors from '../../constants/Colors';
 import ActionCard from '../../components/ui/ActionCard';
-import LayersDocumentIcon from '../../components/ui/LayersDocumentIcon';
 import ScanIcon from '../../components/ui/icons/ScanIcon';
 import CustomExportIcon from '../../components/ui/icons/CustomExportIcon';
 import ExportIcon from '../../components/ui/icons/ExportIcon';
 import RythmiqLogoIcon from '../../components/ui/icons/RythmiqLogoIcon';
+import NotificationsPanel from '../../components/ui/NotificationsPanel';
 import { router } from 'expo-router';
+import { useAuth } from '../../contexts/AuthContext';
+import { isDevSandboxMode } from '../../services/api';
 
 export default function Dashboard() {
+    const { user } = useAuth();
+    const [notificationsPanelVisible, setNotificationsPanelVisible] = React.useState(false);
+    const [unreadCount, setUnreadCount] = React.useState(0);
+    const [isSearchFocused, setIsSearchFocused] = React.useState(false);
+    const overlayAnim = React.useRef(new Animated.Value(0)).current;
+    const searchInputRef = React.useRef<TextInput>(null);
+
+    const greetingName = React.useMemo(() => {
+        if (isDevSandboxMode()) {
+            return 'Guest';
+        }
+
+        const displayName = user?.name?.trim();
+        if (displayName) {
+            const [firstName] = displayName.split(/\s+/);
+            return firstName;
+        }
+
+        const emailLocalPart = user?.email?.split('@')[0]?.trim();
+        if (emailLocalPart) {
+            return emailLocalPart;
+        }
+
+        return 'Guest';
+    }, [user]);
+
+    React.useEffect(() => {
+        if (isSearchFocused) {
+            overlayAnim.setValue(0);
+            Animated.timing(overlayAnim, {
+                toValue: 1,
+                duration: 220,
+                useNativeDriver: true,
+            }).start(() => searchInputRef.current?.focus());
+        }
+    }, [isSearchFocused]);
+
+    const openSearch = () => setIsSearchFocused(true);
+
+    const closeSearch = () => {
+        Keyboard.dismiss();
+        Animated.timing(overlayAnim, {
+            toValue: 0,
+            duration: 180,
+            useNativeDriver: true,
+        }).start(() => setIsSearchFocused(false));
+    };
+
+    const searchBarTranslateY = overlayAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: [-20, 0],
+    });
+
     return (
         <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-            {/* Dev Sandbox Banner - only shows in dev sandbox mode */}
-            
             {/* Header */}
             <View style={styles.header}>
-                <TouchableOpacity>
-                    <HelpCircle size={24} color={Colors.palette.white} />
+                <TouchableOpacity
+                    style={styles.headerProfileButton}
+                    onPress={() => router.push('/(tabs)/profile')}
+                >
+                    <User size={24} color={Colors.palette.white} />
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.notificationButton}>
+                <TouchableOpacity
+                    style={styles.notificationButton}
+                    onPress={() => setNotificationsPanelVisible(true)}
+                >
                     <Bell size={24} color={Colors.palette.white} />
-                    <View style={styles.badge}>
-                        <Text style={styles.badgeText}>4</Text>
-                    </View>
+                    {unreadCount > 0 && (
+                        <View style={styles.badge}>
+                            <Text style={styles.badgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
+                        </View>
+                    )}
                 </TouchableOpacity>
             </View>
 
             {/* Greeting */}
             <View style={styles.greetingContainer}>
-                <Text style={styles.greetingTitle}>Hi Kelvin,</Text>
+                <Text style={styles.greetingTitle}>Hi {greetingName},</Text>
                 <Text style={styles.greetingSubtitle}>How can I help{'\n'}you today?</Text>
             </View>
 
@@ -39,7 +100,7 @@ export default function Dashboard() {
             <View style={styles.gridContainer}>
                 <View style={styles.row}>
                     <ActionCard
-                        title="Scan"
+                        title="Upload"
                         description="Add new documents"
                         icon={ScanIcon}
                         onPress={() => router.push('/(tabs)/capture')}
@@ -67,42 +128,55 @@ export default function Dashboard() {
                 </View>
             </View>
 
-            {/* Search Bar */}
-            <View style={styles.searchSection}>
+            {/* Search Bar (tap target — not directly editable) */}
+            <TouchableOpacity style={styles.searchSection} onPress={openSearch} activeOpacity={1}>
                 <View style={styles.searchBar}>
                     <Search size={20} color="#999" />
-                    <TextInput
-                        style={styles.searchInput}
-                        placeholder="Search"
-                        placeholderTextColor="#999"
-                    />
-                    <TouchableOpacity>
-                        <Mic size={20} color="#999" />
-                    </TouchableOpacity>
+                    <Text style={styles.searchPlaceholder}>Search</Text>
+                    <Mic size={20} color="#999" />
                 </View>
-            </View>
+            </TouchableOpacity>
 
-            {/* Bottom Action Buttons */}
-            <View style={styles.bottomActions}>
-                <View style={styles.bottomButtonGroup}>
-                    <TouchableOpacity 
-                        style={styles.layersButton}
-                        onPress={() => router.push('/(tabs)/jobs')}
+            {/* Search Overlay */}
+            {isSearchFocused && (
+                <View style={StyleSheet.absoluteFillObject} pointerEvents="box-none">
+                    {/* Backdrop */}
+                    <Animated.View
+                        style={[StyleSheet.absoluteFillObject, styles.searchBackdrop, { opacity: overlayAnim }]}
+                        pointerEvents="none"
+                    />
+                    <TouchableOpacity
+                        style={StyleSheet.absoluteFillObject}
+                        onPress={closeSearch}
+                        activeOpacity={1}
+                    />
+                    {/* Animated search bar at top */}
+                    <Animated.View
+                        style={[
+                            styles.searchOverlayBar,
+                            { opacity: overlayAnim, transform: [{ translateY: searchBarTranslateY }] },
+                        ]}
+                        onStartShouldSetResponder={() => true}
                     >
-                        <LayersDocumentIcon size={30} color={Colors.palette.inkBlack} />
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.profileButton}>
-                        <View style={styles.profileIconContainer}>
-                            <User size={24} color={Colors.palette.white} />
-                        </View>
-                    </TouchableOpacity>
+                        <Search size={20} color="#999" />
+                        <TextInput
+                            ref={searchInputRef}
+                            style={styles.searchInput}
+                            placeholder="Search"
+                            placeholderTextColor="#999"
+                        />
+                        <TouchableOpacity onPress={closeSearch}>
+                            <Text style={styles.cancelText}>Cancel</Text>
+                        </TouchableOpacity>
+                    </Animated.View>
                 </View>
-                <TouchableOpacity style={styles.addButton}>
-                    <View style={styles.addButtonInner}>
-                        <Plus size={32} color={Colors.palette.white} />
-                    </View>
-                </TouchableOpacity>
-            </View>
+            )}
+
+            <NotificationsPanel
+                visible={notificationsPanelVisible}
+                onClose={() => setNotificationsPanelVisible(false)}
+                onUnreadCountChange={setUnreadCount}
+            />
         </SafeAreaView>
     );
 }
@@ -115,9 +189,16 @@ const styles = StyleSheet.create({
     header: {
         flexDirection: 'row',
         justifyContent: 'space-between',
+        alignItems: 'center',
         paddingHorizontal: 24,
         paddingTop: 8,
         paddingBottom: 16,
+    },
+    headerProfileButton: {
+        width: 24,
+        height: 24,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     notificationButton: {
         position: 'relative',
@@ -126,7 +207,7 @@ const styles = StyleSheet.create({
         position: 'absolute',
         top: -4,
         right: -4,
-        backgroundColor: '#FF6B00', // Orange badge color
+        backgroundColor: '#FF6B00',
         width: 16,
         height: 16,
         borderRadius: 8,
@@ -141,13 +222,15 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
     },
     greetingContainer: {
+        flex: 1,
         paddingHorizontal: 24,
-        marginBottom: 24,
+        justifyContent: 'flex-end',
+        paddingBottom: 24,
     },
     greetingTitle: {
-        fontSize: 32, // Large title
+        fontSize: 32,
         fontWeight: '600',
-        color: '#999', // Grey for first line based on image
+        color: '#999',
         marginBottom: 4,
     },
     greetingSubtitle: {
@@ -157,11 +240,9 @@ const styles = StyleSheet.create({
         lineHeight: 38,
     },
     gridContainer: {
-        flex: 1,
         paddingHorizontal: 24,
         gap: 12,
-        marginBottom: 20,
-        justifyContent: 'flex-end',
+        marginBottom: 40,
     },
     row: {
         flexDirection: 'row',
@@ -176,11 +257,16 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         backgroundColor: Colors.palette.shadowGrey,
         height: 56,
-        borderRadius: 28, // Fully rounded
+        borderRadius: 28,
         paddingHorizontal: 20,
         gap: 12,
         borderWidth: 1,
         borderColor: 'rgba(255, 255, 255, 0.05)',
+    },
+    searchPlaceholder: {
+        flex: 1,
+        color: '#999',
+        fontSize: 16,
     },
     searchInput: {
         flex: 1,
@@ -188,66 +274,26 @@ const styles = StyleSheet.create({
         fontSize: 16,
         height: '100%',
     },
-    bottomActions: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: 24,
-        paddingBottom: 16,
+    searchBackdrop: {
+        backgroundColor: 'rgba(0, 0, 0, 0.75)',
     },
-    bottomButtonGroup: {
+    searchOverlayBar: {
+        position: 'absolute',
+        top: 60,
+        left: 24,
+        right: 24,
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: Colors.palette.shadowGrey,
-        borderRadius: 40,
-        paddingVertical: 8,
-        paddingHorizontal: 8,
-        gap: 8,
-        borderWidth: 0,
-        borderColor: Colors.palette.white,
-    },
-    layersButton: {
-        width: 60,
-        height: 60,
-        borderRadius: 40,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: Colors.palette.white,
-    },
-    profileButton: {
-        width: 60,
-        height: 60,
-        borderRadius: 40,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    },
-    profileIconContainer: {
-        width: 44,
-        height: 44,
-        borderRadius: 26,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderWidth: 2,
-        borderColor: Colors.palette.white,
-    },
-    addButton: {
-        width: 70,
-        height: 70,
-        borderRadius: 40,
-        backgroundColor: Colors.palette.shadowGrey,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderWidth: 0,
-        borderColor: Colors.palette.white,
-    },
-    addButtonInner: {
-        width: 44,
-        height: 44,
-        borderRadius: 26,
-        alignItems: 'center',
-        justifyContent: 'center',
+        height: 56,
+        borderRadius: 28,
+        paddingHorizontal: 20,
+        gap: 12,
         borderWidth: 1,
-        borderColor: Colors.palette.white,
+        borderColor: 'rgba(255, 255, 255, 0.1)',
+    },
+    cancelText: {
+        color: '#999',
+        fontSize: 14,
     },
 });

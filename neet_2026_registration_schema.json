@@ -1,0 +1,260 @@
+{
+  "exam": "NEET UG 2026",
+  "conducting_body": "National Testing Agency (NTA)",
+  "official_website": "https://neet.nta.nic.in",
+  "key_dates": {
+    "registration_opens": "2026-02-08",
+    "registration_closes": "2026-03-08",
+    "correction_window_start": "2026-03-10",
+    "correction_window_end": "2026-03-12",
+    "exam_date": "2026-05-03"
+  },
+  "form_sections": {
+    "personal_details": {
+      "fields": [
+        { "name": "full_name", "type": "string", "note": "Must match Aadhaar" },
+        { "name": "date_of_birth", "type": "date", "format": "DD/MM/YYYY" },
+        { "name": "gender", "type": "enum", "values": ["Male", "Female", "Third Gender"] },
+        {
+          "name": "category",
+          "type": "enum",
+          "values": ["General", "OBC-NCL", "SC", "ST", "EWS"]
+        },
+        { "name": "nationality", "type": "enum", "values": ["Indian", "NRI", "OCI", "Foreign"] },
+        { "name": "pwd_pwbd_status", "type": "boolean" }
+      ]
+    },
+    "identity_verification": {
+      "fields": [
+        {
+          "name": "aadhaar_number",
+          "type": "string",
+          "pattern": "^[0-9]{12}$",
+          "note": "Strongly recommended; Aadhaar must have updated name, DOB, gender, photo, address, biometrics"
+        },
+        {
+          "name": "alternative_id_type",
+          "type": "enum",
+          "note": "Required only for non-Aadhaar applicants",
+          "values": ["Passport", "Voter ID", "Driving Licence", "Other Government ID"]
+        }
+      ]
+    },
+    "contact_and_verification": {
+      "fields": [
+        {
+          "name": "mobile_number",
+          "type": "string",
+          "pattern": "^[6-9][0-9]{9}$",
+          "verification": "OTP",
+          "note": "Registration not complete without OTP verification"
+        },
+        {
+          "name": "email_id",
+          "type": "string",
+          "format": "email",
+          "verification": "OTP",
+          "note": "Registration not complete without OTP verification"
+        },
+        {
+          "name": "emergency_contact_name",
+          "type": "string"
+        },
+        {
+          "name": "emergency_contact_number",
+          "type": "string",
+          "pattern": "^[6-9][0-9]{9}$"
+        }
+      ]
+    },
+    "academic_qualification": {
+      "fields": [
+        {
+          "name": "qualification_code",
+          "type": "enum",
+          "values": [
+            { "code": "01", "description": "Appearing in Class 12 in 2026" },
+            { "code": "02", "description": "Passed Class 12" },
+            { "code": "03", "description": "Passed Class 12 (code variant)" },
+            { "code": "04", "description": "Passed Class 12 (code variant)" },
+            { "code": "05", "description": "Passed Class 12 (code variant)" },
+            { "code": "06", "description": "Passed Class 12 (code variant)" },
+            { "code": "07", "description": "Passed Class 12 (code variant)" }
+          ]
+        },
+        {
+          "name": "class_10",
+          "type": "object",
+          "fields": [
+            { "name": "school_name", "type": "string" },
+            { "name": "board", "type": "string" },
+            { "name": "roll_number", "type": "string" },
+            { "name": "year_of_passing", "type": "integer" }
+          ]
+        },
+        {
+          "name": "class_11",
+          "type": "object",
+          "fields": [
+            { "name": "school_name", "type": "string" },
+            { "name": "board", "type": "string" },
+            { "name": "year", "type": "integer" }
+          ]
+        },
+        {
+          "name": "class_12",
+          "type": "object",
+          "fields": [
+            { "name": "school_name", "type": "string" },
+            { "name": "board", "type": "string" },
+            { "name": "roll_number", "type": "string" },
+            { "name": "year_of_passing_or_appearing", "type": "integer" }
+          ]
+        }
+      ]
+    },
+    "exam_preferences": {
+      "fields": [
+        { "name": "exam_centre_city_1", "type": "string" },
+        { "name": "exam_centre_city_2", "type": "string" },
+        { "name": "exam_centre_city_3", "type": "string" },
+        {
+          "name": "question_paper_medium",
+          "type": "enum",
+          "values": [
+            "English", "Hindi", "Assamese", "Bengali", "Gujarati",
+            "Kannada", "Malayalam", "Marathi", "Odia", "Punjabi",
+            "Tamil", "Telugu", "Urdu"
+          ]
+        }
+      ]
+    },
+    "previous_neet_attempts": {
+      "fields": [
+        { "name": "number_of_previous_attempts", "type": "integer", "minimum": 0 },
+        { "name": "years_of_previous_appearance", "type": "array", "items": { "type": "integer" } }
+      ]
+    }
+  },
+  "document_uploads": {
+    "photograph_passport": {
+      "description": "Passport-size photograph (2x2 inch)",
+      "format": ["JPG", "JPEG"],
+      "size_min_kb": 10,
+      "size_max_kb": 200,
+      "specifications": [
+        "Taken after 01 January 2026",
+        "80% face visible with ears showing",
+        "White background",
+        "No masks, caps, or goggles",
+        "Regular spectacles allowed"
+      ]
+    },
+    "photograph_postcard": {
+      "description": "Postcard-size photograph (4x6 inch)",
+      "format": ["JPG", "JPEG"],
+      "size_min_kb": 10,
+      "size_max_kb": 200,
+      "specifications": ["Same guidelines as passport photo"]
+    },
+    "signature": {
+      "description": "Full running signature",
+      "format": ["JPG", "JPEG"],
+      "size_min_kb": 4,
+      "size_max_kb": 30,
+      "specifications": [
+        "Written in black ink on white paper",
+        "Not in capital letters",
+        "Clear and readable, no blur or editing"
+      ]
+    },
+    "left_thumb_impression": {
+      "description": "Left hand thumb impression",
+      "format": ["JPG", "JPEG"],
+      "size_min_kb": 10,
+      "size_max_kb": 200
+    },
+    "right_thumb_and_finger_impressions": {
+      "description": "Right thumb and finger impressions",
+      "format": ["JPG", "JPEG"],
+      "size_min_kb": 10,
+      "size_max_kb": 200
+    },
+    "class_10_certificate": {
+      "description": "Class 10 certificate or marksheet (used as Date of Birth proof)",
+      "format": ["PDF"],
+      "size_min_kb": 50,
+      "size_max_kb": 300
+    },
+    "class_12_certificate": {
+      "description": "Class 12 certificate or marksheet",
+      "format": ["PDF"],
+      "size_min_kb": 50,
+      "size_max_kb": 300
+    },
+    "id_proof": {
+      "description": "Valid government-issued photo ID (Aadhaar preferred)",
+      "format": ["PDF"],
+      "size_min_kb": 50,
+      "size_max_kb": 300,
+      "accepted_ids": ["Aadhaar", "Passport", "Voter ID", "Driving Licence"]
+    },
+    "category_certificate": {
+      "description": "Caste/category certificate (if applicable)",
+      "format": ["PDF"],
+      "size_min_kb": 50,
+      "size_max_kb": 300,
+      "note": "OBC/EWS certificates must be issued after March 2026 for counselling"
+    },
+    "pwd_medical_certificate": {
+      "description": "Medical certificate for PwD/PwBD candidates",
+      "format": ["PDF"],
+      "size_min_kb": 50,
+      "size_max_kb": 300,
+      "required_if": "pwd_pwbd_status === true"
+    },
+    "scribe_documents": {
+      "description": "Required only if opting for a scribe (PwD candidates)",
+      "required_if": "scribe_opted === true",
+      "includes": [
+            "Scribe photograph",
+            "Scribe signature",
+            "Scribe qualification certificate",
+            "Scribe undertaking",
+            "Scribe identity proof"
+      ]
+    }
+  },
+  "application_fee": {
+    "currency": "INR",
+    "payment_modes": ["Net Banking", "UPI", "Credit Card", "Debit Card"],
+    "fee_structure": [
+      { "category": "General", "fee": 1700 },
+      { "category": "General-EWS", "fee": 1600 },
+      { "category": "OBC-NCL", "fee": 1600 },
+      { "category": "SC", "fee": 1000 },
+      { "category": "ST", "fee": 1000 },
+      { "category": "PwBD", "fee": 1000 },
+      { "category": "Third Gender", "fee": 1000 }
+    ]
+  },
+  "correction_window": {
+    "editable_fields": [
+      "full_name",
+      "date_of_birth",
+      "gender",
+      "nationality",
+      "personal_details"
+    ],
+    "non_editable_fields": [
+      "aadhaar_number",
+      "registered_mobile_number",
+      "email_id"
+    ],
+    "notes": [
+      "Corrections allowed only once",
+      "No offline correction requests entertained",
+      "No fee for most corrections unless category changes"
+    ]
+  }
+}

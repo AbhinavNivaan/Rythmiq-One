@@ -18,10 +18,12 @@ export default function SignupScreen() {
     const [confirmPassword, setConfirmPassword] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
+    const [info, setInfo] = useState('');
     const { signup } = useAuth();
 
     const handleSignup = async () => {
         setError('');
+        setInfo('');
         
         // Validation
         if (!name || !email || !password || !confirmPassword) {
@@ -47,10 +49,15 @@ export default function SignupScreen() {
 
         setIsLoading(true);
         try {
-            await signup(email, password);
+            await signup(email, password, name);
             router.replace('/(tabs)/dashboard');
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : 'Signup failed';
+            if (errorMessage.toLowerCase().includes('verify your account')) {
+                setInfo(errorMessage);
+                router.replace('/(auth)/login');
+                return;
+            }
             setError(errorMessage);
         } finally {
             setIsLoading(false);
@@ -71,6 +78,11 @@ export default function SignupScreen() {
                 </Animated.View>
 
                 <Animated.View entering={FadeInDown.delay(400).duration(800).springify()} style={styles.form}>
+                    {info ? (
+                        <View style={styles.infoContainer}>
+                            <Text style={styles.infoText}>{info}</Text>
+                        </View>
+                    ) : null}
                     {error ? (
                         <View style={styles.errorContainer}>
                             <Text style={styles.errorText}>{error}</Text>
@@ -190,7 +202,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: 12,
     },
     linkText: {
-        color: Colors.palette.mayaBlue,
+        color: '#89C7FE',
         fontWeight: 'bold',
     },
     signupButton: {
@@ -208,7 +220,7 @@ const styles = StyleSheet.create({
         fontSize: 12,
     },
     loginText: {
-        color: Colors.palette.mayaBlue,
+        color: '#89C7FE',
         fontSize: 12,
         fontWeight: 'bold',
     },
@@ -222,6 +234,19 @@ const styles = StyleSheet.create({
     },
     errorText: {
         color: '#ef4444',
+        fontSize: 12,
+        textAlign: 'center',
+    },
+    infoContainer: {
+        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+        padding: 10,
+        borderRadius: 6,
+        borderWidth: 1,
+        borderColor: 'rgba(59, 130, 246, 0.3)',
+        marginBottom: 2,
+    },
+    infoText: {
+        color: '#60a5fa',
         fontSize: 12,
         textAlign: 'center',
     },

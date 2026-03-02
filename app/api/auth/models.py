@@ -10,4 +10,5 @@ from uuid import UUID
 class AuthenticatedUser(BaseModel):
     id: UUID
     email: str | None = None
+    name: str | None = None
     exp: int

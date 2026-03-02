@@ -1,0 +1,392 @@
+{
+  "schema_id":      "neet_2026_registration",
+  "schema_type":    "exam_form",
+  "schema_version": "1.0.0",
+  "status":         "active",
+
+  "metadata": {
+    "display_name":    "NEET UG 2026 Registration Form",
+    "short_name":      "NEET 2026",
+    "conducting_body": "National Testing Agency (NTA)",
+    "official_website":"https://neet.nta.nic.in",
+    "category":        "medical_entrance",
+    "applicable_year": 2026,
+    "country":         "IN",
+    "language":        "en"
+  },
+
+  "key_dates": {
+    "registration_opens":      "2026-02-08",
+    "registration_closes":     "2026-03-08",
+    "correction_window_start": "2026-03-10",
+    "correction_window_end":   "2026-03-12",
+    "exam_date":               "2026-05-03"
+  },
+
+  "form_sections": [
+    {
+      "section_id":  "personal_details",
+      "title":       "Personal Details",
+      "order":       1,
+      "fields": [
+        {
+          "field_id": "full_name",
+          "label":    "Full Name",
+          "type":     "string",
+          "required": true,
+          "note":     "Must match Aadhaar"
+        },
+        {
+          "field_id":   "date_of_birth",
+          "label":      "Date of Birth",
+          "type":       "date",
+          "required":   true,
+          "validation": { "format": "DD/MM/YYYY" }
+        },
+        {
+          "field_id":    "gender",
+          "label":       "Gender",
+          "type":        "enum",
+          "required":    true,
+          "enum_values": ["Male", "Female", "Third Gender"]
+        },
+        {
+          "field_id":    "category",
+          "label":       "Category",
+          "type":        "enum",
+          "required":    true,
+          "enum_values": ["General", "OBC-NCL", "SC", "ST", "EWS"]
+        },
+        {
+          "field_id":    "nationality",
+          "label":       "Nationality",
+          "type":        "enum",
+          "required":    true,
+          "enum_values": ["Indian", "NRI", "OCI", "Foreign"]
+        },
+        {
+          "field_id": "pwd_pwbd_status",
+          "label":    "Person with Disability (PwD / PwBD)",
+          "type":     "boolean",
+          "required": true
+        }
+      ]
+    },
+    {
+      "section_id":  "identity_verification",
+      "title":       "Identity Verification",
+      "order":       2,
+      "fields": [
+        {
+          "field_id":   "aadhaar_number",
+          "label":      "Aadhaar Number",
+          "type":       "string",
+          "required":   true,
+          "note":       "Strongly recommended. Aadhaar must have updated name, DOB, gender, photo, address, and biometrics.",
+          "validation": { "pattern": "^[0-9]{12}$" }
+        },
+        {
+          "field_id":    "alternative_id_type",
+          "label":       "Alternative ID Type",
+          "type":        "enum",
+          "required":    false,
+          "note":        "Required only for non-Aadhaar applicants",
+          "enum_values": ["Passport", "Voter ID", "Driving Licence", "Other Government ID"]
+        }
+      ]
+    },
+    {
+      "section_id":  "contact_and_verification",
+      "title":       "Contact Details",
+      "order":       3,
+      "fields": [
+        {
+          "field_id":     "mobile_number",
+          "label":        "Mobile Number",
+          "type":         "string",
+          "required":     true,
+          "verification": "OTP",
+          "note":         "Registration is not complete without OTP verification.",
+          "validation":   { "pattern": "^[6-9][0-9]{9}$" }
+        },
+        {
+          "field_id":     "email_id",
+          "label":        "Email ID",
+          "type":         "string",
+          "required":     true,
+          "verification": "OTP",
+          "note":         "Registration is not complete without OTP verification.",
+          "validation":   { "format": "email" }
+        },
+        {
+          "field_id": "emergency_contact_name",
+          "label":    "Emergency Contact Name",
+          "type":     "string",
+          "required": true
+        },
+        {
+          "field_id":   "emergency_contact_number",
+          "label":      "Emergency Contact Number",
+          "type":       "string",
+          "required":   true,
+          "validation": { "pattern": "^[6-9][0-9]{9}$" }
+        }
+      ]
+    },
+    {
+      "section_id": "academic_qualification",
+      "title":      "Academic Qualification",
+      "order":      4,
+      "fields": [
+        {
+          "field_id":    "qualification_code",
+          "label":       "Qualification Status",
+          "type":        "enum",
+          "required":    true,
+          "enum_values": [
+            "01 — Appearing in Class 12 in 2026",
+            "02 — Passed Class 12",
+            "03 — Passed Class 12 (code variant)",
+            "04 — Passed Class 12 (code variant)",
+            "05 — Passed Class 12 (code variant)",
+            "06 — Passed Class 12 (code variant)",
+            "07 — Passed Class 12 (code variant)"
+          ]
+        },
+        {
+          "field_id": "class_10",
+          "label":    "Class 10 Details",
+          "type":     "object",
+          "required": true,
+          "fields": [
+            { "field_id": "school_name",     "label": "School Name",     "type": "string",  "required": true },
+            { "field_id": "board",           "label": "Board",           "type": "string",  "required": true },
+            { "field_id": "roll_number",     "label": "Roll Number",     "type": "string",  "required": true },
+            { "field_id": "year_of_passing", "label": "Year of Passing", "type": "integer", "required": true }
+          ]
+        },
+        {
+          "field_id": "class_11",
+          "label":    "Class 11 Details",
+          "type":     "object",
+          "required": false,
+          "fields": [
+            { "field_id": "school_name", "label": "School Name", "type": "string",  "required": true },
+            { "field_id": "board",       "label": "Board",       "type": "string",  "required": true },
+            { "field_id": "year",        "label": "Year",        "type": "integer", "required": true }
+          ]
+        },
+        {
+          "field_id": "class_12",
+          "label":    "Class 12 Details",
+          "type":     "object",
+          "required": true,
+          "fields": [
+            { "field_id": "school_name",               "label": "School Name",                      "type": "string",  "required": true },
+            { "field_id": "board",                     "label": "Board",                            "type": "string",  "required": true },
+            { "field_id": "roll_number",               "label": "Roll Number",                      "type": "string",  "required": true },
+            { "field_id": "year_of_passing_or_appearing","label": "Year of Passing / Appearing",    "type": "integer", "required": true }
+          ]
+        }
+      ]
+    },
+    {
+      "section_id": "exam_preferences",
+      "title":      "Exam Preferences",
+      "order":      5,
+      "fields": [
+        { "field_id": "exam_centre_city_1", "label": "Preferred Exam Centre (1st choice)", "type": "string", "required": true },
+        { "field_id": "exam_centre_city_2", "label": "Preferred Exam Centre (2nd choice)", "type": "string", "required": false },
+        { "field_id": "exam_centre_city_3", "label": "Preferred Exam Centre (3rd choice)", "type": "string", "required": false },
+        {
+          "field_id":    "question_paper_medium",
+          "label":       "Question Paper Language",
+          "type":        "enum",
+          "required":    true,
+          "enum_values": [
+            "English", "Hindi", "Assamese", "Bengali", "Gujarati",
+            "Kannada", "Malayalam", "Marathi", "Odia", "Punjabi",
+            "Tamil", "Telugu", "Urdu"
+          ]
+        }
+      ]
+    },
+    {
+      "section_id": "previous_neet_attempts",
+      "title":      "Previous NEET Attempts",
+      "order":      6,
+      "fields": [
+        {
+          "field_id":   "number_of_previous_attempts",
+          "label":      "Number of Previous Attempts",
+          "type":       "integer",
+          "required":   true,
+          "validation": { "minimum": 0 }
+        },
+        {
+          "field_id": "years_of_previous_appearance",
+          "label":    "Years of Previous Appearance",
+          "type":     "array",
+          "required": false
+        }
+      ]
+    }
+  ],
+
+  "document_uploads": [
+    {
+      "doc_id":          "photograph_passport",
+      "label":           "Passport-size Photograph (2x2 inch)",
+      "description":     "Passport-size photograph (2x2 inch)",
+      "allowed_formats": ["JPG", "JPEG"],
+      "size_min_kb":     10,
+      "size_max_kb":     200,
+      "required":        true,
+      "required_if":     null,
+      "specifications":  [
+        "Taken after 01 January 2026",
+        "80% face visible with ears showing",
+        "White background",
+        "No masks, caps, or goggles",
+        "Regular spectacles allowed"
+      ]
+    },
+    {
+      "doc_id":          "photograph_postcard",
+      "label":           "Postcard-size Photograph (4x6 inch)",
+      "description":     "Postcard-size photograph (4x6 inch)",
+      "allowed_formats": ["JPG", "JPEG"],
+      "size_min_kb":     10,
+      "size_max_kb":     200,
+      "required":        true,
+      "required_if":     null,
+      "specifications":  ["Same guidelines as passport photo"]
+    },
+    {
+      "doc_id":          "signature",
+      "label":           "Signature",
+      "description":     "Full running signature",
+      "allowed_formats": ["JPG", "JPEG"],
+      "size_min_kb":     4,
+      "size_max_kb":     30,
+      "required":        true,
+      "required_if":     null,
+      "specifications":  [
+        "Written in black ink on white paper",
+        "Not in capital letters",
+        "Clear and readable, no blur or editing"
+      ]
+    },
+    {
+      "doc_id":          "left_thumb_impression",
+      "label":           "Left Hand Thumb Impression",
+      "allowed_formats": ["JPG", "JPEG"],
+      "size_min_kb":     10,
+      "size_max_kb":     200,
+      "required":        true,
+      "required_if":     null
+    },
+    {
+      "doc_id":          "right_thumb_and_finger_impressions",
+      "label":           "Right Thumb and Finger Impressions",
+      "allowed_formats": ["JPG", "JPEG"],
+      "size_min_kb":     10,
+      "size_max_kb":     200,
+      "required":        true,
+      "required_if":     null
+    },
+    {
+      "doc_id":          "class_10_certificate",
+      "label":           "Class 10 Certificate / Marksheet",
+      "description":     "Used as Date of Birth proof",
+      "allowed_formats": ["PDF"],
+      "size_min_kb":     50,
+      "size_max_kb":     300,
+      "required":        true,
+      "required_if":     null
+    },
+    {
+      "doc_id":          "class_12_certificate",
+      "label":           "Class 12 Certificate / Marksheet",
+      "allowed_formats": ["PDF"],
+      "size_min_kb":     50,
+      "size_max_kb":     300,
+      "required":        true,
+      "required_if":     null
+    },
+    {
+      "doc_id":          "id_proof",
+      "label":           "Valid Government-issued Photo ID",
+      "description":     "Aadhaar preferred. Accepted: Aadhaar, Passport, Voter ID, Driving Licence.",
+      "allowed_formats": ["PDF"],
+      "size_min_kb":     50,
+      "size_max_kb":     300,
+      "required":        true,
+      "required_if":     null
+    },
+    {
+      "doc_id":          "category_certificate",
+      "label":           "Category Certificate",
+      "description":     "Caste/category certificate. OBC/EWS certificates must be issued after March 2026 for counselling.",
+      "allowed_formats": ["PDF"],
+      "size_min_kb":     50,
+      "size_max_kb":     300,
+      "required":        false,
+      "required_if":     "category != General"
+    },
+    {
+      "doc_id":          "pwd_medical_certificate",
+      "label":           "PwD / PwBD Medical Certificate",
+      "description":     "Medical certificate for PwD/PwBD candidates",
+      "allowed_formats": ["PDF"],
+      "size_min_kb":     50,
+      "size_max_kb":     300,
+      "required":        false,
+      "required_if":     "pwd_pwbd_status == true"
+    },
+    {
+      "doc_id":          "scribe_documents",
+      "label":           "Scribe Documents",
+      "description":     "Required if opting for a scribe. Bundle into one PDF: scribe photograph, signature, qualification certificate, undertaking, and identity proof.",
+      "allowed_formats": ["PDF"],
+      "size_min_kb":     50,
+      "size_max_kb":     500,
+      "required":        false,
+      "required_if":     "scribe_opted == true"
+    }
+  ],
+
+  "fee_structure": {
+    "currency":      "INR",
+    "payment_modes": ["Net Banking", "UPI", "Credit Card", "Debit Card"],
+    "tiers": [
+      { "category": "General",      "amount": 1700 },
+      { "category": "General-EWS",  "amount": 1600 },
+      { "category": "OBC-NCL",      "amount": 1600 },
+      { "category": "SC",           "amount": 1000 },
+      { "category": "ST",           "amount": 1000 },
+      { "category": "PwBD",         "amount": 1000 },
+      { "category": "Third Gender", "amount": 1000 }
+    ]
+  },
+
+  "correction_window": {
+    "editable_field_ids": [
+      "full_name",
+      "date_of_birth",
+      "gender",
+      "nationality"
+    ],
+    "non_editable_field_ids": [
+      "aadhaar_number",
+      "mobile_number",
+      "email_id"
+    ],
+    "correction_fee": null,
+    "notes": [
+      "Corrections allowed only once",
+      "No offline correction requests entertained",
+      "No fee for most corrections unless category changes"
+    ]
+  }
+}

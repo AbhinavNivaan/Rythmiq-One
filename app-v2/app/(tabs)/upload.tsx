@@ -125,32 +125,34 @@ function Dropdown({
       
       {isOpen && (
         <View style={styles.dropdownMenu}>
-          {options.map((option) => (
-            <TouchableOpacity
-              key={option}
-              style={[
-                styles.dropdownOption,
-                selectedValue === option && styles.dropdownOptionSelected,
-              ]}
-              onPress={() => {
-                onSelect(option);
-                onToggle();
-              }}
-              activeOpacity={0.7}
-            >
-              <Text 
+          <ScrollView nestedScrollEnabled showsVerticalScrollIndicator>
+            {options.map((option) => (
+              <TouchableOpacity
+                key={option}
                 style={[
-                  styles.dropdownOptionText,
-                  selectedValue === option && styles.dropdownOptionTextSelected,
+                  styles.dropdownOption,
+                  selectedValue === option && styles.dropdownOptionSelected,
                 ]}
+                onPress={() => {
+                  onSelect(option);
+                  onToggle();
+                }}
+                activeOpacity={0.7}
               >
-                {option}
-              </Text>
-              {selectedValue === option && (
-                <Check size={20} color={colors.mayaBlue} />
-              )}
-            </TouchableOpacity>
-          ))}
+                <Text 
+                  style={[
+                    styles.dropdownOptionText,
+                    selectedValue === option && styles.dropdownOptionTextSelected,
+                  ]}
+                >
+                  {option}
+                </Text>
+                {selectedValue === option && (
+                  <Check size={20} color={colors.mayaBlue} />
+                )}
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
         </View>
       )}
     </View>
@@ -158,7 +160,7 @@ function Dropdown({
 }
 
 export default function UploadScreen() {
-  const params = useLocalSearchParams<{ images?: string }>();
+  const params = useLocalSearchParams<{ images?: string; docType?: string }>();
   const [imageUris, setImageUris] = useState<string[]>([]);
   const [documentName, setDocumentName] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<DocumentCategory>('identity');
@@ -183,6 +185,25 @@ export default function UploadScreen() {
       }
     }
   }, [params.images]);
+
+  // Pre-select document category/type from capture screen
+  useEffect(() => {
+    if (!params.docType) {
+      return;
+    }
+
+    const docTypeToCategory: Record<string, DocumentCategory> = {
+      Photo: 'photograph',
+      Signature: 'signature',
+      'ID Card': 'identity',
+      'Mark Sheet': 'academic',
+      Other: 'other',
+    };
+
+    const mappedCategory = docTypeToCategory[params.docType] ?? 'identity';
+    setSelectedCategory(mappedCategory);
+    setSelectedType(DOCUMENT_CATEGORIES[mappedCategory].types[0]);
+  }, [params.docType]);
 
   // Upload mutation - creates MASTER documents (no portal needed)
   const uploadMutation = useMutation({
@@ -236,6 +257,9 @@ export default function UploadScreen() {
 
         // Upload to presigned URL
         await documentsApi.uploadToPresignedUrl(upload_url, uri, 'image/jpeg');
+
+        // Trigger processing after upload completes
+        await documentsApi.submitJob(job_id);
 
         jobIds.push(job_id);
       }
