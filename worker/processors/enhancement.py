@@ -580,6 +580,83 @@ def otsu_binarize(
 
 
 # ---------------------------------------------------------------------------
+# Border crop (scanner black-border removal)
+# ---------------------------------------------------------------------------
+
+# Only crop if the detected border is thicker than this fraction of the image
+_MIN_BORDER_FRACTION = 0.02   # 2 % of the shorter dimension
+# Don't crop if result would be less than this fraction of original area
+_MIN_CROP_AREA_FRACTION = 0.50
+# Pixels to add back as padding around the tight content bounding rect
+_CROP_PADDING = 4
+
+
+def crop_borders(
+    img: NDArray[np.uint8],
+    black_threshold: int = 15,
+) -> Tuple[NDArray[np.uint8], bool]:
+    """
+    Remove uniform dark (scanner) borders detected by brightness thresholding.
+
+    Algorithm:
+      1. Threshold the grayscale image: pixels > black_threshold are "content".
+      2. Find the bounding rect of all content pixels.
+      3. Only crop if the detected border on any side exceeds 2 % of that
+         dimension — this avoids spurious crops on naturally dark-edged images.
+      4. A safety check rejects the crop if the result would be < 50 % of the
+         original area (guards against threshold mis-fires on very dark images).
+
+    Args:
+        img: BGR image array
+        black_threshold: Pixels at or below this value are treated as border.
+
+    Returns:
+        Tuple of (cropped image, was_cropped)
+    """
+    try:
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        h, w = gray.shape
+
+        _, mask = cv2.threshold(gray, black_threshold, 255, cv2.THRESH_BINARY)
+        coords = cv2.findNonZero(mask)
+        if coords is None:
+            return img, False
+
+        x, y, cw, ch = cv2.boundingRect(coords)
+
+        top    = y
+        bottom = h - (y + ch)
+        left   = x
+        right  = w - (x + cw)
+
+        min_h = _MIN_BORDER_FRACTION * h
+        min_w = _MIN_BORDER_FRACTION * w
+
+        if top <= min_h and bottom <= min_h and left <= min_w and right <= min_w:
+            return img, False  # no significant border detected
+
+        # Add padding, clamped to image bounds
+        x1 = max(0, x - _CROP_PADDING)
+        y1 = max(0, y - _CROP_PADDING)
+        x2 = min(w, x + cw + _CROP_PADDING)
+        y2 = min(h, y + ch + _CROP_PADDING)
+
+        # Safety: reject if result is too small relative to original
+        if (x2 - x1) * (y2 - y1) < _MIN_CROP_AREA_FRACTION * w * h:
+            return img, False
+
+        cropped = img[y1:y2, x1:x2]
+        logger.info(
+            f"[ENHANCEMENT] border crop: {w}x{h} → {x2-x1}x{y2-y1} "
+            f"(borders t={top} b={bottom} l={left} r={right})"
+        )
+        return cropped, True
+
+    except Exception:
+        return img, False
+
+
+# ---------------------------------------------------------------------------
 # Type-specific enhancement branches
 # ---------------------------------------------------------------------------
 
@@ -587,26 +664,31 @@ def _enhance_photo(
     img: NDArray[np.uint8],
     raw_data: bytes,
     breakdown: Optional[QualityBreakdown],
-) -> Tuple[NDArray[np.uint8], bool, bool, bool]:
+) -> Tuple[NDArray[np.uint8], bool, bool, bool, bool]:
     """
     Photo enhancement pipeline.
 
     Operations (each conditional on measured need):
-      1. EXIF rotation  — always attempted
-      2. Gamma correction — if mean brightness outside 80–200
-      3. Unsharp mask  — if normalized sharpness < 0.20
+      1. EXIF rotation     — always attempted
+      2. Border crop       — dark scanner borders removed if detected
+      3. Gamma correction  — if mean brightness outside 80–200
+      4. Unsharp mask      — if normalized sharpness < 0.20
 
     NO NLM denoising. NO CLAHE. NO Hough skew detection.
 
     Returns:
-        (img, orientation_corrected, exposure_corrected, sharpened)
+        (img, orientation_corrected, exposure_corrected, sharpened, border_cropped)
     """
     orientation_corrected = False
     exposure_corrected = False
     sharpened = False
+    border_cropped = False
 
     # 1. EXIF rotation
     img, orientation_corrected = correct_orientation_exif(img, raw_data)
+
+    # 2. Border crop (scanner black borders)
+    img, border_cropped = crop_borders(img)
 
     # 2. Exposure — compute mean brightness on (possibly rotated) image
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -633,34 +715,38 @@ def _enhance_photo(
         logger.info(f"[ENHANCEMENT] photo unsharp mask: sharpness_score={sharp_score:.3f}")
         sharpened = True
 
-    return img, orientation_corrected, exposure_corrected, sharpened
+    return img, orientation_corrected, exposure_corrected, sharpened, border_cropped
 
 
 def _enhance_signature(
     img: NDArray[np.uint8],
     raw_data: bytes,
     breakdown: Optional[QualityBreakdown],
-) -> Tuple[NDArray[np.uint8], bool, bool, bool]:
+) -> Tuple[NDArray[np.uint8], bool, bool, bool, bool]:
     """
     Signature enhancement pipeline.
 
     Operations:
       1. EXIF rotation
-      2. Sharpness check → unsharp mask if needed
-      3. Otsu binarization (always — produces clean black-on-white output)
-      4. No NLM denoising → bilateral filter instead (preserves stroke edges)
+      2. Border crop       — scanner borders removed if detected
+      3. Sharpness check  → unsharp mask if needed
+      4. Otsu binarization (always — produces clean black-on-white output)
 
     Returns:
-        (img, orientation_corrected, binarized, sharpened)
+        (img, orientation_corrected, binarized, sharpened, border_cropped)
     """
     orientation_corrected = False
     binarized = False
     sharpened = False
+    border_cropped = False
 
     # 1. EXIF rotation
     img, orientation_corrected = correct_orientation_exif(img, raw_data)
 
-    # 2. Sharpness check
+    # 2. Border crop (scanner black borders)
+    img, border_cropped = crop_borders(img)
+
+    # 3. Sharpness check
     if breakdown is not None:
         sharp_score = breakdown.sharpness
     else:
@@ -678,26 +764,36 @@ def _enhance_signature(
     if binarized:
         logger.info("[ENHANCEMENT] signature Otsu binarization applied")
 
-    return img, orientation_corrected, binarized, sharpened
+    return img, orientation_corrected, binarized, sharpened, border_cropped
 
 
 def _enhance_document(
     img: NDArray[np.uint8],
     options: EnhancementOptions,
-) -> Tuple[NDArray[np.uint8], bool, bool, bool]:
+) -> Tuple[NDArray[np.uint8], bool, bool, bool, bool]:
     """
-    Document enhancement pipeline (existing logic, unchanged).
+    Document enhancement pipeline.
+
+    Operations:
+      1. Border crop       — scanner borders removed if detected
+      2. Orientation correction (Hough skew + large-rotation detection)
+      3. NLM denoising     — gated by GUARD-001
+      4. White balance + CLAHE — gated by GUARD-001
 
     Returns:
-        (img, orientation_corrected, denoised, color_normalized)
+        (img, orientation_corrected, denoised, color_normalized, border_cropped)
     """
     skip_enhancement = should_skip_enhancement(options)
     if skip_enhancement:
         logger.info("[ENHANCEMENT] skipped (readable document)")
 
+    border_cropped = False
     orientation_corrected = False
     denoised = False
     color_normalized = False
+
+    # Border crop first so skew/rotation detection works on clean content
+    img, border_cropped = crop_borders(img)
 
     if options.correct_orientation:
         img, orientation_corrected = correct_orientation(img)
@@ -713,7 +809,7 @@ def _enhance_document(
             grid_size=options.clahe_grid_size,
         )
 
-    return img, orientation_corrected, denoised, color_normalized
+    return img, orientation_corrected, denoised, color_normalized, border_cropped
 
 
 def should_skip_enhancement(options: EnhancementOptions) -> bool:
@@ -766,32 +862,34 @@ def enhance_image(
         doc_type = options.document_type
 
         if doc_type == "photo":
-            img, orientation_corrected, exposure_corrected, sharpened = _enhance_photo(
-                img, data, options.quality_breakdown
+            img, orientation_corrected, exposure_corrected, sharpened, border_cropped = (
+                _enhance_photo(img, data, options.quality_breakdown)
             )
             result_data = encode_image(img, format="jpeg", quality=95)
             return EnhancementResult(
                 image_data=result_data,
                 orientation_corrected=orientation_corrected,
-                denoised=sharpened,           # repurposed: True = unsharp mask was applied
+                denoised=sharpened,            # repurposed: True = unsharp mask applied
                 color_normalized=exposure_corrected,
+                border_cropped=border_cropped,
             )
 
         elif doc_type == "signature":
-            img, orientation_corrected, binarized, sharpened = _enhance_signature(
-                img, data, options.quality_breakdown
+            img, orientation_corrected, binarized, sharpened, border_cropped = (
+                _enhance_signature(img, data, options.quality_breakdown)
             )
             result_data = encode_image(img, format="jpeg", quality=95)
             return EnhancementResult(
                 image_data=result_data,
                 orientation_corrected=orientation_corrected,
-                denoised=sharpened,           # repurposed: True = unsharp mask was applied
-                color_normalized=binarized,   # repurposed: True = Otsu binarization applied
+                denoised=sharpened,            # repurposed: True = unsharp mask applied
+                color_normalized=binarized,    # repurposed: True = Otsu binarization applied
+                border_cropped=border_cropped,
             )
 
         else:  # document
-            img, orientation_corrected, denoised, color_normalized = _enhance_document(
-                img, options
+            img, orientation_corrected, denoised, color_normalized, border_cropped = (
+                _enhance_document(img, options)
             )
             result_data = encode_image(img, format="jpeg", quality=95)
             return EnhancementResult(
@@ -799,6 +897,7 @@ def enhance_image(
                 orientation_corrected=orientation_corrected,
                 denoised=denoised,
                 color_normalized=color_normalized,
+                border_cropped=border_cropped,
             )
 
     except WorkerError:
@@ -846,4 +945,5 @@ __all__ = [
     'apply_unsharp_mask',
     'bilateral_denoise',
     'otsu_binarize',
+    'crop_borders',
 ]

@@ -413,6 +413,7 @@ class EnhancementResult:
     orientation_corrected: bool
     denoised: bool
     color_normalized: bool
+    border_cropped: bool = False
 
     # Note: bytes cannot be in to_dict, used internally only
 
