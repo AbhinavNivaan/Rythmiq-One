@@ -657,6 +657,108 @@ def crop_borders(
 
 
 # ---------------------------------------------------------------------------
+# Document boundary detection + perspective crop
+# ---------------------------------------------------------------------------
+
+# Document must cover at least this fraction of image area to be detected
+_DOC_DETECT_MIN_AREA_FRACTION = 0.15
+# Skip if it covers >90% — image is already cropped, no background to remove
+_DOC_DETECT_MAX_AREA_FRACTION = 0.90
+
+
+def detect_document_boundary(
+    img: NDArray[np.uint8],
+) -> Optional[NDArray[np.float32]]:
+    """
+    Detect the largest rectangular document/photo boundary in a scene image.
+
+    Useful when the user photographs a printed document lying on a surface:
+    finds the biggest quad-shaped contour (the document edge) using
+    Canny edges + contour approximation.
+
+    Multiple Canny thresholds are tried for robustness across lighting.
+
+    Returns:
+        4 corner points [[x,y]×4] or None if no clear rectangle found.
+    """
+    h, w = img.shape[:2]
+    min_area = _DOC_DETECT_MIN_AREA_FRACTION * w * h
+    max_area = _DOC_DETECT_MAX_AREA_FRACTION * w * h
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    for lo, hi in [(30, 100), (50, 150), (10, 60)]:
+        edges = cv2.Canny(blurred, lo, hi)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        edges = cv2.dilate(edges, kernel, iterations=1)
+
+        contours, _ = cv2.findContours(
+            edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        contours = sorted(contours, key=cv2.contourArea, reverse=True)
+
+        for cnt in contours[:10]:
+            area = cv2.contourArea(cnt)
+            if area < min_area or area > max_area:
+                continue
+            peri = cv2.arcLength(cnt, True)
+            approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
+            if len(approx) == 4:
+                logger.info(
+                    f"[ENHANCEMENT] document boundary detected: area={area:.0f} "
+                    f"({area / (w * h) * 100:.1f}% of image)"
+                )
+                return approx.reshape(4, 2).astype(np.float32)
+
+    return None
+
+
+def _order_points(pts: NDArray[np.float32]) -> NDArray[np.float32]:
+    """Order 4 corner points: top-left, top-right, bottom-right, bottom-left."""
+    rect = np.zeros((4, 2), dtype=np.float32)
+    s = pts.sum(axis=1)
+    rect[0] = pts[np.argmin(s)]   # top-left:     smallest x+y
+    rect[2] = pts[np.argmax(s)]   # bottom-right: largest  x+y
+    diff = np.diff(pts, axis=1)
+    rect[1] = pts[np.argmin(diff)]  # top-right:   smallest y-x
+    rect[3] = pts[np.argmax(diff)]  # bottom-left: largest  y-x
+    return rect
+
+
+def perspective_crop(
+    img: NDArray[np.uint8],
+    pts: NDArray[np.float32],
+) -> NDArray[np.uint8]:
+    """
+    Warp the detected document quad to a flat, deskewed rectangle.
+
+    Output dimensions are computed from the longest detected edges so no
+    content is squished or letterboxed.
+    """
+    rect = _order_points(pts)
+    tl, tr, br, bl = rect
+
+    width  = int(max(np.linalg.norm(tr - tl), np.linalg.norm(br - bl)))
+    height = int(max(np.linalg.norm(bl - tl), np.linalg.norm(br - tr)))
+
+    if width < 10 or height < 10:
+        return img
+
+    dst = np.array(
+        [[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]],
+        dtype=np.float32,
+    )
+    M = cv2.getPerspectiveTransform(rect, dst)
+    warped = cv2.warpPerspective(img, M, (width, height))
+    logger.info(
+        f"[ENHANCEMENT] perspective crop: "
+        f"{img.shape[1]}x{img.shape[0]} → {width}x{height}"
+    )
+    return warped
+
+
+# ---------------------------------------------------------------------------
 # Type-specific enhancement branches
 # ---------------------------------------------------------------------------
 
@@ -684,13 +786,35 @@ def _enhance_photo(
     sharpened = False
     border_cropped = False
 
-    # 1. EXIF rotation
+    # 1. EXIF rotation (handles most phone camera photos)
     img, orientation_corrected = correct_orientation_exif(img, raw_data)
 
-    # 2. Border crop (scanner black borders)
-    img, border_cropped = crop_borders(img)
+    # 2. Document boundary detection → perspective crop.
+    #    Finds the rectangular print in the scene, removes the background,
+    #    and corrects tilt/perspective in one shot.
+    #    Falls back to dark-border removal + Hough rotation when no clear
+    #    rectangle is detected (e.g. already-cropped scan).
+    pts = detect_document_boundary(img)
+    if pts is not None:
+        img = perspective_crop(img, pts)
+        border_cropped = True
+        # Passport-size photos are always portrait; if the crop came out
+        # landscape the scene was rotated, so rotate back.
+        if img.shape[1] > img.shape[0]:
+            img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+            orientation_corrected = True
+            logger.info("[ENHANCEMENT] photo: landscape→portrait after perspective crop")
+    else:
+        img, border_cropped = crop_borders(img)
+        # Fallback rotation: if EXIF gave nothing, try Hough-based detection
+        if not orientation_corrected:
+            rotation = detect_large_rotation(img)
+            if rotation is not None:
+                img = apply_large_rotation(img, rotation)
+                orientation_corrected = True
+                logger.info(f"[ENHANCEMENT] photo fallback rotation: {rotation}°")
 
-    # 2. Exposure — compute mean brightness on (possibly rotated) image
+    # 3. Exposure — compute mean brightness on processed image
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     mean_brightness = float(np.mean(gray))
 
@@ -792,11 +916,18 @@ def _enhance_document(
     denoised = False
     color_normalized = False
 
-    # Border crop first so skew/rotation detection works on clean content
-    img, border_cropped = crop_borders(img)
-
-    if options.correct_orientation:
-        img, orientation_corrected = correct_orientation(img)
+    # Document boundary detection → perspective crop.
+    # Handles PAN cards, voter IDs, etc. photographed on a surface.
+    # Falls back to dark-border removal + Hough skew when no rectangle found.
+    pts = detect_document_boundary(img)
+    if pts is not None:
+        img = perspective_crop(img, pts)
+        border_cropped = True
+        orientation_corrected = True
+    else:
+        img, border_cropped = crop_borders(img)
+        if options.correct_orientation:
+            img, orientation_corrected = correct_orientation(img)
 
     if options.denoise and not skip_enhancement:
         img, denoised = denoise(img, strength=options.denoise_strength)
@@ -946,4 +1077,7 @@ __all__ = [
     'bilateral_denoise',
     'otsu_binarize',
     'crop_borders',
+    # Document boundary detection
+    'detect_document_boundary',
+    'perspective_crop',
 ]
