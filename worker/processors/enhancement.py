@@ -657,90 +657,55 @@ def crop_borders(
 
 
 # ---------------------------------------------------------------------------
-# Document boundary detection + perspective crop
+# Document boundary detection + straighten/crop
 # ---------------------------------------------------------------------------
 
 # Document must cover at least this fraction of image area to be detected
 _DOC_DETECT_MIN_AREA_FRACTION = 0.15
 # Skip if it covers >90% — image is already cropped, no background to remove
 _DOC_DETECT_MAX_AREA_FRACTION = 0.90
-# Interior angles of detected quad must be within this many degrees of 90°
-_DOC_DETECT_MAX_ANGLE_DEVIATION = 30.0
 # Aspect ratio of detected document: longest side / shortest side must be ≤ this
 _DOC_DETECT_MAX_ASPECT_RATIO = 5.0
+# Contour must fill at least this fraction of its rotated bounding rect
+_DOC_DETECT_MIN_SOLIDITY = 0.65
 
 
-def _is_valid_document_quad(pts: NDArray[np.float32]) -> bool:
-    """
-    Validate that 4 detected corner points form a plausible document rectangle.
-
-    Rejects quads that are:
-    - Non-convex (folded / self-intersecting)
-    - Have any interior angle deviating >30° from 90°
-    - Have an extreme aspect ratio (>5:1)
-
-    These checks filter out false positives from laptop keyboards, table edges,
-    reflections, and other background structures.
-    """
-    pts_int = pts.reshape(4, 1, 2).astype(np.int32)
-    if not cv2.isContourConvex(pts_int):
-        return False
-
-    ordered = _order_points(pts)
-    for i in range(4):
-        p0 = ordered[(i - 1) % 4]
-        p1 = ordered[i]
-        p2 = ordered[(i + 1) % 4]
-        v1 = p0 - p1
-        v2 = p2 - p1
-        denom = np.linalg.norm(v1) * np.linalg.norm(v2)
-        if denom < 1e-6:
-            return False
-        cos_a = np.clip(np.dot(v1, v2) / denom, -1.0, 1.0)
-        angle = float(np.degrees(np.arccos(cos_a)))
-        if abs(angle - 90.0) > _DOC_DETECT_MAX_ANGLE_DEVIATION:
-            return False
-
-    tl, tr, br, bl = ordered
-    width  = max(np.linalg.norm(tr - tl), np.linalg.norm(br - bl))
-    height = max(np.linalg.norm(bl - tl), np.linalg.norm(br - tr))
-    if width < 1 or height < 1:
-        return False
-    if max(width, height) / min(width, height) > _DOC_DETECT_MAX_ASPECT_RATIO:
-        return False
-
-    return True
-
-
-def detect_document_boundary(
+def detect_and_crop_document(
     img: NDArray[np.uint8],
-) -> Optional[NDArray[np.float32]]:
+) -> Tuple[NDArray[np.uint8], bool]:
     """
-    Detect the largest rectangular document/photo boundary in a scene image.
+    Detect the largest valid document rectangle in a scene photo, straighten
+    it with an affine rotation, and crop to it.
 
-    Uses Canny edges + contour approximation to find the biggest valid quad.
-    A larger Gaussian blur (9×9) suppresses background texture (keyboard keys,
-    table grain, etc.).  Morphological closing joins broken document edges.
-    Each candidate quad is validated for convexity, right-angle corners, and
-    aspect ratio before being accepted.
+    Uses cv2.minAreaRect (rotation-invariant bounding rect) rather than a
+    4-corner perspective transform.  This avoids the corner-ordering step
+    that previously caused hourglass/butterfly warp artefacts when the
+    document was tilted.
+
+    Algorithm:
+      1. Canny edges (multiple thresholds for different lighting conditions)
+      2. Morphological close to join broken document outlines
+      3. Find the largest contour that passes area + solidity + aspect-ratio
+         checks (filters laptop keyboards, table edges, etc.)
+      4. Fit a minimum-area bounding rectangle → get angle + centre + size
+      5. Rotate the whole image by that angle (warpAffine — no perspective)
+      6. Crop to the axis-aligned bounding box of the straightened document
 
     Returns:
-        4 corner points [[x,y]×4] or None if no confident rectangle found.
+        (result_image, was_processed)
     """
     h, w = img.shape[:2]
     min_area = _DOC_DETECT_MIN_AREA_FRACTION * w * h
     max_area = _DOC_DETECT_MAX_AREA_FRACTION * w * h
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    # Larger blur suppresses background texture (keyboard keys, table grain)
+    # 9×9 blur suppresses keyboard keys, table grain, fabric texture
     blurred = cv2.GaussianBlur(gray, (9, 9), 0)
-
     close_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
 
     for lo, hi in [(30, 100), (50, 150), (10, 60)]:
         edges = cv2.Canny(blurred, lo, hi)
-        # Morphological close: fills gaps in document outline without
-        # expanding it the way a plain dilate would
+        # MORPH_CLOSE fills gaps in the document outline
         edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, close_kernel)
 
         contours, _ = cv2.findContours(
@@ -752,63 +717,69 @@ def detect_document_boundary(
             area = cv2.contourArea(cnt)
             if area < min_area or area > max_area:
                 continue
-            peri = cv2.arcLength(cnt, True)
-            approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
-            if len(approx) != 4:
+
+            # Minimum-area bounding rectangle — gives angle without needing
+            # to order 4 corner points
+            (cx, cy), (rw, rh), angle = cv2.minAreaRect(cnt)
+
+            # Solidity: contour should fill most of its bounding rect.
+            # Low solidity → irregular shape (keyboard, clutter) → skip.
+            rect_area = rw * rh
+            if rect_area <= 0 or area / rect_area < _DOC_DETECT_MIN_SOLIDITY:
                 continue
-            pts = approx.reshape(4, 2).astype(np.float32)
-            if _is_valid_document_quad(pts):
-                logger.info(
-                    f"[ENHANCEMENT] document boundary detected: area={area:.0f} "
-                    f"({area / (w * h) * 100:.1f}% of image)"
-                )
-                return pts
 
-    return None
+            # Aspect ratio guard
+            long_side  = max(rw, rh)
+            short_side = min(rw, rh)
+            if short_side < 1 or long_side / short_side > _DOC_DETECT_MAX_ASPECT_RATIO:
+                continue
 
+            # ── Straighten ────────────────────────────────────────────
+            # minAreaRect angle is in (-90, 0].  When rw < rh the rect is
+            # "standing up" and we add 90° so the rotation aligns the long
+            # axis horizontally (the natural orientation for ID cards etc.).
+            if rw < rh:
+                angle += 90.0
+                rw, rh = rh, rw   # rw is now the wider dimension
 
-def _order_points(pts: NDArray[np.float32]) -> NDArray[np.float32]:
-    """Order 4 corner points: top-left, top-right, bottom-right, bottom-left."""
-    rect = np.zeros((4, 2), dtype=np.float32)
-    s = pts.sum(axis=1)
-    rect[0] = pts[np.argmin(s)]   # top-left:     smallest x+y
-    rect[2] = pts[np.argmax(s)]   # bottom-right: largest  x+y
-    diff = np.diff(pts, axis=1)
-    rect[1] = pts[np.argmin(diff)]  # top-right:   smallest y-x
-    rect[3] = pts[np.argmax(diff)]  # bottom-left: largest  y-x
-    return rect
+            # Affine rotation around the image centre
+            M = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), angle, 1.0)
+            # Expand canvas so nothing gets clipped after rotation
+            cos_a = abs(M[0, 0])
+            sin_a = abs(M[0, 1])
+            new_w = int(round(h * sin_a + w * cos_a))
+            new_h = int(round(h * cos_a + w * sin_a))
+            M[0, 2] += (new_w - w) / 2.0
+            M[1, 2] += (new_h - h) / 2.0
 
+            rotated = cv2.warpAffine(
+                img, M, (new_w, new_h),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_REPLICATE,
+            )
 
-def perspective_crop(
-    img: NDArray[np.uint8],
-    pts: NDArray[np.float32],
-) -> NDArray[np.uint8]:
-    """
-    Warp the detected document quad to a flat, deskewed rectangle.
+            # Map the document centre into the new coordinate space
+            new_cx = M[0, 0] * cx + M[0, 1] * cy + M[0, 2]
+            new_cy = M[1, 0] * cx + M[1, 1] * cy + M[1, 2]
 
-    Output dimensions are computed from the longest detected edges so no
-    content is squished or letterboxed.
-    """
-    rect = _order_points(pts)
-    tl, tr, br, bl = rect
+            # Crop to document bounds with a small padding
+            pad = 8
+            x1 = max(0, int(new_cx - rw / 2.0) - pad)
+            y1 = max(0, int(new_cy - rh / 2.0) - pad)
+            x2 = min(new_w, int(new_cx + rw / 2.0) + pad)
+            y2 = min(new_h, int(new_cy + rh / 2.0) + pad)
 
-    width  = int(max(np.linalg.norm(tr - tl), np.linalg.norm(br - bl)))
-    height = int(max(np.linalg.norm(bl - tl), np.linalg.norm(br - tr)))
+            cropped = rotated[y1:y2, x1:x2]
+            if cropped.size == 0:
+                continue
 
-    if width < 10 or height < 10:
-        return img
+            logger.info(
+                f"[ENHANCEMENT] document detected & straightened: "
+                f"{w}x{h} → {x2 - x1}x{y2 - y1} (angle={angle:.1f}°)"
+            )
+            return cropped, True
 
-    dst = np.array(
-        [[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]],
-        dtype=np.float32,
-    )
-    M = cv2.getPerspectiveTransform(rect, dst)
-    warped = cv2.warpPerspective(img, M, (width, height))
-    logger.info(
-        f"[ENHANCEMENT] perspective crop: "
-        f"{img.shape[1]}x{img.shape[0]} → {width}x{height}"
-    )
-    return warped
+    return img, False
 
 
 # ---------------------------------------------------------------------------
@@ -842,21 +813,19 @@ def _enhance_photo(
     # 1. EXIF rotation (handles most phone camera photos)
     img, orientation_corrected = correct_orientation_exif(img, raw_data)
 
-    # 2. Document boundary detection → perspective crop.
-    #    Finds the rectangular print in the scene, removes the background,
-    #    and corrects tilt/perspective in one shot.
-    #    Falls back to dark-border removal + Hough rotation when no clear
-    #    rectangle is detected (e.g. already-cropped scan).
-    pts = detect_document_boundary(img)
-    if pts is not None:
-        img = perspective_crop(img, pts)
+    # 2. Document boundary detection → affine-rotate + crop.
+    #    Finds the document rectangle in the scene, straightens it, and
+    #    removes the background.  Falls back to dark-border removal + Hough
+    #    rotation when no clear rectangle is detected.
+    img, doc_found = detect_and_crop_document(img)
+    if doc_found:
         border_cropped = True
         # Passport-size photos are always portrait; if the crop came out
-        # landscape the scene was rotated, so rotate back.
+        # landscape (e.g. scene was rotated 90°), rotate back.
         if img.shape[1] > img.shape[0]:
             img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
             orientation_corrected = True
-            logger.info("[ENHANCEMENT] photo: landscape→portrait after perspective crop")
+            logger.info("[ENHANCEMENT] photo: landscape→portrait after crop")
     else:
         img, border_cropped = crop_borders(img)
         # Fallback rotation: if EXIF gave nothing, try Hough-based detection
@@ -969,12 +938,11 @@ def _enhance_document(
     denoised = False
     color_normalized = False
 
-    # Document boundary detection → perspective crop.
+    # Document boundary detection → affine-rotate + crop.
     # Handles PAN cards, voter IDs, etc. photographed on a surface.
     # Falls back to dark-border removal + Hough skew when no rectangle found.
-    pts = detect_document_boundary(img)
-    if pts is not None:
-        img = perspective_crop(img, pts)
+    img, doc_found = detect_and_crop_document(img)
+    if doc_found:
         border_cropped = True
         orientation_corrected = True
     else:
@@ -1130,7 +1098,6 @@ __all__ = [
     'bilateral_denoise',
     'otsu_binarize',
     'crop_borders',
-    # Document boundary detection
-    'detect_document_boundary',
-    'perspective_crop',
+    # Document boundary detection + straighten
+    'detect_and_crop_document',
 ]
