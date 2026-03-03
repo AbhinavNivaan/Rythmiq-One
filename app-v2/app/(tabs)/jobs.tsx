@@ -4,7 +4,7 @@
  * Lists all user jobs with status and allows viewing results.
  */
 
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -21,15 +21,16 @@ import {
   CheckCircle,
   Clock,
   XCircle,
-  ChevronRight,
   FileText,
   Camera,
+  Trash2,
 } from 'lucide-react-native';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system';
 import Colors from '../../constants/Colors';
 import { documentsApi, JobStatus } from '../../services/api';
+import { subscribeUploadStatus, UploadStatus } from '../../services/backgroundUpload';
 
 type JobStatusType = 'pending' | 'processing' | 'completed' | 'failed';
 
@@ -48,10 +49,22 @@ const STATUS_CONFIG: Record<JobStatusType, StatusConfig> = {
 export default function JobsScreen() {
   const params = useLocalSearchParams<{ newJobIds?: string }>();
 
+  const queryClient = useQueryClient();
+  const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
+  const [uploadStatus, setUploadStatus] = useState<UploadStatus>({ total: 0, current: 0, done: true });
+
+  // Subscribe to background upload progress
+  useEffect(() => {
+    return subscribeUploadStatus(setUploadStatus);
+  }, []);
+
+  const isUploading = !uploadStatus.done;
+
   const { data, isLoading, refetch, isRefetching } = useQuery({
     queryKey: ['jobs'],
     queryFn: documentsApi.listJobs,
-    refetchInterval: 10000,
+    // Poll more frequently while an upload is in flight
+    refetchInterval: isUploading ? 3000 : 10000,
   });
 
   const jobs = useMemo(() => data?.jobs || [], [data]);
@@ -63,6 +76,25 @@ export default function JobsScreen() {
     }
     return [];
   }, [params.newJobIds]);
+
+  const deleteMutation = useMutation({
+    mutationFn: (jobId: string) => documentsApi.deleteJob(jobId),
+    onMutate: (jobId) => setDeletingJobId(jobId),
+    onSettled: () => setDeletingJobId(null),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['jobs'] }),
+    onError: () => Alert.alert('Delete Failed', 'Could not delete the document. Please try again.'),
+  });
+
+  const handleDelete = useCallback((job: JobStatus) => {
+    Alert.alert(
+      'Delete Document',
+      'This will permanently remove this document from your vault.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: () => deleteMutation.mutate(job.job_id) },
+      ],
+    );
+  }, [deleteMutation]);
 
   const handleDownload = useCallback(async (job: JobStatus) => {
     if (job.status !== 'completed') {
@@ -138,10 +170,18 @@ export default function JobsScreen() {
           )}
         </View>
 
-        <ChevronRight size={16} color="#333" />
+        <TouchableOpacity
+          style={styles.deleteButton}
+          onPress={() => handleDelete(item)}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          {deletingJobId === item.job_id
+            ? <ActivityIndicator size="small" color="#FF3B30" />
+            : <Trash2 size={16} color="#FF3B30" />}
+        </TouchableOpacity>
       </TouchableOpacity>
     );
-  }, [newJobIds, handleJobPress]);
+  }, [newJobIds, handleJobPress, deletingJobId, handleDelete]);
 
   if (isLoading) {
     return (
@@ -174,6 +214,26 @@ export default function JobsScreen() {
         </View>
         <Text style={styles.titleMain}>Processing Jobs</Text>
       </View>
+
+      {/* Upload-in-progress banner */}
+      {isUploading && (
+        <View style={styles.uploadBanner}>
+          <ActivityIndicator size="small" color="#89C7FE" style={{ marginRight: 10 }} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.uploadBannerText}>
+              Uploading {uploadStatus.current} of {uploadStatus.total} document{uploadStatus.total !== 1 ? 's' : ''}…
+            </Text>
+            <View style={styles.uploadBannerTrack}>
+              <View
+                style={[
+                  styles.uploadBannerFill,
+                  { width: uploadStatus.total > 0 ? `${(uploadStatus.current / uploadStatus.total) * 100}%` : '0%' },
+                ]}
+              />
+            </View>
+          </View>
+        </View>
+      )}
 
       <FlatList
         data={jobs}
@@ -365,6 +425,12 @@ const styles = StyleSheet.create({
     color: Colors.palette.red,
     marginTop: 4,
   },
+  deleteButton: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
   // ── Empty state ────────────────────────────────────────
   emptyBox: {
@@ -410,6 +476,35 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: Colors.palette.inkBlack,
+  },
+
+  // ── Upload banner ──────────────────────────────────────
+  uploadBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1A2595',
+    marginHorizontal: 24,
+    marginBottom: 12,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  uploadBannerText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#89C7FE',
+    marginBottom: 6,
+  },
+  uploadBannerTrack: {
+    height: 4,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  uploadBannerFill: {
+    height: '100%',
+    backgroundColor: '#89C7FE',
+    borderRadius: 2,
   },
 
   // ── Loading ────────────────────────────────────────────

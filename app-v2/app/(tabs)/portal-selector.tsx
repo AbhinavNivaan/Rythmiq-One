@@ -1,10 +1,10 @@
 /**
  * Portal Selector Screen (Export Flow)
- * 
+ *
  * Entry point for Export flow from Dashboard.
- * 1. User selects a target portal
- * 2. Shows what documents the portal requires
- * 3. Shows which master documents user already has
+ * 1. User selects a target form (e.g. "NEET 2026")
+ * 2. Shows the full document checklist from form_schemas
+ * 3. Shows which documents the user already has in their vault
  * 4. If all required docs exist → Process and download
  * 5. If missing docs → Prompt to upload them first
  */
@@ -19,23 +19,26 @@ import {
   TextInput,
   ActivityIndicator,
   ScrollView,
+  Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { 
-  Search, 
-  ArrowLeft, 
-  FileCheck, 
-  ChevronRight, 
-  CheckCircle, 
+import {
+  Search,
+  ArrowLeft,
+  FileCheck,
+  ChevronRight,
+  CheckCircle,
   AlertCircle,
   Camera,
   FileImage,
   PenTool,
+  FileText,
+  ArrowLeftRight,
 } from 'lucide-react-native';
-import { useQuery, useMutation } from '@tanstack/react-query';
-import Colors from '../../constants/Colors';
-import { schemasApi, documentsApi, PortalSchema, groupSchemasByPortal } from '../../services/api';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useFocusEffect } from 'expo-router';
+import { portalsApi, documentsApi, Portal, FormSchema, FormSchemaDocUpload } from '../../services/api';
 
 // Theme colors
 const colors = {
@@ -46,231 +49,442 @@ const colors = {
   white: '#FCFEFF',
 };
 
-// Portal category icons/colors for visual distinction
-const PORTAL_CATEGORIES: Record<string, { color: string; label: string }> = {
-  medical: { color: '#4CAF50', label: 'Medical' },
-  engineering: { color: '#2196F3', label: 'Engineering' },
-  management: { color: '#9C27B0', label: 'Management' },
-  government: { color: '#FF9800', label: 'Government' },
-  default: { color: colors.mayaBlue, label: 'Portal' },
+// Category display config
+const CATEGORY_DISPLAY: Record<string, { color: string; label: string }> = {
+  medical_entrance:     { color: '#4CAF50', label: 'Medical' },
+  engineering_entrance: { color: '#2196F3', label: 'Engineering' },
+  management_entrance:  { color: '#9C27B0', label: 'Management' },
+  government:           { color: '#FF9800', label: 'Government' },
+  recruitment:          { color: '#FF9800', label: 'Recruitment' },
+  government_id:        { color: '#607D8B', label: 'Govt ID' },
+  banking:              { color: '#F44336', label: 'Banking' },
+  railways:             { color: '#795548', label: 'Railways' },
 };
 
-function getPortalCategory(name: string): { color: string; label: string } {
-  const lower = name.toLowerCase();
-  if (lower.includes('neet') || lower.includes('aiims') || lower.includes('jipmer')) {
-    return PORTAL_CATEGORIES.medical;
-  }
-  if (lower.includes('jee') || lower.includes('bitsat') || lower.includes('engineering')) {
-    return PORTAL_CATEGORIES.engineering;
-  }
-  if (lower.includes('cat') || lower.includes('xat') || lower.includes('snap')) {
-    return PORTAL_CATEGORIES.management;
-  }
-  if (lower.includes('upsc') || lower.includes('ssc') || lower.includes('bank')) {
-    return PORTAL_CATEGORIES.government;
-  }
-  return PORTAL_CATEGORIES.default;
+function getCategoryDisplay(category: string): { color: string; label: string } {
+  return CATEGORY_DISPLAY[category] ?? { color: colors.mayaBlue, label: 'Exam' };
 }
 
-// Document requirement types
+/**
+ * Client-side fallback annotations for well-known doc_ids.
+ * Used when the API-returned form schema body predates the document_category/
+ * document_subtype fields (i.e. the DB schema hasn't been re-injected yet).
+ * The API schema fields always take precedence; this is purely a fallback.
+ */
+const DOC_ID_ANNOTATIONS: Record<string, Pick<FormSchemaDocUpload, 'document_category' | 'document_subtype'>> = {
+  photograph_passport:     { document_category: 'photograph',  document_subtype: 'Passport Photo' },
+  photograph_postcard:     { document_category: 'photograph',  document_subtype: 'Postcard Photo' },
+  signature:               { document_category: 'signature',   document_subtype: 'Personal Signature' },
+  id_proof:                { document_category: 'identity' },
+  class_10_certificate:    { document_category: 'academic',    document_subtype: 'Class 10 Marksheet' },
+  class_12_certificate:    { document_category: 'academic',    document_subtype: 'Class 12 Marksheet' },
+  category_certificate:    { document_category: 'certificate', document_subtype: 'Category Certificate' },
+  pwd_medical_certificate: { document_category: 'certificate', document_subtype: 'PwD Medical Certificate' },
+  scribe_documents:        { document_category: 'other',       document_subtype: 'Scribe Document' },
+};
+
+/**
+ * Map a document's doc_id to the master document type stored in the vault.
+ * Photos and signatures are processed by the worker; everything else is a raw document upload.
+ */
+function inferDocType(docId: string): 'photo' | 'signature' | 'document' {
+  if (docId.startsWith('photograph') || docId.includes('photo')) return 'photo';
+  if (docId === 'signature') return 'signature';
+  return 'document';
+}
+
+/**
+ * Find the best matching vault master for a form schema document requirement.
+ *
+ * Priority:
+ *  1. Exact category + subtype match  (e.g. 'academic' + 'Class 10 Marksheet')
+ *  2. Category-only match             (e.g. 'identity' → any government ID)
+ *  3. Backward-compat fallback for photos/signatures ONLY: untagged old masters
+ *     (uploaded before the category/subtype tagging system was added) can satisfy
+ *     photo and signature requirements because those are unambiguous types.
+ *     Documents do NOT get a backward-compat fallback — a Voter ID, Class 10
+ *     marksheet and category certificate are all completely different things and
+ *     we cannot safely guess which document slot an untagged upload belongs to.
+ */
+function findMatchingMaster(
+  doc: FormSchemaDocUpload,
+  bucket: JobStatus[],
+  docType: 'photo' | 'signature' | 'document',
+): JobStatus | undefined {
+  if (!bucket.length) return undefined;
+
+  if (!doc.document_category) {
+    // No category annotation (e.g. biometrics) → no automatic match.
+    return undefined;
+  }
+
+  if (doc.document_subtype) {
+    // 1. Exact category + subtype match (best).
+    const exact = bucket.find(
+      m => m.document_category === doc.document_category &&
+           m.document_subtype === doc.document_subtype,
+    );
+    if (exact) return exact;
+    // 2. Backward compat for photos/signatures: untagged old masters can fill the slot.
+    //    Not applicable for documents — an untagged document could be anything.
+    if (docType !== 'document') {
+      return bucket.find(m => !m.document_category && !m.document_subtype);
+    }
+    return undefined;
+  }
+
+  // Category-only requirement (e.g. id_proof → any identity document).
+  // 1. Any master tagged with the right category.
+  const catMatch = bucket.find(m => m.document_category === doc.document_category);
+  if (catMatch) return catMatch;
+  // 2. Backward compat for photos/signatures only.
+  if (docType !== 'document') {
+    return bucket.find(m => !m.document_category && !m.document_subtype);
+  }
+  return undefined;
+}
+
+/**
+ * Return ALL vault masters that qualify for a given requirement, in match-quality
+ * order. Used to populate the swap alternatives list.
+ */
+function findAllMatchingMasters(
+  doc: FormSchemaDocUpload,
+  bucket: JobStatus[],
+  docType: 'photo' | 'signature' | 'document',
+): JobStatus[] {
+  if (!bucket.length || !doc.document_category) return [];
+
+  if (doc.document_subtype) {
+    const exact = bucket.filter(
+      m => m.document_category === doc.document_category &&
+           m.document_subtype === doc.document_subtype,
+    );
+    const untagged = docType !== 'document'
+      ? bucket.filter(m => !m.document_category && !m.document_subtype)
+      : [];
+    return [...exact, ...untagged];
+  }
+
+  const catMatch = bucket.filter(m => m.document_category === doc.document_category);
+  const untagged = docType !== 'document'
+    ? bucket.filter(m => !m.document_category && !m.document_subtype)
+    : [];
+  return [...catMatch, ...untagged];
+}
+
+/**
+ * Derive the portal_schema_name for adapt jobs from the form schema id.
+ * Convention: first segment of the id + '_' + doc type.
+ * e.g. 'neet_2026_registration' + 'photo' → 'neet_photo'
+ */
+function portalSchemaName(formSchemaId: string, docType: 'photo' | 'signature'): string {
+  const prefix = formSchemaId.split('_')[0];
+  return `${prefix}_${docType}`;
+}
+
 interface RequirementStatus {
   type: 'photo' | 'signature' | 'document';
+  doc_id: string;
   label: string;
   required: boolean;
+  required_if?: string | null;
   available: boolean;
   masterId?: string;
+  matchedDocumentName?: string;
+  /** All vault masters that qualify for this slot (including the selected one). */
+  allCandidates: { job_id: string; document_name?: string }[];
+  formats: string[];
+  max_kb?: number;
 }
 
 export default function PortalSelectorScreen() {
-  // Optional: can be called from job-detail with a specific document
-  const params = useLocalSearchParams<{ documentId?: string }>();
-  const preSelectedDocId = params.documentId;
-  
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedPortal, setSelectedPortal] = useState<PortalSchema | null>(null);
-  const [step, setStep] = useState<'select-portal' | 'review-requirements'>('select-portal');
+  const {
+    documentId: sourceDocumentId,
+    documentCategory: sourceDocumentCategory,
+    documentSubtype: sourceDocumentSubtype,
+    documentName: sourceDocumentName,
+  } = useLocalSearchParams<{
+    documentId?: string;
+    documentCategory?: string;
+    documentSubtype?: string;
+    documentName?: string;
+  }>();
 
-  // Fetch available portal schemas
-  const { data: schemas, isLoading: schemasLoading } = useQuery({
-    queryKey: ['schemas'],
-    queryFn: schemasApi.list,
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedSchema, setSelectedSchema] = useState<FormSchema | null>(null);
+  const [step, setStep] = useState<'select-portal' | 'review-requirements'>('select-portal');
+  // Tracks which conditional docs the user has opted into (applicable to them)
+  const [conditionalOptIns, setConditionalOptIns] = useState<Record<string, boolean>>({});
+  // Manual overrides: doc_id → job_id chosen by the user via Swap
+  const [slotOverrides, setSlotOverrides] = useState<Record<string, string>>({});
+
+  // Fetch the portal registry (each portal carries its form schemas)
+  const { data: portals, isLoading: portalsLoading } = useQuery({
+    queryKey: ['portals'],
+    queryFn: portalsApi.list,
   });
 
+  const queryClient = useQueryClient();
+
+  // Refetch vault jobs whenever this screen is focused so uploads made on other
+  // tabs (Upload, Capture) are immediately reflected in the checklist.
+  useFocusEffect(useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['jobs'] });
+  }, [queryClient]));
+
   // Fetch user's master documents (completed jobs)
-  const { data: jobsData, isLoading: jobsLoading } = useQuery({
+  const { data: jobsData } = useQuery({
     queryKey: ['jobs'],
     queryFn: documentsApi.listJobs,
   });
 
-  // Get user's available master documents
+  // Vault: which document types does the user already have?
+  // In document-centric export mode (sourceDocumentId set), only match the
+  // source document — other vault docs must be added manually by the user.
   const availableMasters = useMemo(() => {
     if (!jobsData?.jobs) return { photo: [], signature: [], document: [] };
-    
     const completed = jobsData.jobs.filter(j => j.status === 'completed');
+    const candidates = sourceDocumentId
+      ? completed.filter(j => j.job_id === sourceDocumentId)
+      : completed;
     return {
-      photo: completed.filter(j => j.document_type === 'photo' || j.job_type === 'master'),
-      signature: completed.filter(j => j.document_type === 'signature'),
-      document: completed.filter(j => j.document_type === 'document'),
+      photo: candidates.filter(j => j.document_type === 'photo' && j.job_type === 'master'),
+      signature: candidates.filter(j => j.document_type === 'signature'),
+      document: candidates.filter(j => j.document_type === 'document'),
     };
-  }, [jobsData]);
+  }, [jobsData, sourceDocumentId]);
 
-  // Check requirements against available masters
+  // Build requirement status list from the selected form schema
   const requirementStatus = useMemo((): RequirementStatus[] => {
-    if (!selectedPortal?.requirements) return [];
-    
-    const requirements: RequirementStatus[] = [];
-    
-    if (selectedPortal.requirements.photo) {
-      requirements.push({
-        type: 'photo',
-        label: 'Photo',
-        required: true,
-        available: availableMasters.photo.length > 0,
-        masterId: availableMasters.photo[0]?.job_id,
-      });
-    }
-    
-    if (selectedPortal.requirements.signature) {
-      requirements.push({
-        type: 'signature',
-        label: 'Signature',
-        required: true,
-        available: availableMasters.signature.length > 0,
-        masterId: availableMasters.signature[0]?.job_id,
-      });
-    }
-    
-    return requirements;
-  }, [selectedPortal, availableMasters]);
+    if (!selectedSchema?.document_uploads) return [];
+
+    // Track which master job IDs have already been claimed by a requirement.
+    // Each physical document can only satisfy one slot.
+    const claimedMasterIds = new Set<string>();
+
+    return selectedSchema.document_uploads.map((doc: FormSchemaDocUpload) => {
+      const type = inferDocType(doc.doc_id);
+
+      // Merge API schema fields with client-side fallback annotations.
+      const fallback = DOC_ID_ANNOTATIONS[doc.doc_id] ?? {};
+      const effectiveCategory = doc.document_category ?? fallback.document_category;
+      const effectiveSubtype  = doc.document_subtype  ?? fallback.document_subtype;
+      const annotatedDoc = { ...doc, document_category: effectiveCategory, document_subtype: effectiveSubtype };
+
+      const bucket =
+        type === 'photo' ? availableMasters.photo :
+        type === 'signature' ? availableMasters.signature :
+        availableMasters.document;
+
+      // All qualifying masters (used for Swap alternatives list — ignores claimed state).
+      const allCandidates = findAllMatchingMasters(annotatedDoc, bucket, type);
+
+      // Default: first unclaimed candidate via normal matching.
+      const availableBucket = bucket.filter(m => !claimedMasterIds.has(m.job_id));
+      const defaultMaster = findMatchingMaster(annotatedDoc, availableBucket, type);
+
+      // Apply manual override if the user has swapped this slot and the chosen
+      // master is still a valid candidate (guards against deleted jobs).
+      const overrideId = slotOverrides[doc.doc_id];
+      const matchedMaster =
+        (overrideId ? allCandidates.find(m => m.job_id === overrideId) : undefined)
+        ?? defaultMaster;
+
+      if (matchedMaster) claimedMasterIds.add(matchedMaster.job_id);
+
+      const available = matchedMaster !== undefined;
+      const masterId = matchedMaster?.job_id;
+      const matchedDocumentName = matchedMaster?.document_name?.replace(/\.[^.]+$/, '');
+
+      return {
+        type,
+        doc_id: doc.doc_id,
+        label: doc.label,
+        required: doc.required,
+        required_if: doc.required_if,
+        available,
+        masterId,
+        matchedDocumentName,
+        allCandidates: allCandidates.map(m => ({ job_id: m.job_id, document_name: m.document_name })),
+        formats: doc.allowed_formats,
+        max_kb: doc.size_max_kb,
+      };
+    });
+  }, [selectedSchema, availableMasters, slotOverrides]);
+
+  // Only unconditionally required docs must be satisfied to proceed
+  const mandatoryRequirements = useMemo(
+    () => requirementStatus.filter(r => r.required),
+    [requirementStatus]
+  );
 
   const allRequirementsMet = useMemo(() => {
-    return requirementStatus.every(r => r.available);
-  }, [requirementStatus]);
+    if (sourceDocumentId) {
+      // Source doc mode: only the exported document's slot needs to be matched.
+      return requirementStatus.some(r => r.masterId === sourceDocumentId);
+    }
+    return mandatoryRequirements.every(r => r.available);
+  }, [requirementStatus, mandatoryRequirements, sourceDocumentId]);
 
-  const missingRequirements = useMemo(() => {
-    return requirementStatus.filter(r => !r.available);
-  }, [requirementStatus]);
+  const missingRequirements = useMemo(
+    () => mandatoryRequirements.filter(r => !r.available),
+    [mandatoryRequirements]
+  );
 
-  // Adapt mutation
+  const conditionalRequirements = useMemo(
+    () => requirementStatus.filter(r => !r.required && r.required_if),
+    [requirementStatus]
+  );
+
+  // Adapt mutation: create processing jobs for photo and signature.
+  // In source doc mode, only process the slot matched to the source document.
   const adaptMutation = useMutation({
     mutationFn: async () => {
-      if (!selectedPortal) throw new Error('No portal selected');
-      
-      // Create adapt jobs for each required document
+      if (!selectedSchema) throw new Error('No schema selected');
+
       const jobIds: string[] = [];
-      
-      for (const req of requirementStatus) {
-        if (req.available && req.masterId) {
-          const result = await documentsApi.createAdaptJob(
-            req.masterId,
-            selectedPortal.name
-          );
+
+      const slotsToProcess = sourceDocumentId
+        ? requirementStatus.filter(r => r.masterId === sourceDocumentId)
+        : mandatoryRequirements;
+
+      for (const req of slotsToProcess) {
+        if (req.available && req.masterId && (req.type === 'photo' || req.type === 'signature')) {
+          const schemaName = portalSchemaName(selectedSchema.id, req.type);
+          const result = await documentsApi.createAdaptJob(req.masterId, schemaName);
           jobIds.push(result.job_id);
         }
       }
-      
+
       return jobIds;
     },
     onSuccess: (jobIds) => {
-      // Navigate to adaptation status screen
       router.push({
         pathname: '/(tabs)/adapt-status',
-        params: { 
+        params: {
           jobIds: JSON.stringify(jobIds),
-          portalName: selectedPortal?.name,
+          portalName: selectedSchema?.short_name,
         },
       });
     },
   });
 
-  // Filter schemas based on search
-  const filteredSchemas = useMemo(() => {
-    if (!schemas) return [];
-    if (!searchQuery.trim()) return schemas;
-    
+  // Filter portals: only show those with a form schema, then apply search.
+  // In source doc mode, further narrow to portals that actually require this
+  // document's category (and subtype when specified).
+  const filteredPortals = useMemo(() => {
+    if (!portals) return [];
+    let candidates = portals.filter(p => p.has_form_schema);
+
+    if (sourceDocumentCategory) {
+      candidates = candidates.filter(p =>
+        p.form_schemas.some(schema =>
+          schema.document_uploads.some(doc => {
+            const effectiveCategory =
+              doc.document_category ?? DOC_ID_ANNOTATIONS[doc.doc_id]?.document_category;
+            if (effectiveCategory !== sourceDocumentCategory) return false;
+            if (
+              sourceDocumentSubtype &&
+              doc.document_subtype &&
+              doc.document_subtype !== sourceDocumentSubtype
+            ) return false;
+            return true;
+          })
+        )
+      );
+    }
+
+    if (!searchQuery.trim()) return candidates;
     const query = searchQuery.toLowerCase();
-    return schemas.filter(schema => 
-      schema.name.toLowerCase().includes(query) ||
-      (schema.portal && schema.portal.toLowerCase().includes(query))
+    return candidates.filter(p =>
+      p.display_name.toLowerCase().includes(query) ||
+      p.short_name.toLowerCase().includes(query)
     );
-  }, [schemas, searchQuery]);
+  }, [portals, searchQuery, sourceDocumentCategory, sourceDocumentSubtype]);
 
-  // Group filtered schemas by portal for display
-  const groupedPortals = useMemo(() => {
-    const grouped = groupSchemasByPortal(filteredSchemas);
-    // Convert to array of { portal, schemas } for SectionList-style rendering
-    return Object.entries(grouped).map(([portal, portalSchemas]) => ({
-      portal,
-      schemas: portalSchemas,
-      // Combine requirements from all schemas in this portal
-      combinedRequirements: {
-        photo: portalSchemas.some(s => s.requirements?.photo),
-        signature: portalSchemas.some(s => s.requirements?.signature),
-      },
-    }));
-  }, [filteredSchemas]);
+  const handleSelectPortal = useCallback((portal: Portal) => {
+    // Pick the latest form schema (API returns them newest-first)
+    const schema = portal.form_schemas[0] ?? null;
+    setSelectedSchema(schema);
+    setConditionalOptIns({});
 
-  const handleProcess = useCallback(() => {
-    adaptMutation.mutate();
-  }, [adaptMutation]);
+    // In source doc mode, pre-select the source document in the first slot
+    // whose category (and optionally subtype) matches.
+    const initialOverrides: Record<string, string> = {};
+    if (sourceDocumentId && sourceDocumentCategory && schema) {
+      for (const doc of schema.document_uploads) {
+        const fallback = DOC_ID_ANNOTATIONS[doc.doc_id] ?? {};
+        const effectiveCategory = doc.document_category ?? fallback.document_category;
+        if (effectiveCategory !== sourceDocumentCategory) continue;
+        if (
+          sourceDocumentSubtype &&
+          doc.document_subtype &&
+          doc.document_subtype !== sourceDocumentSubtype
+        ) continue;
+        initialOverrides[doc.doc_id] = sourceDocumentId;
+        break;
+      }
+    }
+    setSlotOverrides(initialOverrides);
+    setStep('review-requirements');
+  }, [sourceDocumentId, sourceDocumentCategory, sourceDocumentSubtype]);
+
+  // Cycle to the next qualifying master for a slot.
+  const handleSwap = useCallback((
+    docId: string,
+    candidates: { job_id: string }[],
+    currentId?: string,
+  ) => {
+    const currentIdx = candidates.findIndex(c => c.job_id === currentId);
+    const nextIdx = (currentIdx + 1) % candidates.length;
+    setSlotOverrides(prev => ({ ...prev, [docId]: candidates[nextIdx].job_id }));
+  }, []);
 
   const handleUploadMissing = useCallback((type: 'photo' | 'signature' | 'document') => {
-    // Navigate to capture flow with the required document type
     router.push({
       pathname: '/(tabs)/capture',
       params: { requiredType: type },
     });
   }, []);
 
-  // When user selects a portal group, we use its first schema as the "main" one
-  // but track all schemas under that portal for combined requirements
-  const handleSelectPortalGroup = useCallback((portalGroup: typeof groupedPortals[0]) => {
-    // Find the first schema or create a combined one
-    const firstSchema = portalGroup.schemas[0];
-    // Merge requirements from all schemas in the group
-    const combinedSchema: PortalSchema = {
-      ...firstSchema,
-      name: portalGroup.portal, // Use portal name instead of individual schema name
-      requirements: {
-        photo: portalGroup.schemas.find(s => s.requirements?.photo)?.requirements?.photo,
-        signature: portalGroup.schemas.find(s => s.requirements?.signature)?.requirements?.signature,
-      },
-    };
-    setSelectedPortal(combinedSchema);
-    setStep('review-requirements');
-  }, []);
+  const renderPortalItem = useCallback(({ item }: { item: Portal }) => {
+    const cat = getCategoryDisplay(item.category);
+    // Derive doc counts from the most recent form schema, if one exists
+    const latestSchema = item.form_schemas[0];
+    const requiredCount = latestSchema?.document_uploads.filter(d => d.required).length ?? 0;
+    const conditionalCount = latestSchema?.document_uploads.filter(d => !d.required && d.required_if).length ?? 0;
 
-  const renderPortalGroupItem = useCallback(({ item }: { item: typeof groupedPortals[0] }) => {
-    const category = getPortalCategory(item.portal);
-    
     return (
       <TouchableOpacity
         style={styles.portalItem}
-        onPress={() => handleSelectPortalGroup(item)}
+        onPress={() => handleSelectPortal(item)}
         activeOpacity={0.7}
       >
-        <View style={[styles.portalIcon, { backgroundColor: category.color + '20' }]}>
-          <FileCheck size={24} color={category.color} />
+        <View style={[styles.portalIcon, { backgroundColor: cat.color + '20' }]}>
+          <FileCheck size={24} color={cat.color} />
         </View>
         <View style={styles.portalInfo}>
-          <Text style={styles.portalName}>{item.portal}</Text>
-          <Text style={styles.portalCategory}>{category.label}</Text>
-          <Text style={styles.portalRequirements}>
-            Requires: {item.combinedRequirements.photo ? 'Photo' : ''}
-            {item.combinedRequirements.photo && item.combinedRequirements.signature ? ' + ' : ''}
-            {item.combinedRequirements.signature ? 'Signature' : ''}
-          </Text>
+          <Text style={styles.portalName}>{item.display_name}</Text>
+          <Text style={styles.portalCategory}>{cat.label}</Text>
+          {requiredCount > 0 ? (
+            <Text style={styles.portalRequirements}>
+              {requiredCount} required docs
+              {conditionalCount > 0 ? ` + ${conditionalCount} conditional` : ''}
+            </Text>
+          ) : (
+            <Text style={styles.portalRequirements}>No form schema yet</Text>
+          )}
         </View>
         <ChevronRight size={20} color={colors.white + '60'} />
       </TouchableOpacity>
     );
-  }, [handleSelectPortalGroup]);
+  }, [handleSelectPortal]);
 
-  // Step 1: Portal Selection
+  // ─── Step 1: Portal Selection ─────────────────────────────────────────────
   if (step === 'select-portal') {
     return (
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-        {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.headerButton}>
             <ArrowLeft size={24} color={colors.white} />
@@ -279,7 +493,15 @@ export default function PortalSelectorScreen() {
           <View style={styles.headerButton} />
         </View>
 
-        {/* Search Bar */}
+        {(sourceDocumentName || sourceDocumentSubtype || sourceDocumentCategory) && (
+          <View style={styles.exportContextBanner}>
+            <Text style={styles.exportContextLabel}>Exporting</Text>
+            <Text style={styles.exportContextDoc} numberOfLines={1}>
+              {sourceDocumentName || sourceDocumentSubtype || sourceDocumentCategory}
+            </Text>
+          </View>
+        )}
+
         <View style={styles.searchContainer}>
           <View style={styles.searchBar}>
             <Search size={20} color="#999" />
@@ -295,17 +517,16 @@ export default function PortalSelectorScreen() {
           </View>
         </View>
 
-        {/* Portal List */}
-        {schemasLoading ? (
+        {portalsLoading ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={colors.mayaBlue} />
             <Text style={styles.loadingText}>Loading portals...</Text>
           </View>
         ) : (
           <FlatList
-            data={groupedPortals}
-            keyExtractor={(item) => item.portal}
-            renderItem={renderPortalGroupItem}
+            data={filteredPortals}
+            keyExtractor={(item) => item.id}
+            renderItem={renderPortalItem}
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
             ListEmptyComponent={
@@ -320,15 +541,14 @@ export default function PortalSelectorScreen() {
     );
   }
 
-  // Step 2: Review Requirements
+  // ─── Step 2: Review Requirements ─────────────────────────────────────────
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => setStep('select-portal')} style={styles.headerButton}>
           <ArrowLeft size={24} color={colors.white} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>{selectedPortal?.name}</Text>
+        <Text style={styles.headerTitle}>{selectedSchema?.short_name}</Text>
         <View style={styles.headerButton} />
       </View>
 
@@ -336,7 +556,7 @@ export default function PortalSelectorScreen() {
         {/* Status Banner */}
         <View style={[
           styles.statusBanner,
-          allRequirementsMet ? styles.statusBannerSuccess : styles.statusBannerWarning
+          allRequirementsMet ? styles.statusBannerSuccess : styles.statusBannerWarning,
         ]}>
           {allRequirementsMet ? (
             <>
@@ -353,29 +573,50 @@ export default function PortalSelectorScreen() {
           )}
         </View>
 
-        {/* Requirements List */}
+        {/* Required Documents */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Required Documents</Text>
-          
-          {requirementStatus.map((req) => (
-            <View key={req.type} style={styles.requirementItem}>
+
+          {mandatoryRequirements.map((req) => (
+            <View key={req.doc_id} style={styles.requirementItem}>
               <View style={styles.requirementIcon}>
-                {req.type === 'photo' && <FileImage size={24} color={colors.mayaBlue} />}
-                {req.type === 'signature' && <PenTool size={24} color={colors.mayaBlue} />}
+                {req.type === 'photo' && <FileImage size={22} color={colors.mayaBlue} />}
+                {req.type === 'signature' && <PenTool size={22} color={colors.mayaBlue} />}
+                {req.type === 'document' && <FileText size={22} color={colors.mayaBlue} />}
               </View>
-              
+
               <View style={styles.requirementInfo}>
                 <Text style={styles.requirementLabel}>{req.label}</Text>
                 <Text style={[
                   styles.requirementStatus,
-                  req.available ? styles.requirementStatusOk : styles.requirementStatusMissing
+                  req.available ? styles.requirementStatusOk : styles.requirementStatusMissing,
                 ]}>
-                  {req.available ? 'Available' : 'Not uploaded'}
+                  {req.available
+                    ? req.matchedDocumentName
+                      ? `Matched: ${req.matchedDocumentName}`
+                      : 'Available'
+                    : 'Not uploaded'}
+                </Text>
+                <Text style={styles.requirementFormats}>
+                  {req.formats.join(' / ')}{req.max_kb ? ` · max ${req.max_kb} KB` : ''}
                 </Text>
               </View>
-              
+
               {req.available ? (
-                <CheckCircle size={24} color="#34C759" />
+                req.allCandidates.length > 1 ? (
+                  <View style={styles.matchActions}>
+                    <CheckCircle size={20} color="#34C759" />
+                    <TouchableOpacity
+                      style={styles.swapButton}
+                      onPress={() => handleSwap(req.doc_id, req.allCandidates, req.masterId)}
+                    >
+                      <ArrowLeftRight size={14} color={colors.mayaBlue} />
+                      <Text style={styles.swapText}>Swap</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <CheckCircle size={24} color="#34C759" />
+                )
               ) : (
                 <TouchableOpacity
                   style={styles.uploadMissingButton}
@@ -389,15 +630,99 @@ export default function PortalSelectorScreen() {
           ))}
         </View>
 
-        {/* Portal Requirements Info */}
-        {selectedPortal?.requirements && (
+        {/* Conditional Documents */}
+        {conditionalRequirements.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Conditional Documents</Text>
+            <Text style={styles.conditionalNote}>
+              Required only if applicable to you.
+            </Text>
+
+            {conditionalRequirements.map((req) => {
+              const isOptedIn = conditionalOptIns[req.doc_id] ?? false;
+              const iconColor = isOptedIn ? colors.mayaBlue : colors.white + '50';
+
+              return (
+                <View key={req.doc_id} style={[styles.requirementItem, !isOptedIn && styles.conditionalItem]}>
+                  <View style={[styles.requirementIcon, !isOptedIn && styles.conditionalIcon]}>
+                    {req.type === 'photo' && <FileImage size={22} color={iconColor} />}
+                    {req.type === 'signature' && <PenTool size={22} color={iconColor} />}
+                    {req.type === 'document' && <FileText size={22} color={iconColor} />}
+                  </View>
+
+                  <View style={styles.requirementInfo}>
+                    <Text style={[styles.requirementLabel, !isOptedIn && { color: colors.white + 'AA' }]}>
+                      {req.label}
+                    </Text>
+                    {isOptedIn && (
+                      <Text style={[
+                        styles.requirementStatus,
+                        req.available ? styles.requirementStatusOk : styles.requirementStatusMissing,
+                      ]}>
+                        {req.available
+                          ? req.matchedDocumentName
+                            ? `Matched: ${req.matchedDocumentName}`
+                            : 'Available'
+                          : 'Not uploaded'}
+                      </Text>
+                    )}
+                    <Text style={styles.conditionalCondition}>
+                      If: {req.required_if}
+                    </Text>
+                    {isOptedIn && (
+                      <Text style={styles.requirementFormats}>
+                        {req.formats.join(' / ')}{req.max_kb ? ` · max ${req.max_kb} KB` : ''}
+                      </Text>
+                    )}
+                  </View>
+
+                  {isOptedIn ? (
+                    req.available ? (
+                      req.allCandidates.length > 1 ? (
+                        <View style={styles.matchActions}>
+                          <CheckCircle size={20} color="#34C759" />
+                          <TouchableOpacity
+                            style={styles.swapButton}
+                            onPress={() => handleSwap(req.doc_id, req.allCandidates, req.masterId)}
+                          >
+                            <ArrowLeftRight size={14} color={colors.mayaBlue} />
+                            <Text style={styles.swapText}>Swap</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ) : (
+                        <CheckCircle size={24} color="#34C759" />
+                      )
+                    ) : (
+                      <TouchableOpacity
+                        style={styles.uploadMissingButton}
+                        onPress={() => handleUploadMissing(req.type)}
+                      >
+                        <Camera size={18} color={colors.white} />
+                        <Text style={styles.uploadMissingText}>Add</Text>
+                      </TouchableOpacity>
+                    )
+                  ) : (
+                    <Switch
+                      value={false}
+                      onValueChange={() =>
+                        setConditionalOptIns(prev => ({ ...prev, [req.doc_id]: true }))
+                      }
+                      trackColor={{ false: colors.shadowGrey, true: colors.trueCobalt }}
+                      thumbColor={colors.white}
+                    />
+                  )}
+                </View>
+              );
+            })}
+          </View>
+        )}
+
+        {/* Conducting body info */}
+        {selectedSchema?.conducting_body && (
           <View style={styles.infoBox}>
-            <Text style={styles.infoTitle}>Export Specifications</Text>
             <Text style={styles.infoText}>
-              Your documents will be formatted to meet {selectedPortal.name} requirements:
-              {'\n'}• Correct dimensions and resolution
-              {'\n'}• File size under the limit
-              {'\n'}• Proper format (JPG/PNG)
+              {selectedSchema.conducting_body}
+              {selectedSchema.applicable_year ? ` · ${selectedSchema.applicable_year}` : ''}
             </Text>
           </View>
         )}
@@ -408,7 +733,7 @@ export default function PortalSelectorScreen() {
         {allRequirementsMet ? (
           <TouchableOpacity
             style={[styles.processButton, adaptMutation.isPending && styles.processButtonDisabled]}
-            onPress={handleProcess}
+            onPress={() => adaptMutation.mutate()}
             disabled={adaptMutation.isPending}
             activeOpacity={0.8}
           >
@@ -417,7 +742,7 @@ export default function PortalSelectorScreen() {
             ) : (
               <>
                 <Text style={styles.processButtonText}>
-                  Process & Download
+                  {sourceDocumentId ? 'Export Document' : 'Process & Download'}
                 </Text>
                 <ChevronRight size={20} color={colors.white} />
               </>
@@ -459,6 +784,30 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 18,
+    fontWeight: '600',
+    color: colors.white,
+  },
+  exportContextBanner: {
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: colors.trueCobalt + '40',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.trueCobalt,
+  },
+  exportContextLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: colors.mayaBlue,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: 2,
+  },
+  exportContextDoc: {
+    fontSize: 14,
     fontWeight: '600',
     color: colors.white,
   },
@@ -576,21 +925,32 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     color: colors.white,
-    marginBottom: 16,
+    marginBottom: 12,
+  },
+  conditionalNote: {
+    fontSize: 13,
+    color: colors.white + '60',
+    marginBottom: 12,
   },
   requirementItem: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.shadowGrey,
     borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
+    padding: 14,
+    marginBottom: 10,
     gap: 12,
   },
+  conditionalItem: {
+    opacity: 0.65,
+  },
+  conditionalIcon: {
+    backgroundColor: colors.shadowGrey,
+  },
   requirementIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: colors.mayaBlue + '20',
     justifyContent: 'center',
     alignItems: 'center',
@@ -599,12 +959,12 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   requirementLabel: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '500',
     color: colors.white,
   },
   requirementStatus: {
-    fontSize: 13,
+    fontSize: 12,
     marginTop: 2,
   },
   requirementStatusOk: {
@@ -612,6 +972,16 @@ const styles = StyleSheet.create({
   },
   requirementStatusMissing: {
     color: '#FF9500',
+  },
+  requirementFormats: {
+    fontSize: 11,
+    color: colors.white + '50',
+    marginTop: 2,
+  },
+  conditionalCondition: {
+    fontSize: 11,
+    color: colors.white + '50',
+    marginTop: 2,
   },
   uploadMissingButton: {
     flexDirection: 'row',
@@ -627,25 +997,36 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.white,
   },
+  matchActions: {
+    alignItems: 'center',
+    gap: 6,
+  },
+  swapButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: colors.mayaBlue + '60',
+  },
+  swapText: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: colors.mayaBlue,
+  },
   infoBox: {
     margin: 16,
-    marginTop: 24,
-    backgroundColor: colors.trueCobalt + '30',
-    borderRadius: 12,
-    padding: 16,
-    borderLeftWidth: 4,
-    borderLeftColor: colors.trueCobalt,
-  },
-  infoTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.white,
-    marginBottom: 8,
+    marginTop: 20,
+    backgroundColor: colors.shadowGrey,
+    borderRadius: 10,
+    padding: 12,
   },
   infoText: {
-    fontSize: 14,
-    color: colors.white + 'CC',
-    lineHeight: 22,
+    fontSize: 13,
+    color: colors.white + '80',
+    textAlign: 'center',
   },
   bottomContainer: {
     padding: 16,

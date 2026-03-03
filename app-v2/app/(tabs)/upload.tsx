@@ -21,9 +21,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Camera, X, Upload, CheckCircle, FileImage, PenTool, File, ChevronUp, Check } from 'lucide-react-native';
-import { useMutation } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Colors from '../../constants/Colors';
-import { documentsApi } from '../../services/api';
+import { documentsApi, formSchemasApi } from '../../services/api';
+import { startBackgroundUpload } from '../../services/backgroundUpload';
 
 // Theme colors
 const colors = {
@@ -45,13 +46,6 @@ type DocumentCategory =
   | 'other';
 
 type DocumentType = string;
-
-interface UploadProgress {
-  current: number;
-  total: number;
-  status: 'idle' | 'uploading' | 'processing' | 'complete' | 'error';
-  message: string;
-}
 
 // Document category to type mapping
 const DOCUMENT_CATEGORIES: Record<DocumentCategory, { label: string; types: string[] }> = {
@@ -89,8 +83,43 @@ const DOCUMENT_CATEGORIES: Record<DocumentCategory, { label: string; types: stri
   },
 };
 
+/**
+ * Merges portal-specific document subtypes (seeded by form schemas) into the
+ * base DOCUMENT_CATEGORIES. Returns a copy with any new types appended.
+ * Uses react-query so form schemas are fetched once and cached globally.
+ */
+function useSeededDocumentCategories(): typeof DOCUMENT_CATEGORIES {
+  const { data: schemas } = useQuery({
+    queryKey: ['form-schemas'],
+    queryFn: formSchemasApi.list,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  if (!schemas?.length) return DOCUMENT_CATEGORIES;
+
+  // Deep-copy base categories so we never mutate the constant
+  const merged: typeof DOCUMENT_CATEGORIES = {} as typeof DOCUMENT_CATEGORIES;
+  for (const cat of Object.keys(DOCUMENT_CATEGORIES) as DocumentCategory[]) {
+    merged[cat] = { ...DOCUMENT_CATEGORIES[cat], types: [...DOCUMENT_CATEGORIES[cat].types] };
+  }
+
+  for (const schema of schemas) {
+    for (const doc of schema.document_uploads ?? []) {
+      const cat = doc.document_category as DocumentCategory | undefined;
+      if (!cat || !doc.seeds_document_subtypes?.length || !merged[cat]) continue;
+      for (const subtype of doc.seeds_document_subtypes) {
+        if (!merged[cat].types.includes(subtype)) {
+          merged[cat].types.push(subtype);
+        }
+      }
+    }
+  }
+
+  return merged;
+}
+
 // Dropdown component
-function Dropdown({ 
+function Dropdown({
   isOpen, 
   onToggle, 
   label,
@@ -161,18 +190,14 @@ function Dropdown({
 
 export default function UploadScreen() {
   const params = useLocalSearchParams<{ images?: string; docType?: string }>();
+  const queryClient = useQueryClient();
   const [imageUris, setImageUris] = useState<string[]>([]);
   const [documentName, setDocumentName] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<DocumentCategory>('identity');
   const [selectedType, setSelectedType] = useState<string>('Aadhaar Card');
+  const documentCategories = useSeededDocumentCategories();
   const [isCategoryOpen, setIsCategoryOpen] = useState(false);
   const [isTypeOpen, setIsTypeOpen] = useState(false);
-  const [progress, setProgress] = useState<UploadProgress>({
-    current: 0,
-    total: 0,
-    status: 'idle',
-    message: '',
-  });
 
   // Parse images from params
   useEffect(() => {
@@ -202,159 +227,36 @@ export default function UploadScreen() {
 
     const mappedCategory = docTypeToCategory[params.docType] ?? 'identity';
     setSelectedCategory(mappedCategory);
-    setSelectedType(DOCUMENT_CATEGORIES[mappedCategory].types[0]);
+    setSelectedType(documentCategories[mappedCategory].types[0]);
   }, [params.docType]);
-
-  // Upload mutation - creates MASTER documents (no portal needed)
-  const uploadMutation = useMutation({
-    mutationFn: async () => {
-      if (imageUris.length === 0) {
-        throw new Error('Please capture images first');
-      }
-
-      setProgress({
-        current: 0,
-        total: imageUris.length,
-        status: 'uploading',
-        message: 'Creating master documents...',
-      });
-
-      const jobIds: string[] = [];
-
-      // Upload each image as a master document
-      for (let i = 0; i < imageUris.length; i++) {
-        const uri = imageUris[i];
-        const name = documentName || `${selectedType}_${Date.now()}`;
-        const filename = `${name}_${i + 1}.jpg`;
-        
-        setProgress({
-          current: i + 1,
-          total: imageUris.length,
-          status: 'uploading',
-          message: `Processing ${i + 1} of ${imageUris.length}...`,
-        });
-
-        // Get file blob
-        const response = await fetch(uri);
-        const blob = await response.blob();
-        const fileSize = blob.size;
-
-        // Map selected type to API document type
-        let apiDocumentType: 'photo' | 'signature' | 'document' = 'document';
-        if (selectedCategory === 'photograph') {
-          apiDocumentType = 'photo';
-        } else if (selectedCategory === 'signature') {
-          apiDocumentType = 'signature';
-        }
-
-        // Create MASTER job (no portal schema - just "master" type)
-        const { job_id, upload_url } = await documentsApi.createMasterJob(
-          apiDocumentType,
-          filename,
-          'image/jpeg',
-          fileSize
-        );
-
-        // Upload to presigned URL
-        await documentsApi.uploadToPresignedUrl(upload_url, uri, 'image/jpeg');
-
-        // Trigger processing after upload completes
-        await documentsApi.submitJob(job_id);
-
-        jobIds.push(job_id);
-      }
-
-      setProgress({
-        current: imageUris.length,
-        total: imageUris.length,
-        status: 'processing',
-        message: 'Enhancing documents...',
-      });
-
-      return jobIds;
-    },
-    onSuccess: (jobIds) => {
-      setProgress({
-        current: imageUris.length,
-        total: imageUris.length,
-        status: 'complete',
-        message: 'Master documents created!',
-      });
-
-      // Navigate to jobs list after short delay
-      setTimeout(() => {
-        router.replace({
-          pathname: '/(tabs)/jobs',
-          params: { newJobIds: JSON.stringify(jobIds) },
-        });
-      }, 1500);
-    },
-    onError: (error: Error) => {
-      setProgress({
-        current: 0,
-        total: 0,
-        status: 'error',
-        message: error.message,
-      });
-      Alert.alert('Upload Failed', error.message);
-    },
-  });
 
   const handleUpload = useCallback(() => {
     if (imageUris.length === 0) {
       Alert.alert('No Images', 'Please capture or select images first.');
       return;
     }
-    uploadMutation.mutate();
-  }, [imageUris, uploadMutation]);
+
+    let apiDocumentType: 'photo' | 'signature' | 'document' = 'document';
+    if (selectedCategory === 'photograph') apiDocumentType = 'photo';
+    else if (selectedCategory === 'signature') apiDocumentType = 'signature';
+
+    // Fire upload in the background — it continues after navigation
+    startBackgroundUpload(
+      imageUris,
+      documentName,
+      selectedCategory,
+      selectedType,
+      apiDocumentType,
+      queryClient,
+    );
+
+    // Go to jobs immediately so the user can see progress and explore freely
+    router.replace('/(tabs)/jobs');
+  }, [imageUris, documentName, selectedCategory, selectedType, queryClient]);
 
   const removeImage = useCallback((index: number) => {
     setImageUris(prev => prev.filter((_, i) => i !== index));
   }, []);
-
-  // Uploading/Processing state
-  if (progress.status === 'uploading' || progress.status === 'processing') {
-    return (
-      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-        <View style={styles.centeredContainer}>
-          <View style={styles.progressCircle}>
-            <ActivityIndicator size="large" color={colors.mayaBlue} />
-          </View>
-          <Text style={styles.progressTitle}>
-            {progress.status === 'uploading' ? 'Uploading' : 'Enhancing'}
-          </Text>
-          <Text style={styles.progressMessage}>{progress.message}</Text>
-          {progress.total > 0 && (
-            <View style={styles.progressBar}>
-              <View 
-                style={[
-                  styles.progressFill, 
-                  { width: `${(progress.current / progress.total) * 100}%` }
-                ]} 
-              />
-            </View>
-          )}
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  // Success state
-  if (progress.status === 'complete') {
-    return (
-      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-        <View style={styles.centeredContainer}>
-          <View style={styles.successCircle}>
-            <CheckCircle size={48} color="#34C759" />
-          </View>
-          <Text style={styles.successTitle}>Masters Created!</Text>
-          <Text style={styles.successMessage}>
-            Your documents are being enhanced and stored securely.
-          </Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -414,15 +316,15 @@ export default function UploadScreen() {
             isOpen={isCategoryOpen}
             onToggle={() => setIsCategoryOpen(!isCategoryOpen)}
             label="Document Category"
-            selectedValue={DOCUMENT_CATEGORIES[selectedCategory].label}
-            options={Object.entries(DOCUMENT_CATEGORIES).map(([_, value]) => value.label)}
+            selectedValue={documentCategories[selectedCategory].label}
+            options={Object.entries(documentCategories).map(([_, value]) => value.label)}
             onSelect={(label) => {
-              const category = Object.entries(DOCUMENT_CATEGORIES).find(
+              const category = Object.entries(documentCategories).find(
                 ([_, value]) => value.label === label
               )?.[0] as DocumentCategory;
               if (category) {
                 setSelectedCategory(category);
-                setSelectedType(DOCUMENT_CATEGORIES[category].types[0]);
+                setSelectedType(documentCategories[category].types[0]);
                 setIsTypeOpen(false);
               }
             }}
@@ -441,7 +343,7 @@ export default function UploadScreen() {
             onToggle={() => setIsTypeOpen(!isTypeOpen)}
             label="Document Type"
             selectedValue={selectedType}
-            options={DOCUMENT_CATEGORIES[selectedCategory].types}
+            options={documentCategories[selectedCategory].types}
             onSelect={setSelectedType}
           />
         </View>
@@ -477,18 +379,12 @@ export default function UploadScreen() {
             imageUris.length === 0 && styles.uploadButtonDisabled,
           ]}
           onPress={handleUpload}
-          disabled={imageUris.length === 0 || uploadMutation.isPending}
+          disabled={imageUris.length === 0}
         >
-          {uploadMutation.isPending ? (
-            <ActivityIndicator color={colors.white} />
-          ) : (
-            <>
-              <Upload size={24} color={colors.white} />
-              <Text style={styles.uploadButtonText}>
-                Create Master{imageUris.length > 1 ? 's' : ''}
-              </Text>
-            </>
-          )}
+          <Upload size={24} color={colors.white} />
+          <Text style={styles.uploadButtonText}>
+            Create Master{imageUris.length > 1 ? 's' : ''}
+          </Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -499,65 +395,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.inkBlack,
-  },
-  centeredContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 32,
-  },
-  progressCircle: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: colors.shadowGrey,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  progressTitle: {
-    fontSize: 24,
-    fontWeight: '600',
-    color: colors.white,
-  },
-  progressMessage: {
-    fontSize: 16,
-    color: colors.white + 'AA',
-    marginTop: 8,
-    textAlign: 'center',
-  },
-  progressBar: {
-    width: '80%',
-    height: 8,
-    backgroundColor: colors.shadowGrey,
-    borderRadius: 4,
-    marginTop: 24,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: colors.mayaBlue,
-    borderRadius: 4,
-  },
-  successCircle: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: colors.shadowGrey,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  successTitle: {
-    fontSize: 24,
-    fontWeight: '600',
-    color: colors.white,
-  },
-  successMessage: {
-    fontSize: 16,
-    color: colors.white + 'AA',
-    marginTop: 8,
-    textAlign: 'center',
   },
   header: {
     flexDirection: 'row',

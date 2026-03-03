@@ -19,15 +19,18 @@ Guardrails:
 
 from __future__ import annotations
 
+import io
 import logging
-from dataclasses import dataclass
-from typing import Optional, Tuple, Literal
+import math
+from dataclasses import dataclass, field
+from typing import Dict, Optional, Tuple, Literal
 
 import cv2
 import numpy as np
 from numpy.typing import NDArray
+from PIL import Image
 
-from models import EnhancementResult
+from models import EnhancementResult, QualityBreakdown
 from errors import WorkerError, ErrorCode, ProcessingStage
 
 
@@ -49,6 +52,10 @@ class EnhancementOptions:
     # GUARD-001: Skip enhancement for readable images
     quality_score: Optional[float] = None
     is_readable: bool = False
+    # Document type: "photo", "signature", or "document"
+    document_type: str = "document"
+    # Full quality breakdown — used by photo/signature branches for per-metric decisions
+    quality_breakdown: Optional[QualityBreakdown] = None
 
 
 def decode_image(data: bytes) -> NDArray[np.uint8]:
@@ -425,6 +432,290 @@ def auto_white_balance(img: NDArray[np.uint8]) -> Tuple[NDArray[np.uint8], bool]
         return img, False
 
 
+# ---------------------------------------------------------------------------
+# EXIF orientation
+# ---------------------------------------------------------------------------
+
+# Maps EXIF orientation tag value → clockwise degrees needed to correct.
+# Flip/mirror values (2, 4, 5, 7) are ignored (treated as 0).
+_EXIF_ORIENTATION_TAG = 0x0112  # 274
+_EXIF_TO_CW_DEGREES: Dict[int, int] = {
+    1: 0,
+    3: 180,
+    6: 270,  # Shot rotated 90° CW  → rotate 90° CCW (= 270° CW) to fix
+    8: 90,   # Shot rotated 90° CCW → rotate 90° CW to fix
+}
+
+
+def get_exif_rotation_angle(data: bytes) -> int:
+    """
+    Read the EXIF orientation tag and return the clockwise rotation needed.
+
+    Returns 0 when orientation is normal or EXIF is unavailable.
+    """
+    try:
+        pil_img = Image.open(io.BytesIO(data))
+        exif = pil_img.getexif()
+        orientation = exif.get(_EXIF_ORIENTATION_TAG, 1)
+        return _EXIF_TO_CW_DEGREES.get(int(orientation), 0)
+    except Exception:
+        return 0
+
+
+def correct_orientation_exif(
+    img: NDArray[np.uint8],
+    data: bytes,
+) -> Tuple[NDArray[np.uint8], bool]:
+    """
+    Rotate image to correct EXIF orientation.
+
+    Safe for photos: no Hough detection, no warpAffine artifacts.
+
+    Returns:
+        Tuple of (corrected image, was_rotated)
+    """
+    angle = get_exif_rotation_angle(data)
+    if angle == 0:
+        return img, False
+    rotated = apply_large_rotation(img, angle)  # type: ignore[arg-type]
+    logger.info(f"[ENHANCEMENT] EXIF rotation applied: {angle}°")
+    return rotated, True
+
+
+# ---------------------------------------------------------------------------
+# Gamma correction (photos — exposure fix)
+# ---------------------------------------------------------------------------
+
+# Sharpness threshold: normalized Laplacian variance < 0.2 (≈ raw var < 100)
+_PHOTO_SHARPNESS_THRESHOLD = 0.20
+# Exposure thresholds for photos
+_PHOTO_BRIGHTNESS_MIN = 80.0
+_PHOTO_BRIGHTNESS_MAX = 200.0
+
+
+def _compute_gamma_for_brightness(mean_brightness: float, target: float = 140.0) -> float:
+    """
+    Compute the gamma that maps *mean_brightness* → *target*.
+
+    output = (input/255)^gamma * 255
+    At mean pixel value m:  target/255 = (m/255)^gamma
+    ⟹ gamma = log(target/255) / log(m/255)
+    """
+    m = max(mean_brightness, 1.0)
+    gamma = math.log(target / 255.0) / math.log(m / 255.0)
+    return float(max(0.3, min(4.0, gamma)))
+
+
+def gamma_correct(img: NDArray[np.uint8], gamma: float) -> NDArray[np.uint8]:
+    """Apply gamma correction via a lookup table (fast, exact)."""
+    table = np.array(
+        [((i / 255.0) ** gamma) * 255 for i in range(256)],
+        dtype=np.uint8,
+    )
+    return cv2.LUT(img, table)
+
+
+# ---------------------------------------------------------------------------
+# Unsharp mask (photos & signatures — sharpening)
+# ---------------------------------------------------------------------------
+
+def apply_unsharp_mask(
+    img: NDArray[np.uint8],
+    sigma: float = 1.0,
+    strength: float = 1.5,
+) -> NDArray[np.uint8]:
+    """
+    Sharpen image via unsharp masking.
+
+    output = original + strength * (original - blurred)
+
+    Args:
+        sigma: Gaussian blur sigma
+        strength: Sharpening amount
+    """
+    blurred = cv2.GaussianBlur(img, (0, 0), sigma)
+    return cv2.addWeighted(img, 1.0 + strength, blurred, -strength, 0)
+
+
+# ---------------------------------------------------------------------------
+# Bilateral denoising (signatures — edge-preserving)
+# ---------------------------------------------------------------------------
+
+def bilateral_denoise(
+    img: NDArray[np.uint8],
+) -> Tuple[NDArray[np.uint8], bool]:
+    """
+    Apply bilateral filter.
+
+    Preserves sharp ink edges better than NLM denoising,
+    making it suitable for signature images.
+    """
+    try:
+        result = cv2.bilateralFilter(img, d=9, sigmaColor=75, sigmaSpace=75)
+        return result, True
+    except cv2.error:
+        return img, False
+
+
+# ---------------------------------------------------------------------------
+# Otsu binarization (signatures — clean scan output)
+# ---------------------------------------------------------------------------
+
+def otsu_binarize(
+    img: NDArray[np.uint8],
+) -> Tuple[NDArray[np.uint8], bool]:
+    """
+    Apply Otsu thresholding to produce a clean black-on-white signature.
+
+    Converts to grayscale, applies OTSU threshold, then converts
+    back to 3-channel so downstream stages stay consistent.
+    """
+    try:
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        result = cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)
+        return result, True
+    except cv2.error:
+        return img, False
+
+
+# ---------------------------------------------------------------------------
+# Type-specific enhancement branches
+# ---------------------------------------------------------------------------
+
+def _enhance_photo(
+    img: NDArray[np.uint8],
+    raw_data: bytes,
+    breakdown: Optional[QualityBreakdown],
+) -> Tuple[NDArray[np.uint8], bool, bool, bool]:
+    """
+    Photo enhancement pipeline.
+
+    Operations (each conditional on measured need):
+      1. EXIF rotation  — always attempted
+      2. Gamma correction — if mean brightness outside 80–200
+      3. Unsharp mask  — if normalized sharpness < 0.20
+
+    NO NLM denoising. NO CLAHE. NO Hough skew detection.
+
+    Returns:
+        (img, orientation_corrected, exposure_corrected, sharpened)
+    """
+    orientation_corrected = False
+    exposure_corrected = False
+    sharpened = False
+
+    # 1. EXIF rotation
+    img, orientation_corrected = correct_orientation_exif(img, raw_data)
+
+    # 2. Exposure — compute mean brightness on (possibly rotated) image
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    mean_brightness = float(np.mean(gray))
+
+    if mean_brightness < _PHOTO_BRIGHTNESS_MIN or mean_brightness > _PHOTO_BRIGHTNESS_MAX:
+        gamma = _compute_gamma_for_brightness(mean_brightness)
+        img = gamma_correct(img, gamma)
+        logger.info(
+            f"[ENHANCEMENT] photo gamma correction: brightness={mean_brightness:.1f}, γ={gamma:.2f}"
+        )
+        exposure_corrected = True
+
+    # 3. Sharpness — use breakdown if available, otherwise compute inline
+    if breakdown is not None:
+        sharp_score = breakdown.sharpness
+    else:
+        from processors.quality import compute_sharpness
+        gray2 = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        sharp_score = compute_sharpness(gray2)
+
+    if sharp_score < _PHOTO_SHARPNESS_THRESHOLD:
+        img = apply_unsharp_mask(img)
+        logger.info(f"[ENHANCEMENT] photo unsharp mask: sharpness_score={sharp_score:.3f}")
+        sharpened = True
+
+    return img, orientation_corrected, exposure_corrected, sharpened
+
+
+def _enhance_signature(
+    img: NDArray[np.uint8],
+    raw_data: bytes,
+    breakdown: Optional[QualityBreakdown],
+) -> Tuple[NDArray[np.uint8], bool, bool, bool]:
+    """
+    Signature enhancement pipeline.
+
+    Operations:
+      1. EXIF rotation
+      2. Sharpness check → unsharp mask if needed
+      3. Otsu binarization (always — produces clean black-on-white output)
+      4. No NLM denoising → bilateral filter instead (preserves stroke edges)
+
+    Returns:
+        (img, orientation_corrected, binarized, sharpened)
+    """
+    orientation_corrected = False
+    binarized = False
+    sharpened = False
+
+    # 1. EXIF rotation
+    img, orientation_corrected = correct_orientation_exif(img, raw_data)
+
+    # 2. Sharpness check
+    if breakdown is not None:
+        sharp_score = breakdown.sharpness
+    else:
+        from processors.quality import compute_sharpness
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        sharp_score = compute_sharpness(gray)
+
+    if sharp_score < _PHOTO_SHARPNESS_THRESHOLD:
+        img = apply_unsharp_mask(img, sigma=1.0, strength=1.2)
+        logger.info(f"[ENHANCEMENT] signature unsharp mask: sharpness_score={sharp_score:.3f}")
+        sharpened = True
+
+    # 3. Otsu binarization (always for signatures)
+    img, binarized = otsu_binarize(img)
+    if binarized:
+        logger.info("[ENHANCEMENT] signature Otsu binarization applied")
+
+    return img, orientation_corrected, binarized, sharpened
+
+
+def _enhance_document(
+    img: NDArray[np.uint8],
+    options: EnhancementOptions,
+) -> Tuple[NDArray[np.uint8], bool, bool, bool]:
+    """
+    Document enhancement pipeline (existing logic, unchanged).
+
+    Returns:
+        (img, orientation_corrected, denoised, color_normalized)
+    """
+    skip_enhancement = should_skip_enhancement(options)
+    if skip_enhancement:
+        logger.info("[ENHANCEMENT] skipped (readable document)")
+
+    orientation_corrected = False
+    denoised = False
+    color_normalized = False
+
+    if options.correct_orientation:
+        img, orientation_corrected = correct_orientation(img)
+
+    if options.denoise and not skip_enhancement:
+        img, denoised = denoise(img, strength=options.denoise_strength)
+
+    if options.normalize_color and not skip_enhancement:
+        img, _ = auto_white_balance(img)
+        img, color_normalized = normalize_color(
+            img,
+            clip_limit=options.clahe_clip_limit,
+            grid_size=options.clahe_grid_size,
+        )
+
+    return img, orientation_corrected, denoised, color_normalized
+
+
 def should_skip_enhancement(options: EnhancementOptions) -> bool:
     """
     GUARD-001: Determine if enhancement should be skipped.
@@ -451,68 +742,65 @@ def enhance_image(
     options: Optional[EnhancementOptions] = None,
 ) -> EnhancementResult:
     """
-    Apply all enhancement operations to an image.
-    
-    This is the main entry point for image enhancement.
-    
-    Includes GUARD-001: Skip denoise+CLAHE for readable images.
-    
+    Route to the correct enhancement branch based on document_type.
+
+    - photo     → EXIF rotation, gamma correction, unsharp mask
+    - signature → EXIF rotation, unsharp mask, Otsu binarization
+    - document  → Hough skew correction, NLM denoising, CLAHE (GUARD-001 gated)
+
     Args:
         data: Raw image bytes
         options: Enhancement configuration (uses defaults if None)
-        
+
     Returns:
         EnhancementResult with processed image and operation flags
-        
+
     Raises:
         WorkerError: If enhancement fails completely
     """
     if options is None:
         options = EnhancementOptions()
-    
-    # GUARD-001: Check if we should skip enhancement
-    skip_enhancement = should_skip_enhancement(options)
-    if skip_enhancement:
-        logger.info("[ENHANCEMENT] skipped (readable input)")
-    
+
     try:
-        # Decode image
         img = decode_image(data)
-        
-        orientation_corrected = False
-        denoised = False
-        color_normalized = False
-        
-        # Apply orientation correction (always allowed)
-        if options.correct_orientation:
-            img, orientation_corrected = correct_orientation(img)
-        
-        # Apply denoising (skip if GUARD-001 triggered)
-        if options.denoise and not skip_enhancement:
-            img, denoised = denoise(img, strength=options.denoise_strength)
-        
-        # Apply color normalization (skip if GUARD-001 triggered)
-        if options.normalize_color and not skip_enhancement:
-            # First apply white balance
-            img, _ = auto_white_balance(img)
-            
-            # Then apply CLAHE
-            img, color_normalized = normalize_color(
-                img,
-                clip_limit=options.clahe_clip_limit,
-                grid_size=options.clahe_grid_size,
+        doc_type = options.document_type
+
+        if doc_type == "photo":
+            img, orientation_corrected, exposure_corrected, sharpened = _enhance_photo(
+                img, data, options.quality_breakdown
             )
-        
-        # Encode result
-        result_data = encode_image(img, format="jpeg", quality=95)
-        
-        return EnhancementResult(
-            image_data=result_data,
-            orientation_corrected=orientation_corrected,
-            denoised=denoised,
-            color_normalized=color_normalized,
-        )
-        
+            result_data = encode_image(img, format="jpeg", quality=95)
+            return EnhancementResult(
+                image_data=result_data,
+                orientation_corrected=orientation_corrected,
+                denoised=sharpened,           # repurposed: True = unsharp mask was applied
+                color_normalized=exposure_corrected,
+            )
+
+        elif doc_type == "signature":
+            img, orientation_corrected, binarized, sharpened = _enhance_signature(
+                img, data, options.quality_breakdown
+            )
+            result_data = encode_image(img, format="jpeg", quality=95)
+            return EnhancementResult(
+                image_data=result_data,
+                orientation_corrected=orientation_corrected,
+                denoised=sharpened,           # repurposed: True = unsharp mask was applied
+                color_normalized=binarized,   # repurposed: True = Otsu binarization applied
+            )
+
+        else:  # document
+            img, orientation_corrected, denoised, color_normalized = _enhance_document(
+                img, options
+            )
+            result_data = encode_image(img, format="jpeg", quality=95)
+            return EnhancementResult(
+                image_data=result_data,
+                orientation_corrected=orientation_corrected,
+                denoised=denoised,
+                color_normalized=color_normalized,
+            )
+
     except WorkerError:
         raise
     except Exception as e:
@@ -542,6 +830,7 @@ __all__ = [
     'enhance_image_minimal',
     'EnhancementOptions',
     'EnhancementResult',
+    # Document branch
     'correct_orientation',
     'denoise',
     'normalize_color',
@@ -550,4 +839,11 @@ __all__ = [
     'apply_large_rotation',
     'should_skip_enhancement',
     'READABLE_QUALITY_THRESHOLD',
+    # Photo / signature branch
+    'get_exif_rotation_angle',
+    'correct_orientation_exif',
+    'gamma_correct',
+    'apply_unsharp_mask',
+    'bilateral_denoise',
+    'otsu_binarize',
 ]

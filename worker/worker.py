@@ -147,52 +147,71 @@ def process_job(payload: JobPayload) -> SuccessResult:
         raw_path=payload.input.raw_path,
     )
     
-    # Stage 2: QUALITY - Assess input quality
-    quality_result = assess_quality(raw_data)
-    
+    # Stage 2: QUALITY - Assess input quality (type-aware weights/metrics)
+    quality_result = assess_quality(raw_data, payload.document_type)
+
     if check_quality_warning(quality_result.score):
         warnings.append(
             f"Low quality score: {quality_result.score:.2f} (threshold: {QUALITY_WARNING_THRESHOLD})"
         )
-    
-    # GUARD-002: Pre-enhancement OCR for rollback comparison
-    pre_ocr_result, pre_ocr_warning = extract_text_safe(raw_data)
-    pre_ocr_confidence = pre_ocr_result.confidence if pre_ocr_result else 0.0
-    is_readable = pre_ocr_confidence > 0.5  # Consider readable if OCR confidence > 50%
-    
-    # Stage 3: ENHANCE - Apply enhancements with GUARD-001
+
+    # OCR is only meaningful for documents (not photos or signatures).
+    # Skipping it for photos/signatures saves ~1-3 s of PaddleOCR time per job.
+    is_text_document = payload.document_type == "document"
+
+    # Pre-enhancement OCR (documents only — needed for GUARD-002 rollback baseline)
+    pre_ocr_result = None
+    pre_ocr_warning = None
+    pre_ocr_confidence = 0.0
+    is_readable = False
+
+    if is_text_document:
+        pre_ocr_result, pre_ocr_warning = extract_text_safe(raw_data)
+        pre_ocr_confidence = pre_ocr_result.confidence if pre_ocr_result else 0.0
+        is_readable = pre_ocr_confidence > 0.5
+
+    # Stage 3: ENHANCE - Route to type-specific pipeline
     enhancement_options = EnhancementOptions(
         quality_score=quality_result.score,
         is_readable=is_readable,
+        document_type=payload.document_type,
+        quality_breakdown=quality_result.breakdown,
     )
     enhanced = enhance_image(raw_data, enhancement_options)
-    
-    # Stage 4: OCR - Extract text from enhanced image
-    ocr_result, ocr_warning = extract_text_safe(enhanced.image_data)
-    post_ocr_confidence = ocr_result.confidence if ocr_result else 0.0
-    
-    # GUARD-002: OCR rollback check
+
+    # Post-enhancement OCR + GUARD-002 rollback (documents only)
+    ocr_result = None
+    ocr_warning = None
+    final_ocr_confidence = 0.0
     use_original = False
-    if pre_ocr_confidence > 0 and post_ocr_confidence < pre_ocr_confidence - OCR_ROLLBACK_THRESHOLD:
-        # OCR confidence dropped by more than threshold - rollback
-        logger.warning(
-            f"[ENHANCEMENT] rollback triggered (OCR regression): "
-            f"{pre_ocr_confidence:.3f} -> {post_ocr_confidence:.3f}"
-        )
-        warnings.append(
-            f"Enhancement rollback: OCR confidence dropped from {pre_ocr_confidence:.2f} to {post_ocr_confidence:.2f}"
-        )
-        use_original = True
-        ocr_result = pre_ocr_result
-        ocr_warning = pre_ocr_warning
-    
-    # Use original or enhanced image based on rollback
+
+    if is_text_document:
+        ocr_result, ocr_warning = extract_text_safe(enhanced.image_data)
+        post_ocr_confidence = ocr_result.confidence if ocr_result else 0.0
+
+        # GUARD-002: rollback if OCR confidence regressed
+        if pre_ocr_confidence > 0 and post_ocr_confidence < pre_ocr_confidence - OCR_ROLLBACK_THRESHOLD:
+            logger.warning(
+                f"[ENHANCEMENT] rollback triggered (OCR regression): "
+                f"{pre_ocr_confidence:.3f} -> {post_ocr_confidence:.3f}"
+            )
+            warnings.append(
+                f"Enhancement rollback: OCR confidence dropped from "
+                f"{pre_ocr_confidence:.2f} to {post_ocr_confidence:.2f}"
+            )
+            use_original = True
+            ocr_result = pre_ocr_result
+            ocr_warning = pre_ocr_warning
+            final_ocr_confidence = pre_ocr_confidence
+        else:
+            final_ocr_confidence = post_ocr_confidence
+
+        if ocr_warning:
+            warnings.append(ocr_warning)
+
+    # Final image: roll back to raw if GUARD-002 triggered, otherwise use enhanced
     final_image_data = raw_data if use_original else enhanced.image_data
-    final_ocr_confidence = pre_ocr_confidence if use_original else post_ocr_confidence
-    
-    if ocr_warning:
-        warnings.append(ocr_warning)
-    
+
     # Stage 5: OUTPUT TRANSFORM
     # - master mode: optimize best possible output under size cap
     # - adapt mode: enforce portal schema constraints

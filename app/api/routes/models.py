@@ -18,10 +18,15 @@ from pydantic import BaseModel, Field, field_validator
 class CreateJobRequest(BaseModel):
     job_type: Literal["master", "adapt"] = Field(default="master")
     document_type: Literal["photo", "signature", "document"] = Field(default="document")
+    document_category: str | None = Field(default=None, max_length=50)
+    document_subtype: str | None = Field(default=None, max_length=100)
     portal_schema_name: str | None = Field(default=None, min_length=1, max_length=100)
-    filename: str = Field(..., min_length=1, max_length=255)
-    mime_type: str = Field(..., pattern=r"^(image|application)/(jpeg|jpg|png|pdf)$")
-    file_size_bytes: int = Field(..., gt=0, le=52_428_800)  # 50MB max
+    # For adapt jobs: reference an existing completed master job instead of uploading a new file.
+    # When provided, filename/mime_type/file_size_bytes are not required.
+    source_job_id: UUID | None = Field(default=None)
+    filename: str | None = Field(default=None, max_length=255)
+    mime_type: str | None = Field(default=None, pattern=r"^(image|application)/(jpeg|jpg|png|pdf)$")
+    file_size_bytes: int | None = Field(default=None, gt=0, le=52_428_800)  # 50MB max
     defer_processing: bool = Field(
         default=False,
         description="If true, creates pending job + upload URL without dispatching processing. Client must call /jobs/{job_id}/submit after upload.",
@@ -29,7 +34,9 @@ class CreateJobRequest(BaseModel):
 
     @field_validator("filename")
     @classmethod
-    def validate_filename(cls, v: str) -> str:
+    def validate_filename(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
         if ".." in v or "/" in v or "\\" in v:
             raise ValueError("Invalid filename")
         return v
@@ -45,8 +52,9 @@ class CreateJobRequest(BaseModel):
 
 class CreateJobResponse(BaseModel):
     job_id: UUID
-    upload_url: str
-    upload_expires_at: datetime
+    # None for adapt jobs created from an existing source_job_id (no upload step needed).
+    upload_url: str | None = None
+    upload_expires_at: datetime | None = None
 
 
 class SubmitJobResponse(BaseModel):
@@ -78,22 +86,6 @@ class JobOutputResponse(BaseModel):
     job_id: UUID
     portal_output: dict[str, Any]
     download_url: str | None = None
-
-
-# =============================================================================
-# Portal Schema Models
-# =============================================================================
-
-
-class PortalSchemaItem(BaseModel):
-    id: UUID
-    name: str
-    version: int
-    requirements_summary: dict[str, Any] | None
-
-
-class PortalSchemasResponse(BaseModel):
-    schemas: list[PortalSchemaItem]
 
 
 # =============================================================================

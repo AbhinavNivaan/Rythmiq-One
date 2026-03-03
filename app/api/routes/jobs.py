@@ -281,6 +281,109 @@ async def create_job(
     portal_schema: dict[str, Any] | None = None
     portal_schema_id: str | None = None
 
+    # -------------------------------------------------------------------------
+    # 1b. Adapt from existing master (source_job_id path — no upload needed)
+    # -------------------------------------------------------------------------
+    if body.job_type == "adapt" and body.source_job_id:
+        if not body.portal_schema_name:
+            raise InvalidInputException("portal_schema_name is required for adapt jobs")
+
+        source_result = (
+            db.table("jobs")
+            .select("id, status, user_id, input_metadata")
+            .eq("id", str(body.source_job_id))
+            .eq("user_id", str(user.id))
+            .limit(1)
+            .execute()
+        )
+        if not source_result.data:
+            raise NotFoundException(f"Source job {body.source_job_id} not found")
+
+        source = source_result.data[0]
+        if source["status"] != "completed":
+            raise InvalidInputException(
+                "Source job is not completed",
+                details={"source_job_id": str(body.source_job_id), "status": source["status"]},
+            )
+
+        source_metadata = source.get("input_metadata") or {}
+        storage_path = source_metadata.get("storage_path")
+        if not storage_path:
+            raise InvalidInputException("Source job has no stored input file")
+
+        document_type = source_metadata.get("document_type", body.document_type)
+
+        schema_result = (
+            db.table("portal_schemas")
+            .select("id, name, version, schema_definition")
+            .eq("name", body.portal_schema_name)
+            .eq("is_active", True)
+            .limit(1)
+            .execute()
+        )
+        if not schema_result.data:
+            raise SchemaNotFoundException(
+                f"Portal schema '{body.portal_schema_name}' not found or not active"
+            )
+
+        portal_schema = schema_result.data[0]
+        portal_schema_id = str(portal_schema["id"])
+
+        adapt_job_data: dict[str, Any] = {
+            "user_id": str(user.id),
+            "status": "pending",
+            "portal_schema_version_id": portal_schema_id,
+            "input_metadata": {
+                "mode": "adapt",
+                "document_type": document_type,
+                "storage_path": storage_path,
+                "source_job_id": str(body.source_job_id),
+                "correlation_id": correlation_id,
+            },
+        }
+
+        try:
+            adapt_result = db.table("jobs").insert(adapt_job_data).execute()
+        except APIError as e:
+            logger.error("Failed to create adapt job", extra={"error": str(e), "correlation_id": correlation_id})
+            raise InternalException("Failed to create job record")
+
+        if not adapt_result.data:
+            raise InternalException("Failed to create job record")
+
+        adapt_job = adapt_result.data[0]
+        adapt_job_id = UUID(adapt_job["id"])
+
+        logger.info(
+            "Adapt job created from source",
+            extra={
+                "job_id": str(adapt_job_id),
+                "source_job_id": str(body.source_job_id),
+                "user_id": str(user.id),
+                "correlation_id": correlation_id,
+            },
+        )
+
+        await _submit_job_to_processing(
+            job_id=adapt_job_id,
+            user_id=user.id,
+            job_type="adapt",
+            document_type=document_type,
+            portal_schema_id=portal_schema_id,
+            portal_schema_name=portal_schema["name"],
+            portal_schema_version=int(portal_schema.get("version", 1)),
+            portal_schema_definition=portal_schema.get("schema_definition"),
+            storage_path=storage_path,
+            input_metadata=adapt_job_data["input_metadata"],
+            correlation_id=correlation_id,
+            camber=camber,
+        )
+
+        return CreateJobResponse(job_id=adapt_job_id)
+
+    # -------------------------------------------------------------------------
+    # 1c. Validate upload fields for master / legacy adapt-with-upload
+    # -------------------------------------------------------------------------
     if body.job_type == "adapt":
         if not body.portal_schema_name:
             raise InvalidInputException("portal_schema_name is required for adapt jobs")
@@ -302,16 +405,24 @@ async def create_job(
         portal_schema = schema_result.data[0]
         portal_schema_id = str(portal_schema["id"])
 
+    if not body.filename or not body.mime_type or not body.file_size_bytes:
+        raise InvalidInputException(
+            "filename, mime_type, and file_size_bytes are required",
+            details={"job_type": body.job_type},
+        )
+
     # -------------------------------------------------------------------------
     # 2. Create job record (pending)
     # -------------------------------------------------------------------------
-    job_data = {
+    job_data: dict[str, Any] = {
         "user_id": str(user.id),
         "status": "pending",
         "portal_schema_version_id": portal_schema_id,
         "input_metadata": {
             "mode": body.job_type,
             "document_type": body.document_type,
+            "document_category": body.document_category,
+            "document_subtype": body.document_subtype,
             "original_filename": body.filename,
             "mime_type": body.mime_type,
             "file_size_bytes": body.file_size_bytes,
@@ -525,6 +636,8 @@ async def list_jobs(
                 "status": row["status"],
                 "job_type": job_type,
                 "document_type": metadata.get("document_type", "photo" if job_type == "master" else "document"),
+                "document_category": metadata.get("document_category"),
+                "document_subtype": metadata.get("document_subtype"),
                 "document_name": metadata.get("original_filename"),
                 "created_at": row.get("created_at"),
                 "updated_at": row.get("updated_at"),
@@ -620,6 +733,57 @@ async def get_job(
         download_url=download_url,
         preview_url=preview_url,
     )
+
+
+@router.delete("/{job_id}", status_code=204)
+async def delete_job(
+    job_id: UUID,
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    storage: Annotated[StorageService, Depends(get_storage_service)],
+) -> None:
+    """
+    Delete a job and its associated storage objects.
+
+    Hard-deletes the DB row. Storage cleanup (input file + output directory)
+    is best-effort — failures are logged but do not block the response.
+    """
+    db = get_db_client()
+
+    result = (
+        db.table("jobs")
+        .select("id, user_id, input_metadata")
+        .eq("id", str(job_id))
+        .eq("user_id", str(user.id))
+        .limit(1)
+        .execute()
+    )
+
+    if not result.data:
+        raise NotFoundException(f"Job {job_id} not found")
+
+    job = result.data[0]
+    metadata = job.get("input_metadata") or {}
+
+    db.table("jobs").delete().eq("id", str(job_id)).eq("user_id", str(user.id)).execute()
+
+    logger.info(
+        "Job deleted",
+        extra={"job_id": str(job_id), "user_id": str(user.id)},
+    )
+
+    # Best-effort: remove input file
+    try:
+        storage_path = metadata.get("storage_path")
+        if storage_path:
+            storage.delete_object(storage_path)
+    except Exception:
+        pass
+
+    # Best-effort: remove output directory
+    try:
+        storage.delete_objects_by_prefix(f"output/{user.id}/{job_id}/")
+    except Exception:
+        pass
 
 
 @router.get("/{job_id}/output", response_model=JobOutputResponse)

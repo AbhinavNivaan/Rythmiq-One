@@ -172,30 +172,50 @@ An ordered array of document upload slot objects.
 ```json
 "document_uploads": [
   {
-    "doc_id":          "class_10_certificate",
-    "label":           "Class 10 Certificate / Marksheet",
-    "description":     "Used as Date of Birth proof",
-    "allowed_formats": ["PDF"],
-    "size_min_kb":     50,
-    "size_max_kb":     300,
-    "required":        true,
-    "required_if":     null,
-    "specifications":  ["Must be a government-issued certificate"]
+    "doc_id":                   "class_10_certificate",
+    "label":                    "Class 10 Certificate / Marksheet",
+    "description":              "Used as Date of Birth proof",
+    "allowed_formats":          ["PDF"],
+    "size_min_kb":              50,
+    "size_max_kb":              300,
+    "required":                 true,
+    "required_if":              null,
+    "document_category":        "academic",
+    "document_subtype":         "Class 10 Marksheet",
+    "seeds_document_subtypes":  ["Class 10 Marksheet"],
+    "specifications":           ["Must be a government-issued certificate"]
   }
 ]
 ```
 
-| Field             | Type    | Required | Notes                                                  |
-|-------------------|---------|----------|--------------------------------------------------------|
-| `doc_id`          | string  | YES      | `snake_case`, unique within schema                     |
-| `label`           | string  | YES      | Human-readable name                                    |
-| `description`     | string  | NO       | Extra context                                          |
-| `allowed_formats` | array   | YES      | Non-empty. Values: `"PDF"`, `"JPG"`, `"JPEG"`, `"PNG"`|
-| `size_min_kb`     | integer | NO       | Minimum file size in KB                                |
-| `size_max_kb`     | integer | YES      | Maximum file size in KB                                |
-| `required`        | boolean | YES      |                                                        |
-| `required_if`     | string\|null | NO  | Condition string, e.g. `"pwd_pwbd_status == true"`. Uses `field_id == value` syntax. `null` if unconditional. |
-| `specifications`  | array   | NO       | Human-readable bullet-point guidelines                 |
+| Field                      | Type         | Required | Notes                                                                                   |
+|----------------------------|--------------|----------|-----------------------------------------------------------------------------------------|
+| `doc_id`                   | string       | YES      | `snake_case`, unique within schema                                                      |
+| `label`                    | string       | YES      | Human-readable name                                                                     |
+| `description`              | string       | NO       | Extra context                                                                           |
+| `allowed_formats`          | array        | YES      | Non-empty. Values: `"PDF"`, `"JPG"`, `"JPEG"`, `"PNG"`                                 |
+| `size_min_kb`              | integer      | NO       | Minimum file size in KB                                                                 |
+| `size_max_kb`              | integer      | YES      | Maximum file size in KB                                                                 |
+| `required`                 | boolean      | YES      |                                                                                         |
+| `required_if`              | string\|null | NO       | Condition string, e.g. `"pwd_pwbd_status == true"`. Uses `field_id == value` syntax. `null` if unconditional. |
+| `specifications`           | array        | NO       | Human-readable bullet-point guidelines                                                  |
+| `document_category`        | string       | NO       | Vault category this upload maps to. One of: `identity`, `academic`, `address`, `financial`, `photograph`, `signature`, `certificate`, `other`. Omit only for uploads with no vault equivalent (e.g. thumb impressions). |
+| `document_subtype`         | string       | NO       | The exact vault document subtype required for this slot. Must be a value present in the upload UI's type list for the category (after seeding). |
+| `seeds_document_subtypes`  | array        | NO       | Portal-specific subtypes to inject into the upload UI for this category. **Required whenever `document_subtype` is a non-standard value** (i.e. not already in the base type list). Example: `["Postcard Photo"]` for photograph, `["Class 10 Marksheet"]` for academic. Without this, users will not see the subtype as an option when labelling their upload. |
+
+### 6.1 Vault-mapping fields
+
+`document_category`, `document_subtype`, and `seeds_document_subtypes` together tell the mobile app how to link a portal's document requirement to a file the user has stored in their vault.
+
+**How it works:**
+1. On the Upload (Create Master) screen the app fetches all active form schemas and merges their `seeds_document_subtypes` into the base type lists per category. This makes portal-specific subtypes selectable even if they were not in the built-in defaults.
+2. When a user selects a category and subtype, the stored `document_category` + `document_subtype` on the master document are used during the Export flow to match that document against the portal's requirement.
+
+**Rule of thumb:** Add `seeds_document_subtypes` whenever `document_subtype` is a non-standard value. Standard values (already in the base lists) do not need seeding:
+- `photograph`: Passport Photo, Profile Photo, ID Photo, Document Photo
+- `signature`: Personal Signature
+- `academic`: Certificate, Diploma, Degree, Transcript, Grade Card
+- `identity`: Aadhaar Card, PAN Card, Passport, Voter ID, Driving Licence, Ration Card
 
 ---
 

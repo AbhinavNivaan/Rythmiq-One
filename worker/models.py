@@ -26,10 +26,17 @@ class SchemaDefinition:
     filename_pattern: str
     output_format: str = "jpeg"
     quality: int = 85
+    # How to handle aspect-ratio mismatches when resizing:
+    #   "stretch"   — squish/stretch to exact dimensions (default, original behaviour)
+    #   "letterbox" — scale to fit, pad remainder with white
+    fit_mode: str = "stretch"
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> SchemaDefinition:
         """Parse schema definition from dict."""
+        fit_mode = str(data.get("fit_mode", "stretch")).lower()
+        if fit_mode not in ("stretch", "letterbox"):
+            fit_mode = "stretch"
         return SchemaDefinition(
             target_width=int(data.get("target_width", 600)),
             target_height=int(data.get("target_height", 800)),
@@ -38,6 +45,7 @@ class SchemaDefinition:
             filename_pattern=str(data.get("filename_pattern", "{job_id}")),
             output_format=str(data.get("output_format", "jpeg")),
             quality=int(data.get("quality", 85)),
+            fit_mode=fit_mode,
         )
 
 

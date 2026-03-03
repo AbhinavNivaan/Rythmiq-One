@@ -73,31 +73,47 @@ def resize_exact(
     img: NDArray[np.uint8],
     target_width: int,
     target_height: int,
+    fit_mode: str = "stretch",
 ) -> NDArray[np.uint8]:
     """
     Resize image to exact target dimensions.
-    
-    Uses INTER_LANCZOS4 for highest quality downsampling.
-    A single pixel mismatch is a failure.
-    
+
     Args:
         img: BGR image array
         target_width: Target width in pixels
         target_height: Target height in pixels
-        
+        fit_mode: How to handle aspect-ratio mismatches:
+            - "stretch"   (default) — squish/stretch to fill exactly (original behaviour)
+            - "letterbox" — scale to fit, pad remainder with white
+
     Returns:
-        Resized image array
-        
+        Resized image array (always exactly target_width × target_height)
+
     Raises:
         WorkerError: If resize fails or dimensions don't match
     """
     try:
-        resized = cv2.resize(
-            img,
-            (target_width, target_height),
-            interpolation=cv2.INTER_LANCZOS4,
-        )
-        
+        if fit_mode == "letterbox":
+            src_h, src_w = img.shape[:2]
+            scale = min(target_width / src_w, target_height / src_h)
+            scaled_w = int(round(src_w * scale))
+            scaled_h = int(round(src_h * scale))
+
+            scaled = cv2.resize(img, (scaled_w, scaled_h), interpolation=cv2.INTER_LANCZOS4)
+
+            # Create white canvas and paste scaled image centred
+            canvas = np.full((target_height, target_width, 3), 255, dtype=np.uint8)
+            y_off = (target_height - scaled_h) // 2
+            x_off = (target_width - scaled_w) // 2
+            canvas[y_off:y_off + scaled_h, x_off:x_off + scaled_w] = scaled
+            resized = canvas
+        else:
+            resized = cv2.resize(
+                img,
+                (target_width, target_height),
+                interpolation=cv2.INTER_LANCZOS4,
+            )
+
         # Verify exact dimensions
         h, w = resized.shape[:2]
         if w != target_width or h != target_height:
@@ -106,9 +122,9 @@ def resize_exact(
                 stage=ProcessingStage.SCHEMA,
                 message=f"Resize dimension mismatch: expected {target_width}x{target_height}, got {w}x{h}",
             )
-        
+
         return resized
-        
+
     except cv2.error as e:
         raise WorkerError(
             code=ErrorCode.RESIZE_FAILED,
@@ -329,6 +345,7 @@ def adapt_to_schema(
             cv_img,
             schema.target_width,
             schema.target_height,
+            fit_mode=schema.fit_mode,
         )
         
         # Verify dimensions (belt and suspenders)

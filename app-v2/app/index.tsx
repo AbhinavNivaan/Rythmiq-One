@@ -1,7 +1,5 @@
-import { StyleSheet, Text, View, TouchableOpacity, Image } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity } from 'react-native';
 import { Link } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Colors from '../constants/Colors';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
@@ -9,15 +7,7 @@ import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 export default function WelcomeScreen() {
     return (
         <View style={styles.container}>
-            <LinearGradient
-                // Background Gradient
-                colors={['#0f0c29', '#302b63', '#24243e']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.background}
-            />
-
-            <SafeAreaView style={styles.safeArea}>
+            <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
                 <View style={styles.contentContainer}>
                     <Animated.View entering={FadeInUp.delay(200).duration(1000)} style={styles.heroSection}>
                         <Text style={styles.title}>Rythmiq</Text>
@@ -25,12 +15,12 @@ export default function WelcomeScreen() {
                     </Animated.View>
 
                     <Animated.View entering={FadeInDown.delay(400).duration(1000)} style={styles.cardContainer}>
-                        <BlurView intensity={40} tint="dark" style={styles.card}>
+                        <View style={styles.card}>
                             <Text style={styles.tagline}>Premium Document Intelligence</Text>
                             <Text style={styles.description}>
                                 Scan, process, and manage your documents with unparalleled precision and speed.
                             </Text>
-                        </BlurView>
+                        </View>
                     </Animated.View>
 
                     <Animated.View entering={FadeInDown.delay(600).duration(1000)} style={styles.buttonContainer}>
@@ -49,59 +39,53 @@ export default function WelcomeScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-    },
-    background: {
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        top: 0,
-        bottom: 0,
+        backgroundColor: Colors.palette.inkBlack,
     },
     safeArea: {
         flex: 1,
     },
     contentContainer: {
         flex: 1,
-        padding: 24,
+        paddingHorizontal: 24,
+        paddingTop: 24,
+        paddingBottom: 20,
         justifyContent: 'space-between',
-        paddingVertical: 60,
     },
     heroSection: {
-        alignItems: 'center',
-        marginTop: 40,
+        alignItems: 'flex-start',
+        marginTop: 8,
     },
     title: {
         fontSize: 56,
         fontWeight: '800',
-        color: '#fff',
+        color: Colors.palette.white,
         letterSpacing: -1,
     },
     titleAccent: {
         fontSize: 56,
-        fontWeight: '300',
-        color: '#1A2595', // True Cobalt
+        fontWeight: '600',
+        color: '#999',
         marginTop: -10,
-        letterSpacing: 2,
+        letterSpacing: 0,
     },
     cardContainer: {
-        marginTop: 20,
+        marginTop: 16,
     },
     card: {
-        overflow: 'hidden',
         borderRadius: 24,
         padding: 30,
-        backgroundColor: 'rgba(255,255,255,0.05)',
+        backgroundColor: Colors.palette.shadowGrey,
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.1)',
+        borderColor: 'rgba(255, 255, 255, 0.05)',
     },
     tagline: {
-        color: '#fff',
+        color: Colors.palette.white,
         fontSize: 20,
-        fontWeight: '600',
+        fontWeight: '700',
         marginBottom: 12,
     },
     description: {
-        color: '#ccc',
+        color: '#999',
         fontSize: 16,
         lineHeight: 24,
     },
@@ -110,20 +94,14 @@ const styles = StyleSheet.create({
     },
     button: {
         backgroundColor: '#1A2595',
-        paddingVertical: 18,
-        borderRadius: 16,
+        paddingVertical: 16,
+        borderRadius: 12,
         width: '100%',
         alignItems: 'center',
-        shadowColor: '#1A2595',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.4,
-        shadowRadius: 16,
-        elevation: 8,
     },
     buttonText: {
-        color: '#fff',
+        color: Colors.palette.white,
         fontSize: 18,
-        fontWeight: '700',
-        letterSpacing: 0.5,
+        fontWeight: '600',
     },
 });

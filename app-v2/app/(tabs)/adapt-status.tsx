@@ -1,11 +1,11 @@
 /**
  * Adapt Status Screen
- * 
+ *
  * Shows adaptation job progress and provides download when complete.
- * Polls for status updates and shows animated progress.
+ * Handles one or more adapt jobs (e.g. photo + signature for a single portal export).
  */
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -17,79 +17,87 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { 
-  CheckCircle, 
-  XCircle, 
-  Download, 
-  Share2, 
+import {
+  CheckCircle,
+  XCircle,
+  Download,
+  Share2,
   ArrowLeft,
   RefreshCw,
   FileArchive,
 } from 'lucide-react-native';
-import { useQuery } from '@tanstack/react-query';
+import { useQueries } from '@tanstack/react-query';
 import Colors from '../../constants/Colors';
-import { schemasApi } from '../../services/api';
-import { downloadJobOutput, shareFile, formatFileSize } from '../../services/download';
+import { documentsApi, JobStatus } from '../../services/api';
+import { downloadJobOutput, shareFile } from '../../services/download';
 
 type AdaptStatus = 'pending' | 'processing' | 'completed' | 'failed';
 
 const STATUS_CONFIG: Record<AdaptStatus, {
-  icon: React.ComponentType<{ size: number; color: string }>;
   color: string;
-  title: string;
+  title: (count: number) => string;
   subtitle: string;
 }> = {
   pending: {
-    icon: RefreshCw,
     color: '#FF9500',
-    title: 'Queued',
+    title: (n) => n === 1 ? 'Queued' : `Queued (0 of ${n})`,
     subtitle: 'Waiting to start...',
   },
   processing: {
-    icon: RefreshCw,
     color: '#89C7FE',
-    title: 'Adapting',
+    title: (n) => n === 1 ? 'Adapting' : `Adapting documents...`,
     subtitle: 'Preparing your documents...',
   },
   completed: {
-    icon: CheckCircle,
     color: '#34C759',
-    title: 'Ready!',
+    title: (n) => n === 1 ? 'Ready!' : `${n} Documents Ready!`,
     subtitle: 'Your export is ready to download',
   },
   failed: {
-    icon: XCircle,
     color: '#FF3B30',
-    title: 'Failed',
+    title: (n) => n === 1 ? 'Failed' : 'Export Failed',
     subtitle: 'Something went wrong',
   },
 };
 
 export default function AdaptStatusScreen() {
-  const params = useLocalSearchParams<{ jobId: string; portalName?: string }>();
-  const { jobId, portalName } = params;
-  
-  const [isDownloading, setIsDownloading] = useState(false);
-  const [downloadProgress, setDownloadProgress] = useState(0);
-  const [downloadedPath, setDownloadedPath] = useState<string | null>(null);
-  
+  const params = useLocalSearchParams<{ jobIds: string; portalName?: string }>();
+  const { jobIds: jobIdsParam, portalName } = params;
+
+  const jobIdList = useMemo(() => {
+    try { return JSON.parse(jobIdsParam || '[]') as string[]; }
+    catch { return []; }
+  }, [jobIdsParam]);
+
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+
   // Animated spinner rotation
   const spinValue = React.useRef(new Animated.Value(0)).current;
-  
-  // Fetch adaptation status
-  const { data: adaptStatus, refetch } = useQuery({
-    queryKey: ['adapt', jobId],
-    queryFn: () => schemasApi.getAdaptStatus(jobId!),
-    enabled: !!jobId,
-    refetchInterval: (query) => {
-      const status = query.state.data?.status;
-      return status === 'processing' || status === 'pending' ? 2000 : false;
-    },
+
+  const queries = useQueries({
+    queries: jobIdList.map(id => ({
+      queryKey: ['adapt-job', id],
+      queryFn: () => documentsApi.getJobStatus(id),
+      enabled: !!id,
+      refetchInterval: (query: any) => {
+        const s = query.state.data?.status;
+        return s === 'pending' || s === 'processing' ? 2000 : false;
+      },
+    })),
   });
 
-  // Animate spinner for processing state
+  const statuses = queries.map(q => q.data).filter(Boolean) as JobStatus[];
+  const allComplete = jobIdList.length > 0 && statuses.length === jobIdList.length && statuses.every(s => s.status === 'completed');
+  const anyFailed   = statuses.some(s => s.status === 'failed');
+  const anyProcessing = statuses.some(s => s.status === 'pending' || s.status === 'processing');
+
+  const aggregateStatus: AdaptStatus = anyFailed ? 'failed' : allComplete ? 'completed' : 'processing';
+  const config = STATUS_CONFIG[aggregateStatus];
+  const isProcessing = aggregateStatus === 'processing';
+
+  // Animate spinner while any job is processing
   useEffect(() => {
-    if (adaptStatus?.status === 'processing' || adaptStatus?.status === 'pending') {
+    if (isProcessing) {
       const animation = Animated.loop(
         Animated.timing(spinValue, {
           toValue: 1,
@@ -100,71 +108,43 @@ export default function AdaptStatusScreen() {
       animation.start();
       return () => animation.stop();
     }
-  }, [adaptStatus?.status, spinValue]);
+  }, [isProcessing, spinValue]);
 
   const spin = spinValue.interpolate({
     inputRange: [0, 1],
     outputRange: ['0deg', '360deg'],
   });
 
-  const handleDownload = useCallback(async () => {
-    if (!adaptStatus?.zip_url || !jobId) return;
-
-    setIsDownloading(true);
-    setDownloadProgress(0);
-
+  const handleDownload = useCallback(async (job: JobStatus) => {
+    if (!job.download_url) return;
+    setDownloadingId(job.job_id);
     try {
       const result = await downloadJobOutput(
-        jobId,
-        adaptStatus.zip_url,
-        (progress) => setDownloadProgress(progress.progress)
+        job.job_id,
+        job.download_url,
+        () => {},
       );
-
-      if (!result.success) {
-        throw new Error(result.error || 'Download failed');
-      }
-
-      setDownloadedPath(result.localPath);
-      setDownloadProgress(1);
-
-      // Auto-share after download
+      if (!result.success) throw new Error(result.error || 'Download failed');
       await shareFile(result.localPath, {
         mimeType: 'application/zip',
         dialogTitle: `Save ${portalName || 'Portal'} Export`,
       });
     } catch (error) {
-      console.error('Download error:', error);
-      Alert.alert(
-        'Download Failed',
-        'Could not download the file. Please try again.',
-        [{ text: 'OK' }]
-      );
+      Alert.alert('Download Failed', 'Could not download the file. Please try again.');
     } finally {
-      setIsDownloading(false);
+      setDownloadingId(null);
     }
-  }, [jobId, adaptStatus?.zip_url, portalName]);
+  }, [portalName]);
 
-  const handleShare = useCallback(async () => {
-    if (downloadedPath) {
-      await shareFile(downloadedPath, {
-        mimeType: 'application/zip',
-        dialogTitle: `Share ${portalName || 'Portal'} Export`,
-      });
-    } else {
-      // Download first, then share
-      await handleDownload();
-    }
-  }, [downloadedPath, handleDownload, portalName]);
+  const handleRetryAll = useCallback(() => {
+    queries.forEach(q => q.refetch());
+  }, [queries]);
 
-  const handleRetry = useCallback(() => {
-    refetch();
-  }, [refetch]);
-
-  if (!jobId) {
+  if (!jobIdList.length) {
     return (
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
         <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>No job specified</Text>
+          <Text style={styles.errorText}>No jobs specified</Text>
           <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
             <Text style={styles.backButtonText}>Go Back</Text>
           </TouchableOpacity>
@@ -173,12 +153,7 @@ export default function AdaptStatusScreen() {
     );
   }
 
-  const status = (adaptStatus?.status || 'pending') as AdaptStatus;
-  const config = STATUS_CONFIG[status];
-  const StatusIcon = config.icon;
-  const isComplete = status === 'completed';
-  const isFailed = status === 'failed';
-  const isProcessing = status === 'processing' || status === 'pending';
+  const StatusIcon = anyFailed ? XCircle : allComplete ? CheckCircle : RefreshCw;
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -208,99 +183,88 @@ export default function AdaptStatusScreen() {
 
         {/* Status Text */}
         <Text style={[styles.statusTitle, { color: config.color }]}>
-          {config.title}
+          {config.title(jobIdList.length)}
         </Text>
         <Text style={styles.statusSubtitle}>
-          {isFailed && adaptStatus?.error 
-            ? adaptStatus.error.message 
+          {anyFailed && statuses.find(s => s.status === 'failed')?.error_details?.message
+            ? statuses.find(s => s.status === 'failed')!.error_details!.message
             : config.subtitle}
         </Text>
 
-        {/* Progress Bar (during processing) */}
+        {/* Progress indicator while processing */}
         {isProcessing && (
           <View style={styles.progressContainer}>
             <View style={styles.progressTrack}>
-              <Animated.View 
-                style={[
-                  styles.progressBar, 
-                  { backgroundColor: config.color }
-                ]} 
-              />
+              <Animated.View style={[styles.progressBar, { backgroundColor: config.color }]} />
             </View>
-            <Text style={styles.progressText}>This usually takes 5-10 seconds</Text>
+            <Text style={styles.progressText}>This usually takes 5–10 seconds</Text>
           </View>
         )}
 
-        {/* Download Progress (when downloading) */}
-        {isDownloading && (
-          <View style={styles.progressContainer}>
-            <View style={styles.progressTrack}>
-              <View 
-                style={[
-                  styles.progressBarStatic, 
-                  { width: `${downloadProgress * 100}%` }
-                ]} 
-              />
-            </View>
-            <Text style={styles.progressText}>
-              Downloading... {Math.round(downloadProgress * 100)}%
-            </Text>
-          </View>
-        )}
-
-        {/* File Info (when complete) */}
-        {isComplete && adaptStatus?.zip_url && (
-          <View style={styles.fileInfo}>
-            <View style={styles.fileIcon}>
-              <FileArchive size={24} color='#89C7FE' />
-            </View>
-            <View>
-              <Text style={styles.fileName}>{portalName || 'Portal'}_export.zip</Text>
-              <Text style={styles.fileSize}>Ready for download</Text>
-            </View>
+        {/* Per-job download items when complete */}
+        {allComplete && (
+          <View style={styles.fileList}>
+            {statuses.map((job) => (
+              <View key={job.job_id} style={styles.fileItem}>
+                <View style={styles.fileIcon}>
+                  <FileArchive size={20} color="#89C7FE" />
+                </View>
+                <Text style={styles.fileName} numberOfLines={1}>
+                  {portalName || 'Portal'}_{job.document_type || 'export'}.zip
+                </Text>
+                <TouchableOpacity
+                  style={[styles.downloadButton, downloadingId === job.job_id && styles.downloadButtonDisabled]}
+                  onPress={() => handleDownload(job)}
+                  disabled={downloadingId === job.job_id}
+                >
+                  {downloadingId === job.job_id
+                    ? <ActivityIndicator size="small" color={Colors.palette.white} />
+                    : <Download size={16} color={Colors.palette.white} />}
+                </TouchableOpacity>
+              </View>
+            ))}
           </View>
         )}
       </View>
 
-      {/* Action Buttons */}
+      {/* Bottom actions */}
       <View style={styles.bottomContainer}>
-        {isComplete && (
-          <>
-            <TouchableOpacity
-              style={styles.primaryButton}
-              onPress={handleDownload}
-              disabled={isDownloading}
-              activeOpacity={0.8}
-            >
-              {isDownloading ? (
-                <ActivityIndicator size="small" color={Colors.palette.white} />
-              ) : (
-                <>
-                  <Download size={20} color={Colors.palette.white} />
-                  <Text style={styles.primaryButtonText}>Download ZIP</Text>
-                </>
-              )}
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={handleShare}
-              activeOpacity={0.8}
-            >
-              <Share2 size={20} color='#89C7FE' />
-              <Text style={styles.secondaryButtonText}>Share</Text>
-            </TouchableOpacity>
-          </>
-        )}
-
-        {isFailed && (
-          <TouchableOpacity
-            style={styles.primaryButton}
-            onPress={handleRetry}
-            activeOpacity={0.8}
-          >
+        {anyFailed && (
+          <TouchableOpacity style={styles.primaryButton} onPress={handleRetryAll} activeOpacity={0.8}>
             <RefreshCw size={20} color={Colors.palette.white} />
             <Text style={styles.primaryButtonText}>Retry</Text>
+          </TouchableOpacity>
+        )}
+
+        {allComplete && jobIdList.length > 1 && (
+          <TouchableOpacity
+            style={styles.primaryButton}
+            onPress={() => statuses.forEach(j => j.download_url && handleDownload(j))}
+            disabled={!!downloadingId}
+            activeOpacity={0.8}
+          >
+            {downloadingId
+              ? <ActivityIndicator size="small" color={Colors.palette.white} />
+              : <>
+                  <Download size={20} color={Colors.palette.white} />
+                  <Text style={styles.primaryButtonText}>Download All</Text>
+                </>}
+          </TouchableOpacity>
+        )}
+
+        {allComplete && jobIdList.length === 1 && (
+          <TouchableOpacity
+            style={styles.primaryButton}
+            onPress={() => statuses[0]?.download_url && handleDownload(statuses[0])}
+            disabled={!!downloadingId}
+            activeOpacity={0.8}
+          >
+            {downloadingId
+              ? <ActivityIndicator size="small" color={Colors.palette.white} />
+              : <>
+                  <Download size={20} color={Colors.palette.white} />
+                  <Text style={styles.primaryButtonText}>Download ZIP</Text>
+                </>}
           </TouchableOpacity>
         )}
 
@@ -379,42 +343,48 @@ const styles = StyleSheet.create({
     width: '30%',
     borderRadius: 3,
   },
-  progressBarStatic: {
-    height: '100%',
-    backgroundColor: '#89C7FE',
-    borderRadius: 3,
-  },
   progressText: {
     fontSize: 12,
     color: '#666',
     marginTop: 12,
   },
-  fileInfo: {
+  fileList: {
+    width: '100%',
+    marginTop: 32,
+    gap: 10,
+  },
+  fileItem: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: Colors.palette.shadowGrey,
-    borderRadius: 16,
-    padding: 16,
-    marginTop: 32,
-    gap: 16,
+    borderRadius: 14,
+    padding: 14,
+    gap: 12,
   },
   fileIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
+    width: 40,
+    height: 40,
+    borderRadius: 10,
     backgroundColor: '#89C7FE20',
     alignItems: 'center',
     justifyContent: 'center',
   },
   fileName: {
+    flex: 1,
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
     color: Colors.palette.white,
-    marginBottom: 4,
   },
-  fileSize: {
-    fontSize: 12,
-    color: '#999',
+  downloadButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#1A2595',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  downloadButtonDisabled: {
+    opacity: 0.5,
   },
   bottomContainer: {
     padding: 16,
@@ -434,20 +404,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: Colors.palette.white,
-  },
-  secondaryButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.palette.shadowGrey,
-    borderRadius: 16,
-    height: 56,
-    gap: 8,
-  },
-  secondaryButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#89C7FE',
   },
   linkButton: {
     alignItems: 'center',

@@ -27,6 +27,13 @@ QUALITY_WARNING_THRESHOLD = 0.80
 SHARPNESS_MIN = 50.0  # Below this is considered blurry
 SHARPNESS_MAX = 500.0  # Normalize to this range
 
+# Type-aware quality weights — each document type has different priorities
+QUALITY_WEIGHTS = {
+    "photo":     {"sharpness": 0.50, "exposure": 0.40, "noise": 0.10, "edge_density": 0.00},
+    "signature": {"sharpness": 0.40, "exposure": 0.30, "noise": 0.20, "edge_density": 0.10},
+    "document":  {"sharpness": 0.35, "exposure": 0.30, "noise": 0.20, "edge_density": 0.15},
+}
+
 
 def compute_sharpness(gray: NDArray[np.uint8]) -> float:
     """
@@ -104,6 +111,33 @@ def compute_exposure(gray: NDArray[np.uint8]) -> float:
         score *= 0.5
     
     return float(score)
+
+
+def compute_exposure_photo(gray: NDArray[np.uint8]) -> float:
+    """
+    Compute exposure score for photos using mean brightness.
+
+    Photos are well-exposed when mean brightness is in the 80–200 range.
+    Unlike documents, they do NOT require a high-contrast bimodal histogram;
+    a smooth portrait background scores perfectly here.
+
+    Args:
+        gray: Grayscale image as uint8 array
+
+    Returns:
+        Exposure score [0.0, 1.0]
+    """
+    mean_brightness = float(np.mean(gray))
+
+    if mean_brightness < 80:
+        # Underexposed: 0 at pitch-black, 1.0 at mean=80
+        return mean_brightness / 80.0
+    elif mean_brightness <= 200:
+        # Ideal range
+        return 1.0
+    else:
+        # Overexposed: 1.0 at mean=200, 0 at mean=255
+        return (255.0 - mean_brightness) / 55.0
 
 
 def compute_noise(gray: NDArray[np.uint8]) -> float:
@@ -210,39 +244,36 @@ def decode_image(data: bytes) -> Tuple[NDArray[np.uint8], NDArray[np.uint8]]:
     return img, gray
 
 
-def assess_quality(data: bytes) -> QualityResult:
+def assess_quality(data: bytes, document_type: str = "document") -> QualityResult:
     """
     Assess image quality using CPU-only metrics.
-    
-    This is the main entry point for quality assessment.
-    
+
+    Uses type-aware weights so photos, signatures, and documents are each
+    scored against criteria that are meaningful for their content.
+
     Args:
         data: Raw image bytes
-        
+        document_type: One of "photo", "signature", "document"
+
     Returns:
         QualityResult with overall score and breakdown
-        
+
     Raises:
         WorkerError: If quality assessment fails
     """
     try:
         _, gray = decode_image(data)
-        
+
         # Compute individual metrics
         sharpness = compute_sharpness(gray)
-        exposure = compute_exposure(gray)
+        # Photos use mean-brightness exposure; documents/signatures use contrast std-dev
+        exposure = compute_exposure_photo(gray) if document_type == "photo" else compute_exposure(gray)
         noise = compute_noise(gray)
         edge_density = compute_edge_density(gray)
-        
-        # Weighted average for overall score
-        # Sharpness and exposure are most important for documents
-        weights = {
-            'sharpness': 0.35,
-            'exposure': 0.30,
-            'noise': 0.20,
-            'edge_density': 0.15,
-        }
-        
+
+        # Type-aware weighted average
+        weights = QUALITY_WEIGHTS.get(document_type, QUALITY_WEIGHTS["document"])
+
         overall_score = (
             weights['sharpness'] * sharpness +
             weights['exposure'] * exposure +
@@ -289,7 +320,9 @@ def check_quality_warning(score: float) -> bool:
 __all__ = [
     'assess_quality',
     'check_quality_warning',
+    'compute_exposure_photo',
     'QualityResult',
     'QualityBreakdown',
     'QUALITY_WARNING_THRESHOLD',
+    'QUALITY_WEIGHTS',
 ]

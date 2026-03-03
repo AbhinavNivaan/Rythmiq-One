@@ -592,6 +592,8 @@ export interface JobStatus {
   status: 'pending' | 'processing' | 'completed' | 'failed';
   job_type?: 'master' | 'adapt';
   document_type?: 'photo' | 'signature' | 'document';
+  document_category?: string;
+  document_subtype?: string;
   document_name?: string;
   portal_schema_name?: string;
   quality_score?: number;
@@ -624,13 +626,17 @@ export const documentsApi = {
     documentType: 'photo' | 'signature' | 'document',
     filename: string,
     mimeType: string,
-    fileSizeBytes: number
+    fileSizeBytes: number,
+    documentCategory?: string,
+    documentSubtype?: string,
   ): Promise<{ job_id: string; upload_url: string; expires_at: string }> {
     return apiRequest<{ job_id: string; upload_url: string; expires_at: string }>('/jobs', {
       method: 'POST',
       body: JSON.stringify({
         job_type: 'master',
         document_type: documentType,
+        document_category: documentCategory,
+        document_subtype: documentSubtype,
         filename,
         mime_type: mimeType,
         file_size_bytes: fileSizeBytes,
@@ -651,16 +657,18 @@ export const documentsApi = {
 
   /**
    * Create an ADAPTATION job (Export flow - requires portal)
-   * This adapts an existing master document for a specific portal.
+   * Adapts an existing completed master job for a specific portal schema.
+   * No file upload needed — the backend reuses the master's stored input.
    */
   async createAdaptJob(
     masterJobId: string,
     portalSchemaName: string
   ): Promise<{ job_id: string }> {
-    return apiRequest<{ job_id: string }>('/adapt', {
+    return apiRequest<{ job_id: string }>('/jobs', {
       method: 'POST',
       body: JSON.stringify({
-        master_job_id: masterJobId,
+        job_type: 'adapt',
+        source_job_id: masterJobId,
         portal_schema_name: portalSchemaName,
       }),
     });
@@ -734,6 +742,13 @@ export const documentsApi = {
   async listJobs(): Promise<{ jobs: JobStatus[] }> {
     return apiRequest<{ jobs: JobStatus[] }>('/jobs');
   },
+
+  /**
+   * Delete a job and its associated storage objects
+   */
+  async deleteJob(jobId: string): Promise<void> {
+    await apiRequest<void>(`/jobs/${jobId}`, { method: 'DELETE' });
+  },
 };
 
 // =============================================================================
@@ -772,65 +787,132 @@ export interface AdaptStatusResponse {
   };
 }
 
+// =============================================================================
+// Form Schemas API  (document checklists for registration forms)
+// =============================================================================
+
+export interface FormSchemaDocUpload {
+  doc_id: string;
+  label: string;
+  description?: string;
+  allowed_formats: string[];
+  size_min_kb?: number;
+  size_max_kb?: number;
+  required: boolean;
+  required_if?: string | null;
+  specifications?: string[];
+  /** Maps this requirement to a vault document category (e.g. 'identity', 'academic', 'photograph') */
+  document_category?: string;
+  /** Exact subtype required; omit to accept any doc in the category */
+  document_subtype?: string;
+  /** Portal-specific subtypes to inject into the upload UI for this category */
+  seeds_document_subtypes?: string[];
+}
+
+export interface FormSchema {
+  id: string;
+  schema_type: string;
+  schema_version?: string;
+  display_name: string;
+  short_name: string;
+  category: string;
+  conducting_body?: string;
+  applicable_year?: number;
+  document_uploads: FormSchemaDocUpload[];
+  key_dates?: Record<string, string>;
+}
+
+const MOCK_FORM_SCHEMAS: FormSchema[] = [
+  {
+    id: 'neet_2026_registration',
+    schema_type: 'exam_form',
+    schema_version: '1.0.0',
+    display_name: 'NEET UG 2026 Registration Form',
+    short_name: 'NEET 2026',
+    category: 'medical_entrance',
+    conducting_body: 'National Testing Agency (NTA)',
+    applicable_year: 2026,
+    document_uploads: [
+      { doc_id: 'photograph_passport', label: 'Passport-size Photograph (2×2 inch)', allowed_formats: ['JPG', 'JPEG'], size_max_kb: 200, required: true, document_category: 'photograph', document_subtype: 'Passport Photo' },
+      { doc_id: 'photograph_postcard', label: 'Postcard-size Photograph (4×6 inch)', allowed_formats: ['JPG', 'JPEG'], size_max_kb: 200, required: true, document_category: 'photograph', document_subtype: 'Postcard Photo', seeds_document_subtypes: ['Postcard Photo'] },
+      { doc_id: 'signature', label: 'Signature', allowed_formats: ['JPG', 'JPEG'], size_max_kb: 30, required: true, document_category: 'signature', document_subtype: 'Personal Signature' },
+      { doc_id: 'left_thumb_impression', label: 'Left Hand Thumb Impression', allowed_formats: ['JPG', 'JPEG'], size_max_kb: 200, required: true },
+      { doc_id: 'right_thumb_and_finger_impressions', label: 'Right Thumb and Finger Impressions', allowed_formats: ['JPG', 'JPEG'], size_max_kb: 200, required: true },
+      { doc_id: 'class_10_certificate', label: 'Class 10 Certificate / Marksheet', allowed_formats: ['PDF'], size_max_kb: 300, required: true, document_category: 'academic', document_subtype: 'Class 10 Marksheet', seeds_document_subtypes: ['Class 10 Marksheet'] },
+      { doc_id: 'class_12_certificate', label: 'Class 12 Certificate / Marksheet', allowed_formats: ['PDF'], size_max_kb: 300, required: true, document_category: 'academic', document_subtype: 'Class 12 Marksheet', seeds_document_subtypes: ['Class 12 Marksheet'] },
+      { doc_id: 'id_proof', label: 'Valid Government-issued Photo ID', allowed_formats: ['PDF'], size_max_kb: 300, required: true, document_category: 'identity' },
+      { doc_id: 'category_certificate', label: 'Category Certificate', allowed_formats: ['PDF'], size_max_kb: 300, required: false, required_if: 'category != General', document_category: 'certificate', document_subtype: 'Category Certificate', seeds_document_subtypes: ['Category Certificate'] },
+      { doc_id: 'pwd_medical_certificate', label: 'PwD / PwBD Medical Certificate', allowed_formats: ['PDF'], size_max_kb: 300, required: false, required_if: 'pwd_pwbd_status == true', document_category: 'certificate', document_subtype: 'PwD Medical Certificate', seeds_document_subtypes: ['PwD Medical Certificate'] },
+      { doc_id: 'scribe_documents', label: 'Scribe Documents', allowed_formats: ['PDF'], size_max_kb: 500, required: false, required_if: 'scribe_opted == true', document_category: 'other', document_subtype: 'Scribe Document', seeds_document_subtypes: ['Scribe Document'] },
+    ],
+  },
+];
+
+export const formSchemasApi = {
+  async list(): Promise<FormSchema[]> {
+    try {
+      const response = await apiRequest<{ schemas: FormSchema[] }>('/form-schemas');
+      if (!response?.schemas?.length) {
+        console.log('[formSchemasApi] API returned empty, using mock schemas');
+        return MOCK_FORM_SCHEMAS;
+      }
+      return response.schemas;
+    } catch (error) {
+      console.log('[formSchemasApi] API error, using mock schemas:', error);
+      return MOCK_FORM_SCHEMAS;
+    }
+  },
+};
+
+// =============================================================================
+// Portals API  (canonical parent — aggregates all schema types per portal)
+// =============================================================================
+
+export interface Portal {
+  id: string;                  // stable slug, e.g. "nta_neet"
+  display_name: string;        // e.g. "NTA NEET"
+  short_name: string;          // e.g. "NEET"
+  category: string;            // e.g. "medical_entrance"
+  country?: string;
+  official_website?: string;
+  has_form_schema: boolean;
+  has_image_specs: boolean;
+  form_schemas: FormSchema[];  // sorted newest-first by applicable_year
+}
+
+const MOCK_PORTALS: Portal[] = [
+  {
+    id: 'nta_neet',
+    display_name: 'NTA NEET',
+    short_name: 'NEET',
+    category: 'medical_entrance',
+    has_form_schema: true,
+    has_image_specs: true,
+    form_schemas: MOCK_FORM_SCHEMAS,
+  },
+];
+
+export const portalsApi = {
+  async list(): Promise<Portal[]> {
+    try {
+      const response = await apiRequest<{ portals: Portal[] }>('/portals');
+      if (!response?.portals?.length) {
+        console.log('[portalsApi] API returned empty, using mock portals');
+        return MOCK_PORTALS;
+      }
+      return response.portals;
+    } catch (error) {
+      console.log('[portalsApi] API error, using mock portals:', error);
+      return MOCK_PORTALS;
+    }
+  },
+};
+
 /**
  * Mock portal schemas for development/testing
  * These match the portal_schemas.json structure
  */
 const MOCK_PORTAL_SCHEMAS: PortalSchema[] = [
-  {
-    id: 'upsc_photo',
-    name: 'UPSC Photo',
-    portal: 'UPSC',
-    document_type: 'photo',
-    requirements: {
-      photo: { dimensions: [140, 180], dpi: 300, max_kb: 40, format: 'jpeg' },
-    },
-  },
-  {
-    id: 'upsc_signature',
-    name: 'UPSC Signature',
-    portal: 'UPSC',
-    document_type: 'signature',
-    requirements: {
-      signature: { dimensions: [140, 60], dpi: 200, max_kb: 20, format: 'jpeg' },
-    },
-  },
-  {
-    id: 'ssc_photo',
-    name: 'SSC Photo',
-    portal: 'SSC',
-    document_type: 'photo',
-    requirements: {
-      photo: { dimensions: [100, 120], dpi: 100, max_kb: 100, format: 'jpeg' },
-    },
-  },
-  {
-    id: 'ssc_signature',
-    name: 'SSC Signature',
-    portal: 'SSC',
-    document_type: 'signature',
-    requirements: {
-      signature: { dimensions: [140, 60], dpi: 100, max_kb: 50, format: 'jpeg' },
-    },
-  },
-  {
-    id: 'ibps_photo',
-    name: 'IBPS Photo',
-    portal: 'IBPS',
-    document_type: 'photo',
-    requirements: {
-      photo: { dimensions: [200, 230], dpi: 200, max_kb: 50, format: 'jpeg' },
-    },
-  },
-  {
-    id: 'ibps_signature',
-    name: 'IBPS Signature',
-    portal: 'IBPS',
-    document_type: 'signature',
-    requirements: {
-      signature: { dimensions: [140, 60], dpi: 200, max_kb: 20, format: 'jpeg' },
-    },
-  },
   {
     id: 'neet_photo',
     name: 'NEET Photo',
@@ -849,51 +931,6 @@ const MOCK_PORTAL_SCHEMAS: PortalSchema[] = [
       signature: { dimensions: [181, 89], dpi: 200, max_kb: 50, format: 'jpeg' },
     },
   },
-  {
-    id: 'jee_photo',
-    name: 'JEE Photo',
-    portal: 'NTA JEE',
-    document_type: 'photo',
-    requirements: {
-      photo: { dimensions: [181, 244], dpi: 200, max_kb: 200, format: 'jpeg' },
-    },
-  },
-  {
-    id: 'jee_signature',
-    name: 'JEE Signature',
-    portal: 'NTA JEE',
-    document_type: 'signature',
-    requirements: {
-      signature: { dimensions: [181, 89], dpi: 200, max_kb: 50, format: 'jpeg' },
-    },
-  },
-  {
-    id: 'passport_photo',
-    name: 'Passport Photo',
-    portal: 'Passport Seva',
-    document_type: 'photo',
-    requirements: {
-      photo: { dimensions: [413, 531], dpi: 300, max_kb: 300, format: 'jpeg' },
-    },
-  },
-  {
-    id: 'rrb_photo',
-    name: 'RRB Photo',
-    portal: 'RRB',
-    document_type: 'photo',
-    requirements: {
-      photo: { dimensions: [165, 213], dpi: 200, max_kb: 50, format: 'jpeg' },
-    },
-  },
-  {
-    id: 'rrb_signature',
-    name: 'RRB Signature',
-    portal: 'RRB',
-    document_type: 'signature',
-    requirements: {
-      signature: { dimensions: [165, 55], dpi: 200, max_kb: 30, format: 'jpeg' },
-    },
-  },
 ];
 
 // Group schemas by portal for the UI
@@ -909,22 +946,68 @@ export function groupSchemasByPortal(schemas: PortalSchema[]): Record<string, Po
   return grouped;
 }
 
+/**
+ * Maps a portal_schemas row name (e.g. "neet_photo") to a display portal name
+ * and document type. Keeps the mapping in one place so the UI stays consistent.
+ */
+function inferPortalFromName(name: string): { portal: string; document_type: 'photo' | 'signature' } {
+  const lower = name.toLowerCase();
+  const document_type: 'photo' | 'signature' = lower.includes('signature') ? 'signature' : 'photo';
+  let portal = name;
+  if (lower.startsWith('neet'))     portal = 'NTA NEET';
+  else if (lower.startsWith('jee')) portal = 'NTA JEE';
+  else if (lower.startsWith('upsc')) portal = 'UPSC';
+  else if (lower.startsWith('ssc'))  portal = 'SSC';
+  else if (lower.startsWith('ibps')) portal = 'IBPS';
+  else if (lower.startsWith('rrb'))  portal = 'RRB';
+  else if (lower.startsWith('passport')) portal = 'Passport Seva';
+  return { portal, document_type };
+}
+
+/**
+ * Converts the flat requirements_summary from the DB
+ * ({target_width, target_height, target_dpi, max_kb, output_format})
+ * into the nested requirements object the app UI expects.
+ */
+function buildRequirements(
+  reqSummary: Record<string, any> | null | undefined,
+  document_type: 'photo' | 'signature',
+): PortalSchema['requirements'] {
+  if (!reqSummary) return undefined;
+  const spec = {
+    dimensions: [reqSummary.target_width, reqSummary.target_height] as [number, number],
+    dpi: reqSummary.target_dpi,
+    max_kb: reqSummary.max_kb,
+    format: reqSummary.output_format || 'jpeg',
+  };
+  return document_type === 'signature' ? { signature: spec } : { photo: spec };
+}
+
 export const schemasApi = {
   /**
-   * List available portal schemas
-   * Falls back to mock data if API is unavailable or returns empty
+   * List available portal schemas from the API.
+   * Falls back to mock data if the API is unavailable or returns nothing.
    */
   async list(): Promise<PortalSchema[]> {
     try {
-      const result = await apiRequest<PortalSchema[]>('/schemas');
-      // If API returns empty, use mock data for development
-      if (!result || result.length === 0) {
+      const response = await apiRequest<{ schemas: any[] }>('/portal-schemas');
+      if (!response?.schemas?.length) {
         console.log('[schemasApi] API returned empty, using mock schemas');
         return MOCK_PORTAL_SCHEMAS;
       }
-      return result;
+      return response.schemas.map(s => {
+        const { portal, document_type } = inferPortalFromName(s.name);
+        return {
+          id: s.id,
+          name: s.name,
+          portal,
+          document_type,
+          version: s.version,
+          requirements: buildRequirements(s.requirements_summary, document_type),
+          requirements_summary: s.requirements_summary,
+        };
+      });
     } catch (error) {
-      // Fallback to mock data on error (e.g., during development)
       console.log('[schemasApi] API error, using mock schemas:', error);
       return MOCK_PORTAL_SCHEMAS;
     }
@@ -967,5 +1050,7 @@ export default {
   health: healthApi,
   documents: documentsApi,
   schemas: schemasApi,
+  formSchemas: formSchemasApi,
+  portals: portalsApi,
   isDevSandboxMode,
 };

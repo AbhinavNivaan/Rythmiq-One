@@ -218,7 +218,16 @@ function DocumentDetailModal({ job, onClose }: { job: JobStatus; onClose: () => 
     };
 
     const handleExport = () => {
-        // TODO: wire up export flow
+        onClose();
+        router.push({
+            pathname: '/(tabs)/portal-selector',
+            params: {
+                documentId: job.job_id,
+                documentCategory: job.document_category ?? '',
+                documentSubtype: job.document_subtype ?? '',
+                documentName: job.document_name ?? '',
+            },
+        });
     };
 
     return (

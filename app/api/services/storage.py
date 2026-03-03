@@ -235,6 +235,34 @@ class StorageService:
             logger.error("Failed to check object existence", extra={"storage_path": storage_path, "error": str(e)})
             raise StorageException("Failed to check object existence")
 
+    def delete_object(self, storage_path: str) -> None:
+        """Delete a single object from storage."""
+        try:
+            self._client.delete_object(
+                Bucket=self._settings.spaces_bucket,
+                Key=storage_path,
+            )
+            logger.info("Object deleted", extra={"storage_path": storage_path})
+        except (BotoCoreError, ClientError) as e:
+            logger.error("Failed to delete object", extra={"storage_path": storage_path, "error": str(e)})
+            raise StorageException("Failed to delete object")
+
+    def delete_objects_by_prefix(self, prefix: str) -> None:
+        """Delete all objects under a given prefix."""
+        try:
+            paginator = self._client.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=self._settings.spaces_bucket, Prefix=prefix):
+                keys = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
+                if keys:
+                    self._client.delete_objects(
+                        Bucket=self._settings.spaces_bucket,
+                        Delete={"Objects": keys},
+                    )
+            logger.info("Objects deleted by prefix", extra={"prefix": prefix})
+        except (BotoCoreError, ClientError) as e:
+            logger.error("Failed to delete objects by prefix", extra={"prefix": prefix, "error": str(e)})
+            raise StorageException("Failed to delete objects by prefix")
+
 
 _storage_service: StorageService | None = None
 
