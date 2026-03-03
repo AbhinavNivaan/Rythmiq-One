@@ -664,6 +664,52 @@ def crop_borders(
 _DOC_DETECT_MIN_AREA_FRACTION = 0.15
 # Skip if it covers >90% — image is already cropped, no background to remove
 _DOC_DETECT_MAX_AREA_FRACTION = 0.90
+# Interior angles of detected quad must be within this many degrees of 90°
+_DOC_DETECT_MAX_ANGLE_DEVIATION = 30.0
+# Aspect ratio of detected document: longest side / shortest side must be ≤ this
+_DOC_DETECT_MAX_ASPECT_RATIO = 5.0
+
+
+def _is_valid_document_quad(pts: NDArray[np.float32]) -> bool:
+    """
+    Validate that 4 detected corner points form a plausible document rectangle.
+
+    Rejects quads that are:
+    - Non-convex (folded / self-intersecting)
+    - Have any interior angle deviating >30° from 90°
+    - Have an extreme aspect ratio (>5:1)
+
+    These checks filter out false positives from laptop keyboards, table edges,
+    reflections, and other background structures.
+    """
+    pts_int = pts.reshape(4, 1, 2).astype(np.int32)
+    if not cv2.isContourConvex(pts_int):
+        return False
+
+    ordered = _order_points(pts)
+    for i in range(4):
+        p0 = ordered[(i - 1) % 4]
+        p1 = ordered[i]
+        p2 = ordered[(i + 1) % 4]
+        v1 = p0 - p1
+        v2 = p2 - p1
+        denom = np.linalg.norm(v1) * np.linalg.norm(v2)
+        if denom < 1e-6:
+            return False
+        cos_a = np.clip(np.dot(v1, v2) / denom, -1.0, 1.0)
+        angle = float(np.degrees(np.arccos(cos_a)))
+        if abs(angle - 90.0) > _DOC_DETECT_MAX_ANGLE_DEVIATION:
+            return False
+
+    tl, tr, br, bl = ordered
+    width  = max(np.linalg.norm(tr - tl), np.linalg.norm(br - bl))
+    height = max(np.linalg.norm(bl - tl), np.linalg.norm(br - tr))
+    if width < 1 or height < 1:
+        return False
+    if max(width, height) / min(width, height) > _DOC_DETECT_MAX_ASPECT_RATIO:
+        return False
+
+    return True
 
 
 def detect_document_boundary(
@@ -672,44 +718,51 @@ def detect_document_boundary(
     """
     Detect the largest rectangular document/photo boundary in a scene image.
 
-    Useful when the user photographs a printed document lying on a surface:
-    finds the biggest quad-shaped contour (the document edge) using
-    Canny edges + contour approximation.
-
-    Multiple Canny thresholds are tried for robustness across lighting.
+    Uses Canny edges + contour approximation to find the biggest valid quad.
+    A larger Gaussian blur (9×9) suppresses background texture (keyboard keys,
+    table grain, etc.).  Morphological closing joins broken document edges.
+    Each candidate quad is validated for convexity, right-angle corners, and
+    aspect ratio before being accepted.
 
     Returns:
-        4 corner points [[x,y]×4] or None if no clear rectangle found.
+        4 corner points [[x,y]×4] or None if no confident rectangle found.
     """
     h, w = img.shape[:2]
     min_area = _DOC_DETECT_MIN_AREA_FRACTION * w * h
     max_area = _DOC_DETECT_MAX_AREA_FRACTION * w * h
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    # Larger blur suppresses background texture (keyboard keys, table grain)
+    blurred = cv2.GaussianBlur(gray, (9, 9), 0)
+
+    close_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
 
     for lo, hi in [(30, 100), (50, 150), (10, 60)]:
         edges = cv2.Canny(blurred, lo, hi)
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        edges = cv2.dilate(edges, kernel, iterations=1)
+        # Morphological close: fills gaps in document outline without
+        # expanding it the way a plain dilate would
+        edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, close_kernel)
 
         contours, _ = cv2.findContours(
-            edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE
         )
         contours = sorted(contours, key=cv2.contourArea, reverse=True)
 
-        for cnt in contours[:10]:
+        for cnt in contours[:15]:
             area = cv2.contourArea(cnt)
             if area < min_area or area > max_area:
                 continue
             peri = cv2.arcLength(cnt, True)
             approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
-            if len(approx) == 4:
+            if len(approx) != 4:
+                continue
+            pts = approx.reshape(4, 2).astype(np.float32)
+            if _is_valid_document_quad(pts):
                 logger.info(
                     f"[ENHANCEMENT] document boundary detected: area={area:.0f} "
                     f"({area / (w * h) * 100:.1f}% of image)"
                 )
-                return approx.reshape(4, 2).astype(np.float32)
+                return pts
 
     return None
 
