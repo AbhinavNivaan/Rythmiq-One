@@ -42,6 +42,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN apt-get update && apt-get install -y --no-install-recommends autoconf automake libtool libleptonica-dev git build-essential \
     && git clone https://github.com/agl/jbig2enc.git /tmp/jbig2enc \
     && cd /tmp/jbig2enc && git checkout 0.29 \
+    # leptonica >= 1.80 removed findFileFormatStream; patch AC_CHECK_LIB to use
+    # pixCreate which exists in all versions so the configure check passes.
+    && sed -i 's/findFileFormatStream/pixCreate/g' configure.ac \
     && ./autogen.sh && ./configure && make -j$(nproc) && make install \
     && rm -rf /tmp/jbig2enc \
     && apt-get remove -y git autoconf automake libtool build-essential \
