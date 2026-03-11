@@ -9,19 +9,32 @@
 boto3>=1.34.0,<2.0.0
 requests>=2.31.0,<3.0.0
 cryptography>=42.0.0,<44.0.0
+supabase>=2.0.0
 
 # Image Processing
 opencv-python-headless>=4.9.0,<5.0.0
+rembg[cpu]>=2.0.50
 Pillow>=10.2.0,<11.0.0
 numpy>=1.26.0,<2.0.0
 
-# OCR - CPU only
-# Note: PaddleOCR 3.x has breaking API changes. Our code supports both 2.x and 3.x.
-# - PaddleOCR 2.x uses: show_log, use_gpu, enable_mkldnn, etc.
-# - PaddleOCR 3.x uses: new logging system, device parameter, etc.
-# The ocr.py module auto-detects version and uses appropriate parameters.
-paddlepaddle>=2.6.0  # No upper bound - let pip resolve compatible version
-paddleocr>=2.7.0     # No upper bound - supports 2.x and 3.x APIs
+# OCR - Google Cloud Document AI (primary, replaces PaddleOCR)
+# Supports 200+ languages, mixed-script, high accuracy on Indian documents.
+# Requires GOOGLE_CLOUD_PROJECT, DOCUMENT_AI_LOCATION, DOCUMENT_AI_PROCESSOR_ID env vars.
+google-cloud-documentai>=2.20.0,<3.0.0
+
+# Image pre-processing - Google Cloud Vision (crop hints for perspective correction)
+# Used as Stage 0 in detect_and_crop_document before the OpenCV fallback cascade.
+google-cloud-vision>=3.0.0,<4.0.0
+
+# PDF assembly for MRC masters
+# MIT license. Wraps QPDF for low-level PDF construction.
+# Required for JPEG2000-in-PDF (Phase 1) and JBIG2-in-PDF (Phase 2) masters.
+pikepdf>=8.0.0,<10.0.0
+
+# OCR - PaddleOCR (legacy fallback, kept for offline/local testing)
+# CPU only. Our code supports both 2.x and 3.x APIs.
+paddlepaddle>=2.6.0
+paddleocr>=2.7.0
 
 # Type checking (optional, for development)
 # mypy>=1.8.0

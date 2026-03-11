@@ -27,8 +27,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     curl \
     ca-certificates \
+    # JBIG2 compression support for MRC masters
+    libleptonica-dev \
+    git \
+    autoconf \
+    automake \
+    libtool \
+    build-essential \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
+
+# jbig2enc — JBIG2 encoder for MRC document compression (Apache 2.0)
+# Pinned to tag 0.29 for reproducible builds.
+RUN apt-get update && apt-get install -y --no-install-recommends autoconf automake libtool libleptonica-dev git build-essential \
+    && git clone https://github.com/agl/jbig2enc.git /tmp/jbig2enc \
+    && cd /tmp/jbig2enc && git checkout 0.29 \
+    && ./autogen.sh && ./configure && make -j$(nproc) && make install \
+    && rm -rf /tmp/jbig2enc \
+    && apt-get remove -y git autoconf automake libtool build-essential \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
 
 # =============================================================================
 # Python Environment Setup
@@ -49,12 +67,19 @@ RUN pip install --upgrade pip setuptools wheel && \
     pip install --no-cache-dir fastapi uvicorn pydantic pydantic-settings
 
 # =============================================================================
-# Pre-download ML Models (Optional Future Enhancement)
+# Pre-download ML Models
 # =============================================================================
-# When Phase 2+ adds PaddleOCR and rembg, uncomment:
-#
-# RUN python -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=True, lang='en')" && \
-#     python -c "from rembg import remove; from PIL import Image; import io; img = Image.new('RGB', (10, 10)); remove(img)"
+# Bake the rembg U2-Net model (~170 MB) into the image so the first Cloud Run
+# request does not stall waiting for a network download.
+# The model is stored at /root/.u2net/u2net.onnx inside the container.
+RUN python -c "\
+from rembg import remove; \
+from PIL import Image; \
+import io; \
+img = Image.new('RGB', (10, 10), color=(128, 128, 128)); \
+remove(img); \
+print('rembg model pre-download OK'); \
+"
 
 # =============================================================================
 # Application Code

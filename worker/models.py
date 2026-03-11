@@ -24,6 +24,7 @@ class SchemaDefinition:
     target_dpi: int
     max_kb: int
     filename_pattern: str
+    min_kb: int = 0           # Floor on output size; 0 = no minimum
     output_format: str = "jpeg"
     quality: int = 85
     # How to handle aspect-ratio mismatches when resizing:
@@ -43,6 +44,7 @@ class SchemaDefinition:
             target_dpi=int(data.get("target_dpi", 300)),
             max_kb=int(data.get("max_kb", 200)),
             filename_pattern=str(data.get("filename_pattern", "{job_id}")),
+            min_kb=int(data.get("min_kb", 0)),
             output_format=str(data.get("output_format", "jpeg")),
             quality=int(data.get("quality", 85)),
             fit_mode=fit_mode,
@@ -54,9 +56,19 @@ class MasterConstraints:
     """Master document optimization constraints."""
     max_kb: int = 2000
     target_dpi: int = 300
-    output_format: str = "jpeg"
-    quality: int = 92
+    output_format: str = "jpeg"         # "jpeg" | "jpeg2000" | "pdf_mrc"
+    quality: int = 92                   # JPEG quality (only used for output_format="jpeg")
     filename_pattern: str = "{job_id}_master"
+    min_kb: int = 0                     # Masters have no minimum by default
+
+    # JPEG 2000 parameters (output_format="jpeg2000" or fallback in "pdf_mrc")
+    jpeg2000_ratio: float = 10.0        # OpenJPEG quality_layers target ratio
+
+    # MRC parameters (output_format="pdf_mrc")
+    bg_downsample: int = 3              # Background layer downsample factor
+    jbig2_lossless: bool = True         # Always True unless explicitly overridden
+    jbig2_threshold: float = 0.85       # Symbol matching threshold (lossy only)
+    embed_text_layer: bool = True       # Embed Document AI text as invisible PDF text
 
     @staticmethod
     def from_dict(data: Dict[str, Any] | None) -> MasterConstraints:
@@ -67,6 +79,12 @@ class MasterConstraints:
             output_format=str(payload.get("output_format", "jpeg")),
             quality=int(payload.get("quality", 92)),
             filename_pattern=str(payload.get("filename_pattern", "{job_id}_master")),
+            min_kb=int(payload.get("min_kb", 0)),
+            jpeg2000_ratio=float(payload.get("jpeg2000_ratio", 10.0)),
+            bg_downsample=int(payload.get("bg_downsample", 3)),
+            jbig2_lossless=bool(payload.get("jbig2_lossless", True)),
+            jbig2_threshold=float(payload.get("jbig2_threshold", 0.85)),
+            embed_text_layer=bool(payload.get("embed_text_layer", True)),
         )
 
 
@@ -193,6 +211,15 @@ class JobPayload:
     portal_schema: Optional[PortalSchema]
     mode: Literal["master", "adapt"] = "master"
     document_type: Literal["photo", "signature", "document"] = "document"
+    # Rich document taxonomy from the vault/schema layer.
+    # e.g. category="photograph", subtype="Passport Photo"
+    #      category="identity",   subtype="PAN Card"
+    document_category: Optional[str] = None
+    document_subtype: Optional[str] = None
+    # Set True when the input blob is an encrypted master (adapt-from-master flow).
+    # Worker will decrypt in-memory with sek_b64 before processing.
+    # Blob format: first 12 bytes = AES-GCM nonce, remainder = ciphertext.
+    encrypted_input: bool = False
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> JobPayload:
@@ -241,11 +268,14 @@ class JobPayload:
             user_id=str(user_id),
             mode=mode,
             document_type=document_type,
+            document_category=data.get("document_category") or None,
+            document_subtype=data.get("document_subtype") or None,
             sek_b64=data.get("sek_b64"),
             portal_schema=portal_schema,
             master_constraints=MasterConstraints.from_dict(data.get("master_constraints")),
             input=InputSpec.from_dict(data.get("input", {})),
             storage=StorageSpec.from_dict(data.get("storage", {})),
+            encrypted_input=bool(data.get("encrypted_input", False)),
         )
 
 
@@ -289,7 +319,8 @@ class Metrics:
 class SuccessResult:
     """Successful processing result for STDOUT."""
     job_id: str
-    quality_score: float
+    input_quality_score: float
+    output_quality_score: float
     warnings: List[str]
     artifacts: Artifacts
     metrics: Metrics
@@ -298,7 +329,8 @@ class SuccessResult:
         return {
             "status": "success",
             "job_id": self.job_id,
-            "quality_score": round(self.quality_score, 4),
+            "input_quality_score": round(self.input_quality_score, 4),
+            "output_quality_score": round(self.output_quality_score, 4),
             "warnings": list(self.warnings),
             "artifacts": self.artifacts.to_dict(),
             "metrics": self.metrics.to_dict(),
@@ -427,5 +459,7 @@ class SchemaResult:
     final_dpi: int
     final_size_kb: float
     filename: str
+    output_format: str = "jpeg"         # Actual format stored: "jpeg", "jpeg2000", "pdf_mrc"
+    content_type: str = "image/jpeg"    # MIME type for storage upload
 
     # Note: bytes cannot be in to_dict, used internally only

@@ -56,6 +56,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libwebp7 \
     # SSL/TLS for boto3
     ca-certificates \
+    # Leptonica runtime (required by jbig2enc at runtime)
+    libleptonica-dev \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
@@ -67,7 +69,25 @@ FROM base AS builder
 # Build tools for compiling native extensions
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    # Build tools for jbig2enc
+    git \
+    autoconf \
+    automake \
+    libtool \
+    libleptonica-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# jbig2enc — JBIG2 encoder for MRC document compression
+# Apache 2.0 license. Compiled from source (no apt package available).
+# Pinned to last known-good commit for reproducible builds.
+RUN git clone https://github.com/agl/jbig2enc.git /tmp/jbig2enc \
+    && cd /tmp/jbig2enc \
+    && git checkout 0.29 \
+    && ./autogen.sh \
+    && ./configure \
+    && make -j$(nproc) \
+    && make install \
+    && rm -rf /tmp/jbig2enc
 
 # Create venv
 RUN python -m venv /opt/venv
@@ -95,6 +115,9 @@ RUN useradd --create-home --shell /bin/bash --uid 1000 worker
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
+# Copy jbig2enc binary from builder stage
+COPY --from=builder /usr/local/bin/jbig2 /usr/local/bin/jbig2
+
 # Working directory
 WORKDIR /app
 
@@ -115,7 +138,11 @@ import boto3; print(f'boto3: {boto3.__version__}'); \
 import cv2; print(f'opencv: {cv2.__version__}'); \
 import numpy; print(f'numpy: {numpy.__version__}'); \
 import PIL; print(f'pillow: {PIL.__version__}'); \
+import pikepdf; print(f'pikepdf: {pikepdf.__version__}'); \
+from PIL import features; assert features.check_codec('jpg_2000'), 'Pillow JPEG2000 not available'; print('pillow jpeg2000: ok'); \
 import httpx; print(f'httpx: {httpx.__version__}'); \
+from google.cloud import documentai_v1; print('documentai: ok'); \
+from google.cloud import vision; print('vision: ok'); \
 print('All imports successful'); \
 "
 

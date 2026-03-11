@@ -56,6 +56,14 @@ class ErrorCode(str, Enum):
     RESIZE_FAILED = "RESIZE_FAILED"
     COMPRESSION_FAILED = "COMPRESSION_FAILED"
     SIZE_EXCEEDED = "SIZE_EXCEEDED"
+    SIZE_TOO_SMALL = "SIZE_TOO_SMALL"
+
+    # MRC stage errors
+    MRC_FAILED = "MRC_FAILED"              # MRC layer decomposition or assembly failed
+    JBIG2_UNAVAILABLE = "JBIG2_UNAVAILABLE"  # jbig2enc not installed
+
+    # DECRYPT stage errors (decrypt-on-input for adapt-from-master)
+    DECRYPT_FAILED = "DECRYPT_FAILED"
     
     # UPLOAD stage errors
     UPLOAD_FAILED = "UPLOAD_FAILED"

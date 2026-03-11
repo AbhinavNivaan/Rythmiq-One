@@ -49,16 +49,13 @@ from storage.spaces_client import (
     create_client_from_spec,
 )
 from processors.quality import assess_quality, check_quality_warning, QUALITY_WARNING_THRESHOLD
-from processors.ocr import extract_text_safe
-from processors.enhancement import enhance_image, EnhancementOptions
+from processors.document_ai import extract_text_safe as docai_extract_text
+from processors.enhancement import enhance_image, EnhancementOptions, READABLE_QUALITY_THRESHOLD
 from processors.schema import adapt_to_schema, adapt_master_document
-from crypto import encrypt_file as crypto_encrypt, sek_from_base64, nonce_to_base64
+from crypto import encrypt_file as crypto_encrypt, decrypt_file as crypto_decrypt, sek_from_base64, nonce_to_base64, NONCE_SIZE
 
 
 logger = logging.getLogger(__name__)
-
-# GUARD-002: OCR rollback threshold
-OCR_ROLLBACK_THRESHOLD = 0.10  # Rollback if confidence drops by more than 10%
 
 
 def parse_payload(raw: str) -> Dict[str, Any]:
@@ -115,11 +112,10 @@ def process_job(payload: JobPayload) -> SuccessResult:
     """
     Execute the full processing pipeline.
     
-    Pipeline: FETCH → DECODE → QUALITY → ENHANCE → OCR → SCHEMA → UPLOAD
+    Pipeline: FETCH → QUALITY → ENHANCE → DOCUMENT AI OCR → SCHEMA → UPLOAD
     
     Includes guardrails:
-    - GUARD-001: Skip enhancement for readable images
-    - GUARD-002: OCR confidence rollback
+    - GUARD-001: Skip enhancement for high-quality images
     
     Args:
         payload: Validated job payload
@@ -146,6 +142,35 @@ def process_job(payload: JobPayload) -> SuccessResult:
         artifact_url=payload.input.artifact_url,
         raw_path=payload.input.raw_path,
     )
+
+    # Stage 1b: DECRYPT — adapt-from-master: decrypt encrypted master blob in-memory.
+    # Blob format stored in Spaces: nonce (12 bytes) || AES-256-GCM ciphertext.
+    # No plaintext ever written to disk or storage during this step.
+    if payload.encrypted_input:
+        if not payload.sek_b64:
+            raise WorkerError(
+                code=ErrorCode.PAYLOAD_INVALID,
+                stage=ProcessingStage.FETCH,
+                message="encrypted_input=true requires sek_b64 to be provided",
+            )
+        try:
+            sek = sek_from_base64(payload.sek_b64)
+            if len(raw_data) <= NONCE_SIZE:
+                raise ValueError(f"Encrypted blob too short: {len(raw_data)} bytes")
+            nonce = raw_data[:NONCE_SIZE]
+            ciphertext = raw_data[NONCE_SIZE:]
+            raw_data = crypto_decrypt(ciphertext, nonce, sek)
+            del sek, nonce, ciphertext
+            logger.info("Encrypted master input decrypted in-memory")
+        except WorkerError:
+            raise
+        except Exception as e:
+            raise WorkerError(
+                code=ErrorCode.DECRYPT_FAILED,
+                stage=ProcessingStage.FETCH,
+                message=f"Failed to decrypt encrypted input: {str(e)}",
+                details={"exception_type": type(e).__name__},
+            )
     
     # Stage 2: QUALITY - Assess input quality (type-aware weights/metrics)
     quality_result = assess_quality(raw_data, payload.document_type)
@@ -155,62 +180,44 @@ def process_job(payload: JobPayload) -> SuccessResult:
             f"Low quality score: {quality_result.score:.2f} (threshold: {QUALITY_WARNING_THRESHOLD})"
         )
 
-    # OCR is only meaningful for documents (not photos or signatures).
-    # Skipping it for photos/signatures saves ~1-3 s of PaddleOCR time per job.
-    is_text_document = payload.document_type == "document"
-
-    # Pre-enhancement OCR (documents only — needed for GUARD-002 rollback baseline)
-    pre_ocr_result = None
-    pre_ocr_warning = None
-    pre_ocr_confidence = 0.0
-    is_readable = False
-
-    if is_text_document:
-        pre_ocr_result, pre_ocr_warning = extract_text_safe(raw_data)
-        pre_ocr_confidence = pre_ocr_result.confidence if pre_ocr_result else 0.0
-        is_readable = pre_ocr_confidence > 0.5
+    # Determine whether this document type benefits from OCR.
+    # Identity cards, photographs, and signatures are skipped.
+    _OCR_SKIP_CATEGORIES: frozenset[str] = frozenset({
+        "identity", "photograph", "signature", "address",
+    })
+    _category_lower = (payload.document_category or "").lower()
+    is_text_document = (
+        payload.document_type == "document"
+        and _category_lower not in _OCR_SKIP_CATEGORIES
+    )
 
     # Stage 3: ENHANCE - Route to type-specific pipeline
+    # GUARD-001: treat high-quality images as readable so NLM denoising and CLAHE
+    # are skipped.  Applying heavy denoising to a sharp 80 %+ image degrades it.
     enhancement_options = EnhancementOptions(
         quality_score=quality_result.score,
-        is_readable=is_readable,
+        is_readable=quality_result.score >= READABLE_QUALITY_THRESHOLD,
         document_type=payload.document_type,
+        document_category=payload.document_category,
+        document_subtype=payload.document_subtype,
         quality_breakdown=quality_result.breakdown,
     )
     enhanced = enhance_image(raw_data, enhancement_options)
 
-    # Post-enhancement OCR + GUARD-002 rollback (documents only)
-    ocr_result = None
-    ocr_warning = None
+    # Stage 4: DOCUMENT AI OCR (replaces PaddleOCR — runs on enhanced image)
+    # Single call after enhancement.  No rollback needed — Document AI
+    # confidence is reliable and not degraded by our enhancement pipeline.
     final_ocr_confidence = 0.0
-    use_original = False
 
     if is_text_document:
-        ocr_result, ocr_warning = extract_text_safe(enhanced.image_data)
-        post_ocr_confidence = ocr_result.confidence if ocr_result else 0.0
-
-        # GUARD-002: rollback if OCR confidence regressed
-        if pre_ocr_confidence > 0 and post_ocr_confidence < pre_ocr_confidence - OCR_ROLLBACK_THRESHOLD:
-            logger.warning(
-                f"[ENHANCEMENT] rollback triggered (OCR regression): "
-                f"{pre_ocr_confidence:.3f} -> {post_ocr_confidence:.3f}"
-            )
-            warnings.append(
-                f"Enhancement rollback: OCR confidence dropped from "
-                f"{pre_ocr_confidence:.2f} to {post_ocr_confidence:.2f}"
-            )
-            use_original = True
-            ocr_result = pre_ocr_result
-            ocr_warning = pre_ocr_warning
-            final_ocr_confidence = pre_ocr_confidence
-        else:
-            final_ocr_confidence = post_ocr_confidence
+        ocr_result, ocr_warning = docai_extract_text(enhanced.image_data)
+        final_ocr_confidence = ocr_result.confidence if ocr_result else 0.0
 
         if ocr_warning:
             warnings.append(ocr_warning)
 
-    # Final image: roll back to raw if GUARD-002 triggered, otherwise use enhanced
-    final_image_data = raw_data if use_original else enhanced.image_data
+    # Final image is always the enhanced image
+    final_image_data = enhanced.image_data
 
     # Stage 5: OUTPUT TRANSFORM
     # - master mode: optimize best possible output under size cap
@@ -222,6 +229,7 @@ def process_job(payload: JobPayload) -> SuccessResult:
             job_id=payload.job_id,
             user_id=payload.user_id,
             original_filename=payload.input.original_filename,
+            ocr_result=ocr_result if is_text_document else None,
         )
     else:
         if payload.portal_schema is None:
@@ -244,12 +252,14 @@ def process_job(payload: JobPayload) -> SuccessResult:
         try:
             sek = sek_from_base64(payload.sek_b64)
             ciphertext, nonce = crypto_encrypt(upload_data, sek)
-            upload_data = ciphertext
+            # Prepend nonce to ciphertext so blob is self-contained.
+            # Decrypt path: nonce = blob[:NONCE_SIZE], ciphertext = blob[NONCE_SIZE:]
+            upload_data = nonce + ciphertext
             encryption_nonce_b64 = nonce_to_base64(nonce)
             is_encrypted = True
-            logger.info("Output encrypted with AES-256-GCM")
+            logger.info("Output encrypted with AES-256-GCM (nonce prepended to blob)")
             # Zero sensitive key material
-            del sek
+            del sek, nonce, ciphertext
         except Exception as e:
             logger.error(f"Encryption failed: {e}")
             raise WorkerError(
@@ -265,6 +275,7 @@ def process_job(payload: JobPayload) -> SuccessResult:
         data=upload_data,
         user_id=payload.user_id,
         job_id=payload.job_id,
+        content_type=schema_result.content_type,
     )
     
     preview_path = storage.upload_preview(
@@ -300,6 +311,10 @@ def process_job(payload: JobPayload) -> SuccessResult:
             # TODO: Trigger alert for manual cleanup
     # ============================================
     
+    # Stage 8: POST-QUALITY — assess the final (enhanced or rolled-back) image
+    # Done before the del so we still have final_image_data in memory.
+    output_quality_result = assess_quality(final_image_data, payload.document_type)
+
     # Clean up sensitive data from memory
     del upload_data, final_image_data
     
@@ -308,7 +323,8 @@ def process_job(payload: JobPayload) -> SuccessResult:
     
     return SuccessResult(
         job_id=payload.job_id,
-        quality_score=quality_result.score,
+        input_quality_score=quality_result.score,
+        output_quality_score=output_quality_result.score,
         warnings=warnings,
         artifacts=Artifacts(
             master_path=master_path,

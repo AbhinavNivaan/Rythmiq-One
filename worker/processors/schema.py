@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import io
 import re
-from typing import Tuple
+from typing import Optional, Tuple
 
 import cv2
 import numpy as np
@@ -189,12 +189,48 @@ def encode_with_dpi(
     return buffer.getvalue()
 
 
+def encode_as_pdf(
+    img: NDArray[np.uint8],
+    dpi: int,
+) -> bytes:
+    """
+    Encode a single image as a single-page PDF.
+
+    Uses PIL's built-in PDF encoder so no additional dependencies are needed.
+    The DPI is embedded in the PDF as the image resolution.
+
+    Args:
+        img: BGR image array
+        dpi: Target resolution to embed in the PDF
+
+    Returns:
+        PDF file bytes
+
+    Raises:
+        WorkerError: If PDF encoding fails
+    """
+    try:
+        rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        pil_img = Image.fromarray(rgb_img)
+        buffer = io.BytesIO()
+        pil_img.save(buffer, format="PDF", resolution=dpi)
+        return buffer.getvalue()
+    except Exception as e:
+        raise WorkerError(
+            code=ErrorCode.SCHEMA_FAILED,
+            stage=ProcessingStage.SCHEMA,
+            message=f"PDF encoding failed: {str(e)}",
+            details={"exception_type": type(e).__name__},
+        )
+
+
 def compress_to_size(
     img: NDArray[np.uint8],
     dpi: int,
     max_kb: int,
     format: str = "jpeg",
     initial_quality: int = 85,
+    min_kb: int = 0,
 ) -> Tuple[bytes, int]:
     """
     Compress image until it fits within max_kb.
@@ -207,12 +243,13 @@ def compress_to_size(
         max_kb: Maximum file size in KB
         format: Output format
         initial_quality: Starting quality
+        min_kb: Minimum file size in KB (0 = no minimum)
         
     Returns:
         Tuple of (compressed bytes, final quality)
         
     Raises:
-        WorkerError: If compression cannot achieve target size
+        WorkerError: If compression cannot achieve target size range
     """
     max_bytes = max_kb * 1024
     quality = initial_quality
@@ -221,45 +258,63 @@ def compress_to_size(
     data = encode_with_dpi(img, dpi, format, quality)
     
     if len(data) <= max_bytes:
-        return data, quality
-    
-    # Binary search for optimal quality
-    low_quality = MIN_JPEG_QUALITY
-    high_quality = quality
-    best_data = data
-    best_quality = quality
-    
-    for _ in range(MAX_COMPRESSION_ITERATIONS):
-        if low_quality > high_quality:
-            break
+        best_data = data
+        best_quality = quality
+    else:
+        # Binary search for optimal quality
+        low_quality = MIN_JPEG_QUALITY
+        high_quality = quality
+        best_data = data
+        best_quality = quality
         
-        mid_quality = (low_quality + high_quality) // 2
-        data = encode_with_dpi(img, dpi, format, mid_quality)
+        for _ in range(MAX_COMPRESSION_ITERATIONS):
+            if low_quality > high_quality:
+                break
+            
+            mid_quality = (low_quality + high_quality) // 2
+            data = encode_with_dpi(img, dpi, format, mid_quality)
+            
+            if len(data) <= max_bytes:
+                best_data = data
+                best_quality = mid_quality
+                low_quality = mid_quality + 1
+            else:
+                high_quality = mid_quality - 1
         
-        if len(data) <= max_bytes:
+        # Final check
+        if len(best_data) > max_bytes:
+            # Try minimum quality as last resort
+            data = encode_with_dpi(img, dpi, format, MIN_JPEG_QUALITY)
+            
+            if len(data) > max_bytes:
+                raise WorkerError(
+                    code=ErrorCode.SIZE_EXCEEDED,
+                    stage=ProcessingStage.SCHEMA,
+                    message=f"Cannot compress to {max_kb}KB even at minimum quality",
+                    details={
+                        "min_size_kb": len(data) // 1024,
+                        "target_kb": max_kb,
+                    },
+                )
+            
             best_data = data
-            best_quality = mid_quality
-            low_quality = mid_quality + 1
-        else:
-            high_quality = mid_quality - 1
+            best_quality = MIN_JPEG_QUALITY
     
-    # Final check
-    if len(best_data) > max_bytes:
-        # Try minimum quality as last resort
-        data = encode_with_dpi(img, dpi, format, MIN_JPEG_QUALITY)
-        
-        if len(data) > max_bytes:
-            raise WorkerError(
-                code=ErrorCode.SIZE_EXCEEDED,
-                stage=ProcessingStage.SCHEMA,
-                message=f"Cannot compress to {max_kb}KB even at minimum quality",
-                details={
-                    "min_size_kb": len(data) // 1024,
-                    "target_kb": max_kb,
-                },
-            )
-        
-        return data, MIN_JPEG_QUALITY
+    # Minimum size enforcement
+    if min_kb > 0 and len(best_data) < min_kb * 1024:
+        raise WorkerError(
+            code=ErrorCode.SIZE_TOO_SMALL,
+            stage=ProcessingStage.SCHEMA,
+            message=(
+                f"Output size {len(best_data) / 1024:.1f}KB is below minimum {min_kb}KB. "
+                "Image may lack sufficient detail for this document type."
+            ),
+            details={
+                "output_size_kb": round(len(best_data) / 1024, 1),
+                "min_kb": min_kb,
+                "max_kb": max_kb,
+            },
+        )
     
     return best_data, best_quality
 
@@ -339,7 +394,36 @@ def adapt_to_schema(
     try:
         # Decode image
         cv_img, _ = decode_image(data)
-        
+
+        # --- PDF output path ---
+        if schema.output_format.lower() == "pdf":
+            pdf_data = encode_as_pdf(cv_img, schema.target_dpi)
+            size_kb = len(pdf_data) / 1024
+            if size_kb > schema.max_kb:
+                raise WorkerError(
+                    code=ErrorCode.SIZE_EXCEEDED,
+                    stage=ProcessingStage.SCHEMA,
+                    message=f"PDF size {size_kb:.1f}KB exceeds maximum {schema.max_kb}KB",
+                    details={"size_kb": round(size_kb, 1), "max_kb": schema.max_kb},
+                )
+            filename = normalize_filename(
+                schema.filename_pattern,
+                job_id=job_id,
+                user_id=user_id,
+                original_filename=original_filename,
+            )
+            if not filename.lower().endswith(".pdf"):
+                filename = f"{filename}.pdf"
+            return SchemaResult(
+                image_data=pdf_data,
+                final_width=cv_img.shape[1],
+                final_height=cv_img.shape[0],
+                final_dpi=schema.target_dpi,
+                final_size_kb=size_kb,
+                filename=filename,
+            )
+        # --- End PDF path ---
+
         # Resize to exact dimensions
         resized = resize_exact(
             cv_img,
@@ -364,6 +448,7 @@ def adapt_to_schema(
             max_kb=schema.max_kb,
             format=schema.output_format,
             initial_quality=schema.quality,
+            min_kb=schema.min_kb,
         )
         
         # Normalize filename
@@ -378,6 +463,15 @@ def adapt_to_schema(
         ext = ".jpg" if schema.output_format.lower() in ("jpeg", "jpg") else f".{schema.output_format.lower()}"
         if not filename.lower().endswith(ext):
             filename = f"{filename}{ext}"
+
+        # Post-adapt compliance gate
+        is_compliant, compliance_msg = verify_schema_compliance(compressed_data, schema)
+        if not is_compliant:
+            raise WorkerError(
+                code=ErrorCode.SCHEMA_FAILED,
+                stage=ProcessingStage.SCHEMA,
+                message=f"Post-adapt compliance check failed: {compliance_msg}",
+            )
         
         return SchemaResult(
             image_data=compressed_data,
@@ -386,6 +480,8 @@ def adapt_to_schema(
             final_dpi=schema.target_dpi,
             final_size_kb=len(compressed_data) / 1024,
             filename=filename,
+            output_format=schema.output_format.lower(),
+            content_type="application/pdf" if schema.output_format.lower() == "pdf" else "image/jpeg",
         )
         
     except WorkerError:
@@ -405,23 +501,56 @@ def adapt_master_document(
     job_id: str,
     user_id: str = "",
     original_filename: str = "",
+    ocr_result: Optional[object] = None,
 ) -> SchemaResult:
     """
     Optimize a master document for best quality under the configured size cap.
 
     Unlike portal adaptation, this mode does NOT force fixed dimensions.
+    Supports output_format values: "jpeg" (default), "jpeg2000" / "jp2", "pdf_mrc".
     """
     try:
         cv_img, _ = decode_image(data)
         h, w = cv_img.shape[:2]
 
-        compressed_data, _ = compress_to_size(
-            cv_img,
-            dpi=constraints.target_dpi,
-            max_kb=constraints.max_kb,
-            format=constraints.output_format,
-            initial_quality=constraints.quality,
-        )
+        fmt = constraints.output_format.lower()
+
+        if fmt == "pdf_mrc":
+            from processors.mrc import encode_as_mrc_pdf
+            output_bytes = encode_as_mrc_pdf(
+                img=cv_img,
+                dpi=constraints.target_dpi,
+                constraints=constraints,
+                ocr_result=ocr_result,
+            )
+            ext = ".pdf"
+            actual_format = "pdf_mrc"
+            content_type = "application/pdf"
+
+        elif fmt in ("jpeg2000", "jp2"):
+            from processors.mrc import encode_as_jpeg2000_pdf
+            output_bytes = encode_as_jpeg2000_pdf(
+                img=cv_img,
+                dpi=constraints.target_dpi,
+                target_ratio=constraints.jpeg2000_ratio,
+                ocr_result=ocr_result,
+            )
+            ext = ".pdf"
+            actual_format = "jpeg2000"
+            content_type = "application/pdf"
+
+        else:  # "jpeg" or any unrecognised value — existing path unchanged
+            output_bytes, _ = compress_to_size(
+                cv_img,
+                dpi=constraints.target_dpi,
+                max_kb=constraints.max_kb,
+                format=constraints.output_format,
+                initial_quality=constraints.quality,
+                min_kb=constraints.min_kb,
+            )
+            ext = ".jpg"
+            actual_format = "jpeg"
+            content_type = "image/jpeg"
 
         filename = normalize_filename(
             constraints.filename_pattern,
@@ -429,18 +558,18 @@ def adapt_master_document(
             user_id=user_id,
             original_filename=original_filename,
         )
-
-        ext = ".jpg" if constraints.output_format.lower() in ("jpeg", "jpg") else f".{constraints.output_format.lower()}"
         if not filename.lower().endswith(ext):
             filename = f"{filename}{ext}"
 
         return SchemaResult(
-            image_data=compressed_data,
+            image_data=output_bytes,
             final_width=w,
             final_height=h,
             final_dpi=constraints.target_dpi,
-            final_size_kb=len(compressed_data) / 1024,
+            final_size_kb=len(output_bytes) / 1024,
             filename=filename,
+            output_format=actual_format,
+            content_type=content_type,
         )
     except WorkerError:
         raise
@@ -511,6 +640,7 @@ def verify_schema_compliance(
 __all__ = [
     'adapt_to_schema',
     'adapt_master_document',
+    'encode_as_pdf',
     'verify_schema_compliance',
     'normalize_filename',
     'resize_exact',
