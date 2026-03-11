@@ -27,10 +27,33 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     curl \
     ca-certificates \
-    # JBIG2 encoder for MRC document compression
-    jbig2enc \
+    libleptonica-dev \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
+
+# jbig2enc — optional JBIG2 encoder for full MRC compression.
+# Built from source (not in Debian Trixie repos). Forces the AC_CHECK_LIB
+# cache variable to skip the broken leptonica detection, then links against
+# liblept.so which IS present via libleptonica-dev.
+# If compilation fails the worker falls back to JPEG2000 automatically.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git autoconf automake libtool build-essential \
+    && git clone --depth 1 --branch 0.29 https://github.com/agl/jbig2enc.git /tmp/jbig2enc \
+    && cd /tmp/jbig2enc \
+    && sed -i 's/findFileFormatStream/pixCreate/g' configure.ac \
+    && ./autogen.sh \
+    && LDFLAGS="-L/usr/lib/$(gcc -print-multiarch)" \
+       CXXFLAGS="-I/usr/include/leptonica" \
+       ac_cv_lib_lept_pixCreate=yes \
+       ./configure \
+    && make -j"$(nproc)" \
+    && make install \
+    && echo "jbig2enc installed: $(jbig2 --version 2>&1 | head -1)" \
+    || echo "WARNING: jbig2enc build failed; MRC pipeline will use JPEG2000 fallback" \
+    ; rm -rf /tmp/jbig2enc \
+    && apt-get remove --purge -y git autoconf automake libtool build-essential 2>/dev/null || true \
+    && apt-get autoremove -y 2>/dev/null || true \
+    && rm -rf /var/lib/apt/lists/*
 
 # =============================================================================
 # Python Environment Setup
