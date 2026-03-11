@@ -20,6 +20,12 @@ class CreateJobRequest(BaseModel):
     document_type: Literal["photo", "signature", "document"] = Field(default="document")
     document_category: str | None = Field(default=None, max_length=50)
     document_subtype: str | None = Field(default=None, max_length=100)
+    # --- New form-schema intake path (NEET 2026+) ---
+    # When form_schema_id + doc_id are both provided, the pixel spec is resolved
+    # from the form_schemas table instead of the legacy portal_schemas table.
+    form_schema_id: str | None = Field(default=None, max_length=100)
+    doc_id: str | None = Field(default=None, max_length=100)
+    # --- Legacy portal_schemas path (still required for non-NEET portals) ---
     portal_schema_name: str | None = Field(default=None, min_length=1, max_length=100)
     # For adapt jobs: reference an existing completed master job instead of uploading a new file.
     # When provided, filename/mime_type/file_size_bytes are not required.
@@ -31,6 +37,10 @@ class CreateJobRequest(BaseModel):
         default=False,
         description="If true, creates pending job + upload URL without dispatching processing. Client must call /jobs/{job_id}/submit after upload.",
     )
+    # User's Storage Encryption Key passed at dispatch time (zero-knowledge model).
+    # Required for adapt-from-master jobs when source is an encrypted master blob.
+    # Never stored server-side.
+    sek_b64: str | None = Field(default=None)
 
     @field_validator("filename")
     @classmethod
@@ -57,6 +67,10 @@ class CreateJobResponse(BaseModel):
     upload_expires_at: datetime | None = None
 
 
+class SubmitJobRequest(BaseModel):
+    output_format: str = "jpeg"  # "jpeg" | "jpeg2000" | "pdf_mrc"
+
+
 class SubmitJobResponse(BaseModel):
     job_id: UUID
     status: str
@@ -70,6 +84,8 @@ class JobStatusResponse(BaseModel):
     - status: pending | processing | completed | failed
     - error: null | { code, message } for failed jobs
     - download_url: null | signed-url for completed jobs
+    - input_quality_score: quality of the raw uploaded image (0–1)
+    - output_quality_score: quality of the processed output image (0–1)
     """
     job_id: UUID
     status: str
@@ -80,6 +96,8 @@ class JobStatusResponse(BaseModel):
     error_details: dict[str, Any] | None = None
     download_url: str | None = None
     preview_url: str | None = None
+    input_quality_score: float | None = None
+    output_quality_score: float | None = None
 
 
 class JobOutputResponse(BaseModel):

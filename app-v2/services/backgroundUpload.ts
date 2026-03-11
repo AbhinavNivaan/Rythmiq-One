@@ -42,6 +42,7 @@ export function startBackgroundUpload(
   selectedType: string,
   apiDocumentType: 'photo' | 'signature' | 'document',
   queryClient: QueryClient,
+  outputFormat: string = 'jpeg',
 ) {
   notify({ total: imageUris.length, current: 0, done: false, error: undefined });
 
@@ -65,7 +66,7 @@ export function startBackgroundUpload(
         );
 
         await documentsApi.uploadToPresignedUrl(upload_url, uri, 'image/jpeg');
-        await documentsApi.submitJob(job_id);
+        await documentsApi.submitJob(job_id, outputFormat);
 
         notify({ current: i + 1 });
 

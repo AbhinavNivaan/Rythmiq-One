@@ -246,12 +246,36 @@ export async function clearAuthTokens(): Promise<void> {
 }
 
 /**
+ * Attempt to refresh the Supabase session using the stored refresh token.
+ * Returns the new access token, or null if refresh failed.
+ */
+async function tryRefreshToken(): Promise<string | null> {
+  const client = supabase;
+  if (!client) return null;
+
+  const refreshToken = await getStoredValue(REFRESH_TOKEN_KEY);
+  if (!refreshToken) return null;
+
+  try {
+    const { data, error } = await client.auth.refreshSession({ refresh_token: refreshToken });
+    if (error || !data.session) return null;
+
+    await storeAuthTokens(data.session.access_token, data.session.refresh_token);
+    return data.session.access_token;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Make authenticated API request
- * In dev sandbox mode, sends x-dev-sandbox header to bypass auth
+ * In dev sandbox mode, sends x-dev-sandbox header to bypass auth.
+ * Automatically retries once on 401 by refreshing the Supabase session.
  */
 async function apiRequest<T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  _isRetry = false
 ): Promise<T> {
   const token = await getAuthToken();
   
@@ -289,6 +313,21 @@ async function apiRequest<T>(
     data = await response.json();
   } catch {
     data = {};
+  }
+
+  // Auto-refresh on 401 (expired token) — retry once
+  if (response.status === 401 && !_isRetry && !DEV_SANDBOX_MODE) {
+    const detail = (data.detail && typeof data.detail === 'object') ? data.detail : data;
+    const isExpired = detail.token_expired === true
+      || (detail.message || '').toLowerCase().includes('expired')
+      || (detail.message || '').toLowerCase().includes('invalid token');
+
+    if (isExpired) {
+      const newToken = await tryRefreshToken();
+      if (newToken) {
+        return apiRequest<T>(endpoint, options, true);
+      }
+    }
   }
   
   if (!response.ok) {
@@ -596,7 +635,10 @@ export interface JobStatus {
   document_subtype?: string;
   document_name?: string;
   portal_schema_name?: string;
-  quality_score?: number;
+  /** Quality of the raw uploaded image before any processing (0–1). */
+  input_quality_score?: number | null;
+  /** Quality of the final processed output image (0–1). */
+  output_quality_score?: number | null;
   created_at?: string;
   started_at?: string;
   completed_at?: string;
@@ -648,10 +690,12 @@ export const documentsApi = {
   /**
    * Submit a previously created pending job for processing.
    * Used after uploading to the presigned URL.
+   * @param outputFormat - 'jpeg' (default), 'jpeg2000', or 'pdf_mrc' (lossless MRC)
    */
-  async submitJob(jobId: string): Promise<{ job_id: string; status: string }> {
+  async submitJob(jobId: string, outputFormat: string = 'jpeg'): Promise<{ job_id: string; status: string }> {
     return apiRequest<{ job_id: string; status: string }>(`/jobs/${jobId}/submit`, {
       method: 'POST',
+      body: JSON.stringify({ output_format: outputFormat }),
     });
   },
 

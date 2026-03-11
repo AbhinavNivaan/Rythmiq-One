@@ -17,6 +17,7 @@ import {
   ActivityIndicator,
   ScrollView,
   TextInput,
+  Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -198,6 +199,7 @@ export default function UploadScreen() {
   const documentCategories = useSeededDocumentCategories();
   const [isCategoryOpen, setIsCategoryOpen] = useState(false);
   const [isTypeOpen, setIsTypeOpen] = useState(false);
+  const [useLossless, setUseLossless] = useState(false);
 
   // Parse images from params
   useEffect(() => {
@@ -248,11 +250,12 @@ export default function UploadScreen() {
       selectedType,
       apiDocumentType,
       queryClient,
+      useLossless ? 'pdf_mrc' : 'jpeg',
     );
 
     // Go to jobs immediately so the user can see progress and explore freely
     router.replace('/(tabs)/jobs');
-  }, [imageUris, documentName, selectedCategory, selectedType, queryClient]);
+  }, [imageUris, documentName, selectedCategory, selectedType, queryClient, useLossless]);
 
   const removeImage = useCallback((index: number) => {
     setImageUris(prev => prev.filter((_, i) => i !== index));
@@ -360,13 +363,33 @@ export default function UploadScreen() {
           />
         </View>
 
+        {/* Pipeline Toggle */}
+        <View style={styles.section}>
+          <View style={styles.toggleRow}>
+            <View style={styles.toggleTextContainer}>
+              <Text style={styles.sectionTitle}>Lossless Quality</Text>
+              <Text style={styles.toggleDescription}>
+                {useLossless
+                  ? 'MRC PDF — JBIG2 + JPEG2000 with searchable text layer'
+                  : 'Standard JPEG — fast, widely compatible'}
+              </Text>
+            </View>
+            <Switch
+              value={useLossless}
+              onValueChange={setUseLossless}
+              trackColor={{ false: colors.shadowGrey, true: colors.trueCobalt }}
+              thumbColor={useLossless ? colors.mayaBlue : colors.white + 'CC'}
+            />
+          </View>
+        </View>
+
         {/* Info Box */}
         <View style={styles.infoBox}>
           <Text style={styles.infoTitle}>What happens next?</Text>
           <Text style={styles.infoText}>
-            • Your images will be enhanced for maximum quality{'\n'}
-            • A master document will be created and stored securely{'\n'}
-            • You can then export it for any portal using the Export button
+            {useLossless
+              ? `• MRC pipeline: foreground separated and compressed with JBIG2\n• Background compressed with JPEG2000\n• Invisible OCR text layer embedded \u2014 document is searchable\n• Output is a PDF/A-3b archive file`
+              : `• Your images will be enhanced for maximum quality\n• A master document will be created and stored securely\n• You can then export it for any portal using the Export button`}
           </Text>
         </View>
       </ScrollView>
@@ -555,6 +578,24 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: colors.white,
     marginTop: 8,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.shadowGrey,
+    borderRadius: 14,
+    padding: 16,
+    marginTop: 8,
+  },
+  toggleTextContainer: {
+    flex: 1,
+    marginRight: 12,
+  },
+  toggleDescription: {
+    fontSize: 13,
+    color: colors.white + '80',
+    marginTop: 4,
   },
   infoBox: {
     margin: 16,

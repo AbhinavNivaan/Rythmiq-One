@@ -35,6 +35,7 @@ from .models import (
     CreateJobRequest,
     CreateJobResponse,
     JobOutputResponse,
+    SubmitJobRequest,
     SubmitJobResponse,
     JobStatusResponse,
 )
@@ -49,6 +50,8 @@ async def _submit_job_to_processing(
     user_id: UUID,
     job_type: str,
     document_type: str,
+    document_category: str | None = None,
+    document_subtype: str | None = None,
     portal_schema_id: str | None,
     portal_schema_name: str | None,
     portal_schema_version: int | None,
@@ -57,6 +60,9 @@ async def _submit_job_to_processing(
     input_metadata: dict[str, Any] | None,
     correlation_id: str,
     camber: CamberService,
+    sek_b64: str | None = None,
+    encrypted_input: bool = False,
+    output_format: str = "jpeg",
 ) -> None:
     settings = get_settings()
 
@@ -68,6 +74,8 @@ async def _submit_job_to_processing(
             "user_id": str(user_id),
             "mode": job_type,
             "document_type": document_type,
+            "document_category": document_category,
+            "document_subtype": document_subtype,
             "input": {
                 "raw_path": storage_path,
                 "artifact_url": None,
@@ -80,7 +88,14 @@ async def _submit_job_to_processing(
                 "endpoint": settings.spaces_endpoint,
             },
             "correlation_id": correlation_id,
+            "encrypted_input": encrypted_input,
         }
+
+        # Forward SEK when provided (zero-knowledge: key transits in-memory only,
+        # never stored server-side). Required for encrypt-on-output and
+        # decrypt-on-input (adapt-from-master) flows.
+        if sek_b64:
+            camber_payload["sek_b64"] = sek_b64
 
         if job_type == "adapt":
             camber_payload["portal_schema"] = {
@@ -93,7 +108,7 @@ async def _submit_job_to_processing(
             camber_payload["master_constraints"] = {
                 "max_kb": 2000,
                 "target_dpi": 300,
-                "output_format": "jpeg",
+                "output_format": output_format,
                 "quality": 92,
                 "filename_pattern": "{job_id}_master",
             }
@@ -203,12 +218,21 @@ async def _submit_job_to_processing(
                         user_id=user_id,
                         worker_result=worker_result,
                     )
+                    output_data = worker_result.get("output") or {}
                     db = get_db_client()
+                    # Merge quality scores + output path into existing input_metadata
+                    # (avoids needing a separate metadata column)
+                    job_row = db.table("jobs").select("input_metadata").eq("id", str(job_id)).limit(1).execute()
+                    current_meta = ((job_row.data or [{}])[0].get("input_metadata") or {})
+                    merged_meta = {
+                        **current_meta,
+                        "output_path": output_path,
+                        "packaged": True,
+                        "input_quality_score": output_data.get("input_quality_score"),
+                        "output_quality_score": output_data.get("output_quality_score"),
+                    }
                     db.table("jobs").update({
-                        "metadata": {
-                            "output_path": output_path,
-                            "packaged": True,
-                        }
+                        "input_metadata": merged_meta,
                     }).eq("id", str(job_id)).execute()
                 except Exception as e:
                     logger.error(
@@ -220,10 +244,13 @@ async def _submit_job_to_processing(
                         },
                         exc_info=True,  # Include full traceback
                     )
-                    # Store error in metadata for debugging
+                    # Log error in input_metadata for debugging
                     try:
+                        err_row = db.table("jobs").select("input_metadata").eq("id", str(job_id)).limit(1).execute()
+                        err_meta = ((err_row.data or [{}])[0].get("input_metadata") or {})
                         db.table("jobs").update({
-                            "metadata": {
+                            "input_metadata": {
+                                **err_meta,
                                 "packaging_error": str(e),
                                 "error_type": type(e).__name__,
                             }
@@ -285,12 +312,76 @@ async def create_job(
     # 1b. Adapt from existing master (source_job_id path — no upload needed)
     # -------------------------------------------------------------------------
     if body.job_type == "adapt" and body.source_job_id:
-        if not body.portal_schema_name:
-            raise InvalidInputException("portal_schema_name is required for adapt jobs")
+        has_form_schema = bool(body.form_schema_id and body.doc_id)
+        has_portal_schema = bool(body.portal_schema_name)
 
+        if not has_form_schema and not has_portal_schema:
+            raise InvalidInputException(
+                "Either form_schema_id + doc_id (recommended) or portal_schema_name (legacy) is required for adapt jobs"
+            )
+
+        # ---- Step A: resolve the schema definition ----
+        if has_form_schema:
+            # New path: form_schemas table + doc_id → pixel spec
+            fs_result = (
+                db.table("form_schemas")
+                .select("id, body")
+                .eq("id", body.form_schema_id)
+                .eq("is_active", True)
+                .limit(1)
+                .execute()
+            )
+            if not fs_result.data:
+                raise SchemaNotFoundException(
+                    f"Form schema '{body.form_schema_id}' not found or not active"
+                )
+            form_schema_body = fs_result.data[0]["body"]
+            doc_uploads = form_schema_body.get("document_uploads", [])
+            doc_entry = next((d for d in doc_uploads if d.get("doc_id") == body.doc_id), None)
+            if doc_entry is None:
+                raise InvalidInputException(
+                    f"Document ID '{body.doc_id}' not found in form schema '{body.form_schema_id}'",
+                    details={"available_doc_ids": [d.get("doc_id") for d in doc_uploads]},
+                )
+            schema_def: dict[str, Any] = {
+                "target_width": doc_entry.get("target_width", 600),
+                "target_height": doc_entry.get("target_height", 800),
+                "target_dpi": doc_entry.get("target_dpi", 200),
+                "max_kb": doc_entry.get("size_max_kb", 200),
+                "min_kb": doc_entry.get("size_min_kb", 0),
+                "fit_mode": doc_entry.get("fit_mode", "stretch"),
+                "output_format": doc_entry.get("output_format", "jpeg"),
+                "filename_pattern": f"{{job_id}}_{body.doc_id}",
+                "quality": 85,
+            }
+            portal_schema = {
+                "id": f"{body.form_schema_id}:{body.doc_id}",
+                "name": f"{body.form_schema_id}:{body.doc_id}",
+                "version": 1,
+                "schema_definition": schema_def,
+            }
+            portal_schema_id = None  # No legacy portal_schema_version_id for form-schema path
+        else:
+            # Legacy path: portal_schemas table
+            schema_result = (
+                db.table("portal_schemas")
+                .select("id, name, version, schema_definition")
+                .eq("name", body.portal_schema_name)
+                .eq("is_active", True)
+                .limit(1)
+                .execute()
+            )
+            if not schema_result.data:
+                raise SchemaNotFoundException(
+                    f"Portal schema '{body.portal_schema_name}' not found or not active"
+                )
+            portal_schema = schema_result.data[0]
+            portal_schema_id = str(portal_schema["id"])
+
+        # ---- Step B: look up the source (master) job ----
         source_result = (
             db.table("jobs")
-            .select("id, status, user_id, input_metadata")
+            .select("id, status, user_id, input_metadata, master_path")
             .eq("id", str(body.source_job_id))
             .eq("user_id", str(user.id))
             .limit(1)
@@ -307,37 +398,40 @@ async def create_job(
             )
 
         source_metadata = source.get("input_metadata") or {}
-        storage_path = source_metadata.get("storage_path")
-        if not storage_path:
-            raise InvalidInputException("Source job has no stored input file")
 
-        document_type = source_metadata.get("document_type", body.document_type)
+        # Prefer master_path (encrypted blob) over raw storage_path (deleted after processing).
+        # master_path is populated for jobs processed after migration 20260305.
+        master_stored_path: str | None = source.get("master_path")
+        raw_storage_path: str | None = source_metadata.get("storage_path")
 
-        schema_result = (
-            db.table("portal_schemas")
-            .select("id, name, version, schema_definition")
-            .eq("name", body.portal_schema_name)
-            .eq("is_active", True)
-            .limit(1)
-            .execute()
-        )
-        if not schema_result.data:
-            raise SchemaNotFoundException(
-                f"Portal schema '{body.portal_schema_name}' not found or not active"
+        if master_stored_path:
+            storage_path = master_stored_path
+            encrypted_input = True   # Master blob is encrypted; worker must decrypt
+        elif raw_storage_path:
+            storage_path = raw_storage_path   # Legacy fallback (raw upload, not yet deleted)
+            encrypted_input = False
+        else:
+            raise InvalidInputException(
+                "Source job has no retrievable input file. "
+                "master_path is missing and raw upload was already deleted.",
+                details={"source_job_id": str(body.source_job_id)},
             )
 
-        portal_schema = schema_result.data[0]
-        portal_schema_id = str(portal_schema["id"])
+        document_type = source_metadata.get("document_type", body.document_type)
 
         adapt_job_data: dict[str, Any] = {
             "user_id": str(user.id),
             "status": "pending",
-            "portal_schema_version_id": portal_schema_id,
+            "portal_schema_version_id": portal_schema_id,  # NULL for form-schema path
+            "adapted_from_job_id": str(body.source_job_id),
             "input_metadata": {
                 "mode": "adapt",
                 "document_type": document_type,
                 "storage_path": storage_path,
-                "source_job_id": str(body.source_job_id),
+                "adapted_from_job_id": str(body.source_job_id),
+                "form_schema_id": body.form_schema_id,
+                "doc_id": body.doc_id,
+                "encrypted_input": encrypted_input,
                 "correlation_id": correlation_id,
             },
         }
@@ -355,11 +449,14 @@ async def create_job(
         adapt_job_id = UUID(adapt_job["id"])
 
         logger.info(
-            "Adapt job created from source",
+            "Adapt job created from master",
             extra={
                 "job_id": str(adapt_job_id),
                 "source_job_id": str(body.source_job_id),
                 "user_id": str(user.id),
+                "form_schema_id": body.form_schema_id,
+                "doc_id": body.doc_id,
+                "encrypted_input": encrypted_input,
                 "correlation_id": correlation_id,
             },
         )
@@ -369,14 +466,18 @@ async def create_job(
             user_id=user.id,
             job_type="adapt",
             document_type=document_type,
+            document_category=source_metadata.get("document_category"),
+            document_subtype=source_metadata.get("document_subtype"),
             portal_schema_id=portal_schema_id,
-            portal_schema_name=portal_schema["name"],
+            portal_schema_name=portal_schema.get("name"),
             portal_schema_version=int(portal_schema.get("version", 1)),
             portal_schema_definition=portal_schema.get("schema_definition"),
             storage_path=storage_path,
             input_metadata=adapt_job_data["input_metadata"],
             correlation_id=correlation_id,
             camber=camber,
+            sek_b64=body.sek_b64,
+            encrypted_input=encrypted_input,
         )
 
         return CreateJobResponse(job_id=adapt_job_id)
@@ -385,25 +486,72 @@ async def create_job(
     # 1c. Validate upload fields for master / legacy adapt-with-upload
     # -------------------------------------------------------------------------
     if body.job_type == "adapt":
-        if not body.portal_schema_name:
-            raise InvalidInputException("portal_schema_name is required for adapt jobs")
+        has_form_schema = bool(body.form_schema_id and body.doc_id)
+        has_portal_schema = bool(body.portal_schema_name)
 
-        schema_result = (
-            db.table("portal_schemas")
-            .select("id, name, version, schema_definition")
-            .eq("name", body.portal_schema_name)
-            .eq("is_active", True)
-            .limit(1)
-            .execute()
-        )
-
-        if not schema_result.data:
-            raise SchemaNotFoundException(
-                f"Portal schema '{body.portal_schema_name}' not found or not active"
+        if not has_form_schema and not has_portal_schema:
+            raise InvalidInputException(
+                "Either form_schema_id + doc_id (recommended) or portal_schema_name (legacy) is required for adapt jobs"
             )
 
-        portal_schema = schema_result.data[0]
-        portal_schema_id = str(portal_schema["id"])
+        if has_form_schema:
+            # New form-schema path
+            fs_result = (
+                db.table("form_schemas")
+                .select("id, body")
+                .eq("id", body.form_schema_id)
+                .eq("is_active", True)
+                .limit(1)
+                .execute()
+            )
+            if not fs_result.data:
+                raise SchemaNotFoundException(
+                    f"Form schema '{body.form_schema_id}' not found or not active"
+                )
+            form_schema_body = fs_result.data[0]["body"]
+            doc_uploads = form_schema_body.get("document_uploads", [])
+            doc_entry = next((d for d in doc_uploads if d.get("doc_id") == body.doc_id), None)
+            if doc_entry is None:
+                raise InvalidInputException(
+                    f"Document ID '{body.doc_id}' not found in form schema '{body.form_schema_id}'",
+                    details={"available_doc_ids": [d.get("doc_id") for d in doc_uploads]},
+                )
+            schema_def_upload: dict[str, Any] = {
+                "target_width": doc_entry.get("target_width", 600),
+                "target_height": doc_entry.get("target_height", 800),
+                "target_dpi": doc_entry.get("target_dpi", 200),
+                "max_kb": doc_entry.get("size_max_kb", 200),
+                "min_kb": doc_entry.get("size_min_kb", 0),
+                "fit_mode": doc_entry.get("fit_mode", "stretch"),
+                "output_format": doc_entry.get("output_format", "jpeg"),
+                "filename_pattern": f"{{job_id}}_{body.doc_id}",
+                "quality": 85,
+            }
+            portal_schema = {
+                "id": f"{body.form_schema_id}:{body.doc_id}",
+                "name": f"{body.form_schema_id}:{body.doc_id}",
+                "version": 1,
+                "schema_definition": schema_def_upload,
+            }
+            portal_schema_id = None  # No legacy portal_schema_version_id
+        else:
+            # Legacy portal_schema path
+            schema_result = (
+                db.table("portal_schemas")
+                .select("id, name, version, schema_definition")
+                .eq("name", body.portal_schema_name)
+                .eq("is_active", True)
+                .limit(1)
+                .execute()
+            )
+
+            if not schema_result.data:
+                raise SchemaNotFoundException(
+                    f"Portal schema '{body.portal_schema_name}' not found or not active"
+                )
+
+            portal_schema = schema_result.data[0]
+            portal_schema_id = str(portal_schema["id"])
 
     if not body.filename or not body.mime_type or not body.file_size_bytes:
         raise InvalidInputException(
@@ -476,6 +624,8 @@ async def create_job(
             user_id=user.id,
             job_type=body.job_type,
             document_type=body.document_type,
+            document_category=body.document_category,
+            document_subtype=body.document_subtype,
             portal_schema_id=portal_schema_id,
             portal_schema_name=portal_schema.get("name") if portal_schema else None,
             portal_schema_version=int(portal_schema.get("version", 1)) if portal_schema else None,
@@ -484,6 +634,8 @@ async def create_job(
             input_metadata=job_data["input_metadata"],
             correlation_id=correlation_id,
             camber=camber,
+            sek_b64=body.sek_b64,
+            encrypted_input=False,  # Fresh upload is never pre-encrypted
         )
     else:
         logger.info(
@@ -509,6 +661,7 @@ async def submit_job(
     job_id: UUID,
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     camber: Annotated[CamberService, Depends(get_camber_service)],
+    body: SubmitJobRequest = SubmitJobRequest(),
 ) -> SubmitJobResponse:
     """
     Submit an existing pending job for processing.
@@ -572,6 +725,8 @@ async def submit_job(
         user_id=user.id,
         job_type=job_type,
         document_type=document_type,
+        document_category=metadata.get("document_category"),
+        document_subtype=metadata.get("document_subtype"),
         portal_schema_id=str(portal_schema["id"]) if portal_schema else None,
         portal_schema_name=portal_schema.get("name") if portal_schema else None,
         portal_schema_version=int(portal_schema.get("version", 1)) if portal_schema else None,
@@ -580,6 +735,7 @@ async def submit_job(
         input_metadata=metadata,
         correlation_id=correlation_id,
         camber=camber,
+        output_format=body.output_format,
     )
 
     return SubmitJobResponse(job_id=job_id, status="processing")
@@ -641,7 +797,8 @@ async def list_jobs(
                 "document_name": metadata.get("original_filename"),
                 "created_at": row.get("created_at"),
                 "updated_at": row.get("updated_at"),
-                "quality_score": None,
+                "input_quality_score": (row.get("input_metadata") or {}).get("input_quality_score"),
+                "output_quality_score": (row.get("input_metadata") or {}).get("output_quality_score"),
                 "preview_url": preview_url,
                 "error": error,
             }
@@ -676,7 +833,7 @@ async def get_job(
     result = (
         db.table("jobs")
         .select(
-            "id, status, user_id, portal_schema_version_id, created_at, started_at, completed_at, error_details"
+            "id, status, user_id, portal_schema_version_id, created_at, started_at, completed_at, error_details, input_metadata"
         )
         .eq("id", str(job_id))
         .eq("user_id", str(user.id))
@@ -732,6 +889,8 @@ async def get_job(
         error_details=error,
         download_url=download_url,
         preview_url=preview_url,
+        input_quality_score=(job.get("input_metadata") or {}).get("input_quality_score"),
+        output_quality_score=(job.get("input_metadata") or {}).get("output_quality_score"),
     )
 
 
