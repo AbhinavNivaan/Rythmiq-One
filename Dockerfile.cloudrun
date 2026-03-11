@@ -10,7 +10,7 @@
 # Deploy:
 #   gcloud run deploy rythmiq-worker --image asia-south1-docker.pkg.dev/PROJECT/REPO/worker:latest --region asia-south1 ...
 
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 # =============================================================================
 # System Dependencies
@@ -40,14 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git autoconf automake libtool build-essential \
     && git clone --depth 1 --branch 0.29 https://github.com/agl/jbig2enc.git /tmp/jbig2enc \
     && cd /tmp/jbig2enc \
-    && sed -i 's/findFileFormatStream/pixCreate/g' configure.ac \
-    && ./autogen.sh \
-    && LDFLAGS="-L/usr/lib/$(gcc -print-multiarch)" \
-       CXXFLAGS="-I/usr/include/leptonica" \
-       ac_cv_lib_lept_pixCreate=yes \
-       ./configure \
-    && make -j"$(nproc)" \
-    && make install \
+    && ./autogen.sh && ./configure && make -j"$(nproc)" && make install \
     && echo "jbig2enc installed: $(jbig2 --version 2>&1 | head -1)" \
     || echo "WARNING: jbig2enc build failed; MRC pipeline will use JPEG2000 fallback" \
     ; rm -rf /tmp/jbig2enc \
