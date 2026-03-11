@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
@@ -161,8 +162,10 @@ def encode_foreground_jbig2(
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tiff_path = f"{tmpdir}/fg.tiff"
-        sym_path = f"{tmpdir}/fg.sym"
-        page_path = f"{tmpdir}/fg.0001"
+        # jbig2enc always writes output to files named "output.*" in the CWD,
+        # regardless of the input filename.  Do NOT use the input prefix here.
+        sym_path = f"{tmpdir}/output.sym"
+        page_path = f"{tmpdir}/output.0001"
 
         # Convert uint8 mask to 1-bit TIFF (required by jbig2enc)
         pil_mask = Image.fromarray(mask).convert("1")
@@ -185,7 +188,18 @@ def encode_foreground_jbig2(
                 message=f"jbig2enc failed (exit {result.returncode}): {result.stderr.decode(errors='replace')}",
             )
 
-        # jbig2enc writes:  fg.sym  (global dictionary)  +  fg.0001  (page data)
+        # jbig2enc -s -p writes:  output.sym  (global dictionary)  +  output.0001  (page data)
+        # Verify expected output exists before reading
+        if not os.path.exists(sym_path) or not os.path.exists(page_path):
+            # List what was actually produced to aid debugging
+            produced = os.listdir(tmpdir)
+            raise WorkerError(
+                code=ErrorCode.MRC_FAILED,
+                stage=ProcessingStage.SCHEMA,
+                message=f"jbig2enc succeeded (exit 0) but expected output files not found. "
+                        f"Expected: output.sym, output.0001. Produced: {produced}",
+            )
+
         with open(sym_path, "rb") as f:
             jbig2_globals = f.read()
         with open(page_path, "rb") as f:
