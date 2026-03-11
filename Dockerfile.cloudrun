@@ -37,7 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # liblept.so which IS present via libleptonica-dev.
 # If compilation fails the worker falls back to JPEG2000 automatically.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git autoconf automake libtool build-essential \
+        git autoconf automake libtool build-essential zlib1g-dev \
     && git clone --depth 1 --branch 0.29 https://github.com/agl/jbig2enc.git /tmp/jbig2enc \
     && cd /tmp/jbig2enc \
     && ./autogen.sh && ./configure && make -j"$(nproc)" && make install \
