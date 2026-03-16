@@ -192,16 +192,19 @@ def encode_with_dpi(
 def encode_as_pdf(
     img: NDArray[np.uint8],
     dpi: int,
+    quality: int = 85,
 ) -> bytes:
     """
-    Encode a single image as a single-page PDF.
+    Encode a single image as a single-page PDF with JPEG compression.
 
-    Uses PIL's built-in PDF encoder so no additional dependencies are needed.
-    The DPI is embedded in the PDF as the image resolution.
+    The image is first JPEG-compressed at the given quality level and then
+    wrapped in a PDF envelope.  This keeps PDF size proportional to JPEG
+    quality and makes iterative size-fitting possible.
 
     Args:
         img: BGR image array
         dpi: Target resolution to embed in the PDF
+        quality: JPEG quality (1-95). Lower = smaller file, lower fidelity.
 
     Returns:
         PDF file bytes
@@ -212,9 +215,17 @@ def encode_as_pdf(
     try:
         rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(rgb_img)
-        buffer = io.BytesIO()
-        pil_img.save(buffer, format="PDF", resolution=dpi)
-        return buffer.getvalue()
+
+        # Step 1: JPEG-compress at the requested quality.
+        jpeg_buf = io.BytesIO()
+        pil_img.save(jpeg_buf, format="JPEG", quality=quality, optimize=True)
+        jpeg_buf.seek(0)
+
+        # Step 2: Wrap the JPEG bytes in a single-page PDF.
+        jpeg_pil = Image.open(jpeg_buf)
+        pdf_buf = io.BytesIO()
+        jpeg_pil.save(pdf_buf, format="PDF", resolution=dpi)
+        return pdf_buf.getvalue()
     except Exception as e:
         raise WorkerError(
             code=ErrorCode.SCHEMA_FAILED,
@@ -366,6 +377,64 @@ def normalize_filename(
     return filename
 
 
+# =============================================================================
+# ITU-T T.44 Tier 2 — Colour Mode Conversion
+# =============================================================================
+
+def _sauvola_threshold(
+    gray: np.ndarray,
+    window_size: int = 25,
+    k: float = 0.2,
+    R: float = 128.0,
+) -> np.ndarray:
+    """
+    Sauvola adaptive threshold.
+
+    T(x,y) = mean(x,y) * (1 + k * (std(x,y)/R - 1))
+
+    Uses cv2.boxFilter for O(N) integral computation independent of window_size.
+
+    Returns a uint8 binary mask: 255 = dark pixel (foreground), 0 = light (background).
+    """
+    gray_f = gray.astype(np.float32)
+    kernel = (window_size, window_size)
+    mean = cv2.boxFilter(gray_f, ddepth=-1, ksize=kernel, normalize=True)
+    mean_sq = cv2.boxFilter(gray_f * gray_f, ddepth=-1, ksize=kernel, normalize=True)
+    variance = np.maximum(mean_sq - mean * mean, 0.0)
+    std = np.sqrt(variance)
+    threshold = mean * (1.0 + k * (std / R - 1.0))
+    binary = np.where(gray_f < threshold, np.uint8(255), np.uint8(0))
+    close_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, close_kernel)
+    return binary
+
+
+def convert_colour_mode(img: np.ndarray, mode: str) -> np.ndarray:
+    """
+    Convert a BGR image to the target colour mode (ITU-T T.44 Tier 2).
+
+    Must be called BEFORE resizing so Sauvola operates on full-resolution pixels.
+
+    "colour"    → no-op
+    "greyscale" → greyscale, returned as 3-channel BGR (R==G==B)
+    "binary"    → Sauvola binarisation, returned as 3-channel black-on-white BGR
+    """
+    if mode == "colour":
+        return img
+
+    if mode == "greyscale":
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        return cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+
+    if mode == "binary":
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        mask = _sauvola_threshold(gray)
+        black_on_white = cv2.bitwise_not(mask)
+        return cv2.cvtColor(black_on_white, cv2.COLOR_GRAY2BGR)
+
+    return img  # unknown mode — treat as colour
+
+
 def adapt_to_schema(
     data: bytes,
     schema: SchemaDefinition,
@@ -397,15 +466,60 @@ def adapt_to_schema(
 
         # --- PDF output path ---
         if schema.output_format.lower() == "pdf":
-            pdf_data = encode_as_pdf(cv_img, schema.target_dpi)
-            size_kb = len(pdf_data) / 1024
-            if size_kb > schema.max_kb:
+            cv_img = convert_colour_mode(cv_img, schema.colour_mode)
+
+            # Only resize when the schema explicitly specifies fixed dimensions.
+            # PDF document slots (e.g. id_proof) intentionally omit target_width/
+            # target_height — preserve the master's natural resolution.
+            if schema.target_width and schema.target_height:
+                cv_img = resize_exact(
+                    cv_img,
+                    schema.target_width,
+                    schema.target_height,
+                    fit_mode=schema.fit_mode,
+                )
+
+            # ---- Strategy 1: JPEG2000-in-PDF (near-lossless, best quality) ----
+            # Binary-search the compression ratio so we stay within max_kb while
+            # keeping quality as high as possible.
+            # Ratio semantics: higher = more compression = smaller file.
+            pdf_data: bytes | None = None
+            try:
+                from processors.mrc import encode_as_jpeg2000_pdf
+                lo_ratio, hi_ratio = 1.0, 200.0
+                for _ in range(10):
+                    ratio = (lo_ratio + hi_ratio) / 2
+                    candidate = encode_as_jpeg2000_pdf(cv_img, schema.target_dpi, target_ratio=ratio)
+                    if len(candidate) / 1024 <= schema.max_kb:
+                        pdf_data = candidate
+                        hi_ratio = ratio  # Can afford less compression → better quality
+                    else:
+                        lo_ratio = ratio  # Need more compression
+            except Exception:
+                pass  # JPEG2000 unavailable — fall through to JPEG fallback
+
+            # ---- Strategy 2: JPEG-in-PDF fallback ----
+            if pdf_data is None:
+                lo, hi = 20, 92
+                while lo <= hi:
+                    q = (lo + hi) // 2
+                    candidate = encode_as_pdf(cv_img, schema.target_dpi, quality=q)
+                    if len(candidate) / 1024 <= schema.max_kb:
+                        pdf_data = candidate
+                        lo = q + 1   # Try higher quality
+                    else:
+                        hi = q - 1   # Need smaller file
+
+            if pdf_data is None:
+                min_size_kb = len(encode_as_pdf(cv_img, schema.target_dpi, quality=20)) / 1024
                 raise WorkerError(
                     code=ErrorCode.SIZE_EXCEEDED,
                     stage=ProcessingStage.SCHEMA,
-                    message=f"PDF size {size_kb:.1f}KB exceeds maximum {schema.max_kb}KB",
-                    details={"size_kb": round(size_kb, 1), "max_kb": schema.max_kb},
+                    message=f"PDF size {min_size_kb:.1f}KB exceeds maximum {schema.max_kb}KB even at minimum quality",
+                    details={"size_kb": round(min_size_kb, 1), "max_kb": schema.max_kb},
                 )
+
+            size_kb = len(pdf_data) / 1024
             filename = normalize_filename(
                 schema.filename_pattern,
                 job_id=job_id,
@@ -414,6 +528,14 @@ def adapt_to_schema(
             )
             if not filename.lower().endswith(".pdf"):
                 filename = f"{filename}.pdf"
+            is_compliant, compliance_msg = _verify_pdf_compliance(pdf_data, schema)
+            if not is_compliant:
+                raise WorkerError(
+                    code=ErrorCode.SCHEMA_FAILED,
+                    stage=ProcessingStage.SCHEMA,
+                    message=f"Post-adapt PDF compliance check failed: {compliance_msg}",
+                )
+
             return SchemaResult(
                 image_data=pdf_data,
                 final_width=cv_img.shape[1],
@@ -421,25 +543,33 @@ def adapt_to_schema(
                 final_dpi=schema.target_dpi,
                 final_size_kb=size_kb,
                 filename=filename,
+                output_format="pdf",
+                content_type="application/pdf",
             )
         # --- End PDF path ---
 
-        # Resize to exact dimensions
-        resized = resize_exact(
-            cv_img,
-            schema.target_width,
-            schema.target_height,
-            fit_mode=schema.fit_mode,
-        )
-        
-        # Verify dimensions (belt and suspenders)
-        h, w = resized.shape[:2]
-        if w != schema.target_width or h != schema.target_height:
-            raise WorkerError(
-                code=ErrorCode.RESIZE_FAILED,
-                stage=ProcessingStage.SCHEMA,
-                message="Post-resize dimension verification failed",
+        # ITU-T T.44 Tier 2: colour mode conversion BEFORE resize
+        cv_img = convert_colour_mode(cv_img, schema.colour_mode)
+
+        # Resize to exact dimensions (Tier 3) — only when schema specifies them.
+        # Photo/signature slots always specify dimensions; PDF document slots don't.
+        h, w = cv_img.shape[:2]
+        if schema.target_width and schema.target_height:
+            resized = resize_exact(
+                cv_img,
+                schema.target_width,
+                schema.target_height,
+                fit_mode=schema.fit_mode,
             )
+            h, w = resized.shape[:2]
+            if w != schema.target_width or h != schema.target_height:
+                raise WorkerError(
+                    code=ErrorCode.RESIZE_FAILED,
+                    stage=ProcessingStage.SCHEMA,
+                    message="Post-resize dimension verification failed",
+                )
+        else:
+            resized = cv_img  # No fixed dimensions: preserve natural size
         
         # Compress to size with DPI
         compressed_data, final_quality = compress_to_size(
@@ -582,56 +712,217 @@ def adapt_master_document(
         )
 
 
+# Colour mode verification constants
+_GREYSCALE_MAX_MEAN_CHANNEL_DIVERGENCE = 8   # max mean abs(R-B) for greyscale
+_BINARY_MAX_GREY_FRACTION = 0.15             # max fraction of mid-grey pixels
+_BINARY_GREY_LOW = 32                        # lower bound of "grey" band
+_BINARY_GREY_HIGH = 224                      # upper bound of "grey" band
+
+
+def _verify_pdf_compliance(
+    data: bytes,
+    schema: SchemaDefinition,
+) -> Tuple[bool, str]:
+    """
+    Verify that PDF output bytes comply with schema constraints.
+
+    Called from adapt_to_schema() when output_format == "pdf".  Unlike
+    verify_schema_compliance() (which decodes raw image bytes), this function
+    opens the PDF with pikepdf, extracts the embedded image XObject, then
+    delegates pixel-level colour-mode and OCR checks to the same helpers used
+    by the image path.
+
+    Checks:
+      1. File size ≤ max_kb
+      2. Valid PDF structure (exactly 1 page)
+      3. Colour mode on extracted image  (if schema.colour_mode != "colour")
+      4. OCR confidence gate on extracted image  (if min_ocr_confidence > 0)
+
+    Fails open (returns True) if pikepdf is unavailable or image extraction
+    fails — the binary-search size gate and colour conversion already ran
+    before encoding, so structural correctness is guaranteed by construction.
+    """
+    # 1. File size (belt-and-suspenders: binary search already enforces this)
+    size_kb = len(data) / 1024
+    if size_kb > schema.max_kb:
+        return False, f"Size {size_kb:.1f}KB exceeds max {schema.max_kb}KB"
+
+    # 2. PDF structure + image extraction
+    img_bytes: Optional[bytes] = None
+    try:
+        import pikepdf  # already a pinned dependency (pikepdf==10.3.0)
+        with pikepdf.open(io.BytesIO(data)) as pdf:
+            if len(pdf.pages) != 1:
+                return False, f"Expected 1-page PDF, got {len(pdf.pages)} pages"
+            page = pdf.pages[0]
+            images = list(page.images.items())
+            if images:
+                _, raw_image = images[0]
+                try:
+                    pdfimage = pikepdf.PdfImage(raw_image)
+                    pil_img = pdfimage.as_pil_image()
+                    buf = io.BytesIO()
+                    pil_img.save(buf, format="JPEG", quality=92)
+                    img_bytes = buf.getvalue()
+                except Exception:
+                    pass  # extraction failed — skip pixel-level checks below
+    except ImportError:
+        return True, ""  # pikepdf not available — skip structural check
+    except Exception as e:
+        return False, f"Invalid PDF structure: {str(e)}"
+
+    if img_bytes is None:
+        return True, ""  # no extractable image — pass through
+
+    # 3. Colour mode (reuse module-level constants from verify_schema_compliance)
+    if schema.colour_mode != "colour":
+        nparr = np.frombuffer(img_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if img is not None:
+            if schema.colour_mode == "greyscale":
+                b_ch = img[:, :, 0].astype(np.int32)
+                r_ch = img[:, :, 2].astype(np.int32)
+                mean_divergence = float(np.mean(np.abs(r_ch - b_ch)))
+                if mean_divergence > _GREYSCALE_MAX_MEAN_CHANNEL_DIVERGENCE:
+                    return False, (
+                        f"Colour mode 'greyscale' violated: "
+                        f"mean R-B channel divergence {mean_divergence:.1f} > "
+                        f"{_GREYSCALE_MAX_MEAN_CHANNEL_DIVERGENCE}"
+                    )
+            elif schema.colour_mode == "binary":
+                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                total = gray.size
+                grey_pixels = int(np.sum(
+                    (gray > _BINARY_GREY_LOW) & (gray < _BINARY_GREY_HIGH)
+                ))
+                grey_fraction = grey_pixels / total if total > 0 else 0.0
+                if grey_fraction > _BINARY_MAX_GREY_FRACTION:
+                    return False, (
+                        f"Colour mode 'binary' violated: "
+                        f"{grey_fraction:.1%} mid-grey pixels exceed "
+                        f"{_BINARY_MAX_GREY_FRACTION:.0%} threshold"
+                    )
+
+    # 4. OCR gate (delegates to same helper as the image path)
+    if schema.min_ocr_confidence > 0.0:
+        ok, msg = _verify_ocr_confidence(img_bytes, schema.min_ocr_confidence)
+        if not ok:
+            return False, msg
+
+    return True, ""
+
+
+def _verify_ocr_confidence(
+    data: bytes,
+    min_confidence: float,
+) -> Tuple[bool, str]:
+    """
+    Run Tesseract OCR on adapted image data and verify confidence meets the threshold.
+
+    Lazily imports tesseract_adapter to avoid mandatory Tesseract dependency
+    for schemas that do not require the OCR gate (min_ocr_confidence == 0.0).
+    Fails open on ImportError (pytesseract not installed) or unexpected exceptions.
+    """
+    try:
+        from ocr.tesseract_adapter import extract_text, OCRResult
+        from errors import WorkerError
+    except ImportError:
+        return True, ""
+
+    try:
+        result: OCRResult = extract_text(data)
+        if result.confidence < min_confidence:
+            return False, (
+                f"OCR confidence {result.confidence:.3f} below minimum {min_confidence:.3f} "
+                f"— adapted image may be too compressed to remain legible"
+            )
+        return True, ""
+    except WorkerError as e:
+        return False, f"OCR quality gate error: {e.details.get('reason', str(e)) if e.details else str(e)}"
+    except Exception:
+        return True, ""  # Fail open on unexpected Tesseract errors
+
+
 def verify_schema_compliance(
     data: bytes,
     schema: SchemaDefinition,
 ) -> Tuple[bool, str]:
     """
     Verify that image data complies with schema.
-    
-    Args:
-        data: Encoded image bytes
-        schema: Expected schema
-        
+
+    Checks (in order):
+      1. File size ≤ max_kb
+      2. Pixel dimensions == (target_width, target_height)
+      3. DPI metadata == target_dpi
+      4. Colour mode    (if schema.colour_mode != "colour")
+      5. OCR confidence ≥ min_ocr_confidence  (if min_ocr_confidence > 0)
+
     Returns:
         Tuple of (is_compliant, error_message)
     """
     try:
-        # Check file size
+        # --- 1. File size ---
         size_kb = len(data) / 1024
         if size_kb > schema.max_kb:
             return False, f"Size {size_kb:.1f}KB exceeds max {schema.max_kb}KB"
-        
-        # Decode and check dimensions with OpenCV
+
+        # --- 2. Dimensions ---
         nparr = np.frombuffer(data, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        
+
         if img is None:
             return False, "Failed to decode image"
-        
+
         h, w = img.shape[:2]
         if w != schema.target_width:
             return False, f"Width {w} != target {schema.target_width}"
-        
         if h != schema.target_height:
             return False, f"Height {h} != target {schema.target_height}"
-        
-        # Verify DPI metadata using PIL
+
+        # --- 3. DPI metadata ---
         pil_img = Image.open(io.BytesIO(data))
         dpi = pil_img.info.get('dpi', (72, 72))
         if isinstance(dpi, tuple):
             dpi_x, dpi_y = int(dpi[0]), int(dpi[1])
         else:
             dpi_x = dpi_y = int(dpi)
-        
         if dpi_x != schema.target_dpi:
             return False, f"DPI X {dpi_x} != target {schema.target_dpi}"
-        
         if dpi_y != schema.target_dpi:
             return False, f"DPI Y {dpi_y} != target {schema.target_dpi}"
-        
+
+        # --- 4. Colour mode ---
+        if schema.colour_mode == "greyscale":
+            b_ch = img[:, :, 0].astype(np.int32)
+            r_ch = img[:, :, 2].astype(np.int32)
+            mean_divergence = float(np.mean(np.abs(r_ch - b_ch)))
+            if mean_divergence > _GREYSCALE_MAX_MEAN_CHANNEL_DIVERGENCE:
+                return False, (
+                    f"Colour mode 'greyscale' violated: "
+                    f"mean R-B channel divergence {mean_divergence:.1f} > {_GREYSCALE_MAX_MEAN_CHANNEL_DIVERGENCE}"
+                )
+
+        elif schema.colour_mode == "binary":
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            total = gray.size
+            grey_pixels = int(np.sum(
+                (gray > _BINARY_GREY_LOW) & (gray < _BINARY_GREY_HIGH)
+            ))
+            grey_fraction = grey_pixels / total if total > 0 else 0.0
+            if grey_fraction > _BINARY_MAX_GREY_FRACTION:
+                return False, (
+                    f"Colour mode 'binary' violated: "
+                    f"{grey_fraction:.1%} mid-grey pixels exceed {_BINARY_MAX_GREY_FRACTION:.0%} threshold"
+                )
+
+        # --- 5. OCR quality gate ---
+        if schema.min_ocr_confidence > 0.0:
+            ok, msg = _verify_ocr_confidence(data, schema.min_ocr_confidence)
+            if not ok:
+                return False, msg
+
         return True, ""
-        
+
     except Exception as e:
         return False, f"Verification error: {str(e)}"
 

@@ -16,11 +16,17 @@ from typing import Any, Dict, List, Literal, Optional
 # Input Models (STDIN Contract)
 # =============================================================================
 
+# Valid colour modes (ITU-T T.44 Tier 2)
+_VALID_COLOUR_MODES: frozenset = frozenset({"colour", "greyscale", "binary"})
+
+
 @dataclass(frozen=True)
 class SchemaDefinition:
     """Portal schema definition for document transformation."""
-    target_width: int
-    target_height: int
+    # None means the schema did not specify fixed output dimensions.
+    # In that case adapt_to_schema preserves the image's natural size.
+    target_width: Optional[int]
+    target_height: Optional[int]
     target_dpi: int
     max_kb: int
     filename_pattern: str
@@ -31,6 +37,10 @@ class SchemaDefinition:
     #   "stretch"   — squish/stretch to exact dimensions (default, original behaviour)
     #   "letterbox" — scale to fit, pad remainder with white
     fit_mode: str = "stretch"
+    # ITU-T T.44 Tier 2: colour mode applied BEFORE resize
+    colour_mode: str = "colour"     # "colour" | "greyscale" | "binary"
+    # Post-adaptation OCR gate: 0.0 = disabled
+    min_ocr_confidence: float = 0.0
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> SchemaDefinition:
@@ -38,9 +48,19 @@ class SchemaDefinition:
         fit_mode = str(data.get("fit_mode", "stretch")).lower()
         if fit_mode not in ("stretch", "letterbox"):
             fit_mode = "stretch"
+
+        colour_mode = str(data.get("colour_mode", "colour")).lower()
+        if colour_mode not in _VALID_COLOUR_MODES:
+            colour_mode = "colour"
+
+        min_ocr_confidence = float(data.get("min_ocr_confidence", 0.0))
+        min_ocr_confidence = max(0.0, min(1.0, min_ocr_confidence))
+
+        raw_w = data.get("target_width")
+        raw_h = data.get("target_height")
         return SchemaDefinition(
-            target_width=int(data.get("target_width", 600)),
-            target_height=int(data.get("target_height", 800)),
+            target_width=int(raw_w) if raw_w is not None else None,
+            target_height=int(raw_h) if raw_h is not None else None,
             target_dpi=int(data.get("target_dpi", 300)),
             max_kb=int(data.get("max_kb", 200)),
             filename_pattern=str(data.get("filename_pattern", "{job_id}")),
@@ -48,6 +68,8 @@ class SchemaDefinition:
             output_format=str(data.get("output_format", "jpeg")),
             quality=int(data.get("quality", 85)),
             fit_mode=fit_mode,
+            colour_mode=colour_mode,
+            min_ocr_confidence=min_ocr_confidence,
         )
 
 

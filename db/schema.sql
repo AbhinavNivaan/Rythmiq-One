@@ -191,26 +191,28 @@ CREATE TRIGGER update_portal_schemas_updated_at
 -- ==============================================
 INSERT INTO public.portal_schemas (id, name, category, requirements) VALUES
 ('NEET_2026', 'NEET 2026', 'exam', '{
-    "photo": {"dimensions": [400, 600], "dpi": 300, "max_kb": 200, "format": "jpg"},
-    "signature": {"dimensions": [200, 100], "dpi": 200, "max_kb": 50, "format": "jpg"}
+    "photo":     {"dimensions": [400, 600], "dpi": 300, "max_kb": 200, "format": "jpg", "colour_mode": "colour"},
+    "signature": {"dimensions": [200, 100], "dpi": 200, "max_kb": 50,  "format": "jpg", "colour_mode": "greyscale"}
 }'::jsonb),
 ('JEE_MAIN_2026', 'JEE Main 2026', 'exam', '{
-    "photo": {"dimensions": [400, 600], "dpi": 300, "max_kb": 200, "format": "jpg"},
-    "signature": {"dimensions": [200, 100], "dpi": 200, "max_kb": 50, "format": "jpg"}
+    "photo":     {"dimensions": [400, 600], "dpi": 300, "max_kb": 200, "format": "jpg", "colour_mode": "colour"},
+    "signature": {"dimensions": [200, 100], "dpi": 200, "max_kb": 50,  "format": "jpg", "colour_mode": "greyscale"}
 }'::jsonb),
 ('UPSC_CSE_2026', 'UPSC CSE 2026', 'government', '{
-    "photo": {"dimensions": [400, 600], "dpi": 300, "max_kb": 300, "format": "jpg"},
-    "signature": {"dimensions": [200, 100], "dpi": 200, "max_kb": 50, "format": "jpg"}
+    "photo":     {"dimensions": [400, 600], "dpi": 300, "max_kb": 300, "format": "jpg", "colour_mode": "colour"},
+    "signature": {"dimensions": [200, 100], "dpi": 200, "max_kb": 50,  "format": "jpg", "colour_mode": "greyscale"}
 }'::jsonb),
 ('CAT_2026', 'CAT 2026', 'exam', '{
-    "photo": {"dimensions": [400, 600], "dpi": 300, "max_kb": 200, "format": "jpg"},
-    "signature": {"dimensions": [200, 100], "dpi": 200, "max_kb": 50, "format": "jpg"}
+    "photo":     {"dimensions": [400, 600], "dpi": 300, "max_kb": 200, "format": "jpg", "colour_mode": "colour"},
+    "signature": {"dimensions": [200, 100], "dpi": 200, "max_kb": 50,  "format": "jpg", "colour_mode": "greyscale"}
 }'::jsonb),
 ('GATE_2026', 'GATE 2026', 'exam', '{
-    "photo": {"dimensions": [480, 640], "dpi": 300, "max_kb": 200, "format": "jpg"},
-    "signature": {"dimensions": [240, 120], "dpi": 200, "max_kb": 50, "format": "jpg"}
+    "photo":     {"dimensions": [480, 640], "dpi": 300, "max_kb": 200, "format": "jpg", "colour_mode": "colour"},
+    "signature": {"dimensions": [240, 120], "dpi": 200, "max_kb": 50,  "format": "jpg", "colour_mode": "greyscale"}
 }'::jsonb)
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET
+    requirements = EXCLUDED.requirements,
+    updated_at = NOW();
 
 -- ==============================================
 -- GRANT PERMISSIONS

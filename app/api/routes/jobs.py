@@ -211,6 +211,30 @@ async def _submit_job_to_processing(
                     job_id=job_id,
                     new_state="completed",
                 )
+
+                # --- Step 1: Extract master_path from worker result and persist it IMMEDIATELY.
+                # This must happen before packaging so that output_url is available even if
+                # ZIP creation later fails.  (Bug: previously db was defined inside the try
+                # block below, so a packaging exception left master_path un-written.)
+                output_data = worker_result.get("output") or {}
+                artifacts_data = output_data.get("artifacts", {})
+                master_path_from_worker = artifacts_data.get("master_path")
+                db = get_service_db_client()
+                if master_path_from_worker:
+                    try:
+                        db.table("jobs").update({"master_path": master_path_from_worker}).eq("id", str(job_id)).execute()
+                        logger.info(
+                            "master_path persisted",
+                            extra={"job_id": str(job_id), "master_path": master_path_from_worker},
+                        )
+                    except Exception as mp_err:
+                        logger.error(
+                            "Failed to persist master_path",
+                            extra={"job_id": str(job_id), "error": str(mp_err)},
+                        )
+
+                # --- Step 2: Package artifacts into ZIP (best-effort; not required for download).
+                # ZIP packaging failure must NOT prevent master_path from being accessible.
                 packaging = get_packaging_service()
                 try:
                     output_path = packaging.package_job_output(
@@ -218,10 +242,7 @@ async def _submit_job_to_processing(
                         user_id=user_id,
                         worker_result=worker_result,
                     )
-                    output_data = worker_result.get("output") or {}
-                    db = get_db_client()
                     # Merge quality scores + output path into existing input_metadata
-                    # (avoids needing a separate metadata column)
                     job_row = db.table("jobs").select("input_metadata").eq("id", str(job_id)).limit(1).execute()
                     current_meta = ((job_row.data or [{}])[0].get("input_metadata") or {})
                     merged_meta = {
@@ -230,10 +251,14 @@ async def _submit_job_to_processing(
                         "packaged": True,
                         "input_quality_score": output_data.get("input_quality_score"),
                         "output_quality_score": output_data.get("output_quality_score"),
+                        "output_encrypted": artifacts_data.get("encrypted", False),
+                        "output_nonce": artifacts_data.get("encryption_nonce"),
                     }
-                    db.table("jobs").update({
-                        "input_metadata": merged_meta,
-                    }).eq("id", str(job_id)).execute()
+                    job_update: dict[str, Any] = {"input_metadata": merged_meta}
+                    # Ensure master_path is set even if Step 1 above failed
+                    if master_path_from_worker:
+                        job_update["master_path"] = master_path_from_worker
+                    db.table("jobs").update(job_update).eq("id", str(job_id)).execute()
                 except Exception as e:
                     logger.error(
                         "Failed to package Cloud Run output",
@@ -242,9 +267,9 @@ async def _submit_job_to_processing(
                             "error_type": type(e).__name__,
                             "error": str(e),
                         },
-                        exc_info=True,  # Include full traceback
+                        exc_info=True,
                     )
-                    # Log error in input_metadata for debugging
+                    # Log packaging error in input_metadata for debugging
                     try:
                         err_row = db.table("jobs").select("input_metadata").eq("id", str(job_id)).limit(1).execute()
                         err_meta = ((err_row.data or [{}])[0].get("input_metadata") or {})
@@ -344,15 +369,17 @@ async def create_job(
                     details={"available_doc_ids": [d.get("doc_id") for d in doc_uploads]},
                 )
             schema_def: dict[str, Any] = {
-                "target_width": doc_entry.get("target_width", 600),
-                "target_height": doc_entry.get("target_height", 800),
+                # Pass None when the schema omits fixed dimensions (e.g. PDF
+                # document slots).  The worker will preserve natural image size
+                # rather than forcing a resize to an arbitrary fallback.
+                "target_width": doc_entry.get("target_width"),
+                "target_height": doc_entry.get("target_height"),
                 "target_dpi": doc_entry.get("target_dpi", 200),
                 "max_kb": doc_entry.get("size_max_kb", 200),
                 "min_kb": doc_entry.get("size_min_kb", 0),
                 "fit_mode": doc_entry.get("fit_mode", "stretch"),
                 "output_format": doc_entry.get("output_format", "jpeg"),
                 "filename_pattern": f"{{job_id}}_{body.doc_id}",
-                "quality": 85,
             }
             portal_schema = {
                 "id": f"{body.form_schema_id}:{body.doc_id}",
@@ -399,14 +426,17 @@ async def create_job(
 
         source_metadata = source.get("input_metadata") or {}
 
-        # Prefer master_path (encrypted blob) over raw storage_path (deleted after processing).
+        # Prefer master_path over raw storage_path (deleted after processing).
         # master_path is populated for jobs processed after migration 20260305.
+        # It may or may not be encrypted depending on whether sek_b64 was provided at master creation time.
         master_stored_path: str | None = source.get("master_path")
         raw_storage_path: str | None = source_metadata.get("storage_path")
 
         if master_stored_path:
             storage_path = master_stored_path
-            encrypted_input = True   # Master blob is encrypted; worker must decrypt
+            # Use the actual encrypted flag from the source job rather than assuming True.
+            # Masters are only encrypted when sek_b64 was provided at processing time.
+            encrypted_input = bool(source_metadata.get("output_encrypted", False))
         elif raw_storage_path:
             storage_path = raw_storage_path   # Legacy fallback (raw upload, not yet deleted)
             encrypted_input = False
@@ -433,6 +463,9 @@ async def create_job(
                 "doc_id": body.doc_id,
                 "encrypted_input": encrypted_input,
                 "correlation_id": correlation_id,
+                # Store output_format so GET /jobs/{id} returns it for correct
+                # MIME type / file extension when the client downloads the output.
+                "output_format": schema_def.get("output_format", "jpeg"),
             },
         }
 
@@ -517,15 +550,14 @@ async def create_job(
                     details={"available_doc_ids": [d.get("doc_id") for d in doc_uploads]},
                 )
             schema_def_upload: dict[str, Any] = {
-                "target_width": doc_entry.get("target_width", 600),
-                "target_height": doc_entry.get("target_height", 800),
+                "target_width": doc_entry.get("target_width"),
+                "target_height": doc_entry.get("target_height"),
                 "target_dpi": doc_entry.get("target_dpi", 200),
                 "max_kb": doc_entry.get("size_max_kb", 200),
                 "min_kb": doc_entry.get("size_min_kb", 0),
                 "fit_mode": doc_entry.get("fit_mode", "stretch"),
                 "output_format": doc_entry.get("output_format", "jpeg"),
                 "filename_pattern": f"{{job_id}}_{body.doc_id}",
-                "quality": 85,
             }
             portal_schema = {
                 "id": f"{body.form_schema_id}:{body.doc_id}",
@@ -575,6 +607,9 @@ async def create_job(
             "mime_type": body.mime_type,
             "file_size_bytes": body.file_size_bytes,
             "correlation_id": correlation_id,
+            # Master jobs always produce JPEG output by default.
+            # Stored so GET /jobs/{id} can return it for correct MIME type / extension.
+            "output_format": "jpeg",
         },
     }
 
@@ -833,7 +868,7 @@ async def get_job(
     result = (
         db.table("jobs")
         .select(
-            "id, status, user_id, portal_schema_version_id, created_at, started_at, completed_at, error_details, input_metadata"
+            "id, status, user_id, portal_schema_version_id, created_at, started_at, completed_at, error_details, input_metadata, master_path"
         )
         .eq("id", str(job_id))
         .eq("user_id", str(user.id))
@@ -862,6 +897,13 @@ async def get_job(
     # Generate output URLs if completed
     download_url = None
     preview_url = None
+    output_url = None
+    meta = job.get("input_metadata") or {}
+    output_encrypted = bool(meta.get("output_encrypted", False))
+    output_nonce = meta.get("output_nonce")
+    # "jpeg" | "pdf" — format of the processed file stored at master_path / output_url.
+    # Stored in input_metadata at job creation time from the form schema's output_format.
+    output_format = meta.get("output_format")  # e.g. "jpeg", "pdf"
     if job["status"] == "completed":
         url_result = packaging.get_output_download_url(job_id, user.id)
         if url_result:
@@ -870,6 +912,23 @@ async def get_job(
         preview_path = f"output/{user.id}/{job_id}/preview.jpg"
         if storage.object_exists(preview_path):
             preview_url, _ = storage.generate_download_url(preview_path)
+
+        master_path_stored = job.get("master_path")
+        if master_path_stored:
+            # Derive a human-readable filename and correct Content-Type so the
+            # browser/app downloads "document.jpg" instead of "{job_id}.enc".
+            fmt = (output_format or "jpeg").lower()
+            if fmt == "pdf":
+                dl_filename = f"{job_id}.pdf"
+                dl_content_type = "application/pdf"
+            else:
+                dl_filename = f"{job_id}.jpg"
+                dl_content_type = "image/jpeg"
+            output_url, _ = storage.generate_download_url(
+                master_path_stored,
+                filename=dl_filename,
+                content_type=dl_content_type,
+            )
 
     # Format error for response
     error = None
@@ -889,8 +948,12 @@ async def get_job(
         error_details=error,
         download_url=download_url,
         preview_url=preview_url,
-        input_quality_score=(job.get("input_metadata") or {}).get("input_quality_score"),
-        output_quality_score=(job.get("input_metadata") or {}).get("output_quality_score"),
+        output_url=output_url,
+        output_encrypted=output_encrypted,
+        output_nonce=output_nonce,
+        output_format=output_format,
+        input_quality_score=meta.get("input_quality_score"),
+        output_quality_score=meta.get("output_quality_score"),
     )
 
 

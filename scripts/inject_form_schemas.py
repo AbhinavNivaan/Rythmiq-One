@@ -109,7 +109,7 @@ def load_schema_files(filter_id: str | None = None) -> list[dict]:
 # Inject
 # ---------------------------------------------------------------------------
 
-def inject(schemas: list[dict], client) -> None:
+def inject(schemas: list[dict], client, dry_run: bool = False) -> None:
     for entry in schemas:
         body: dict = entry["body"]
         meta: dict = body.get("metadata", {})
@@ -140,6 +140,8 @@ def inject(schemas: list[dict], client) -> None:
         rows_by_version: dict[str, dict] = {
             r["schema_version"]: r for r in (existing.data or [])
         }
+        exists = bool(existing.data)
+        existing_version = existing.data[0]["schema_version"] if exists else None
 
         row_data = {
             "id":             schema_id,
@@ -155,19 +157,23 @@ def inject(schemas: list[dict], client) -> None:
             "portal_id":      portal_id,
         }
 
-        if schema_version in rows_by_version:
-            # Same version exists — update in-place
-            client.table("form_schemas").update(row_data).eq("id", schema_id).eq("schema_version", schema_version).execute()
-            log.info("  Updated  %s v%s", schema_id, schema_version)
+        # Table has id TEXT PRIMARY KEY — one row per schema_id.
+        # Always upsert: update if row exists, insert if new.
+        if exists:
+            if dry_run:
+                log.info(
+                    "  [DRY RUN] Would update %s (v%s → v%s)",
+                    schema_id, existing_version, schema_version,
+                )
+            else:
+                client.table("form_schemas").update(row_data).eq("id", schema_id).execute()
+                log.info("  Updated  %s  v%s → v%s", schema_id, existing_version, schema_version)
         else:
-            # New version — deactivate any currently active rows first
-            active_rows = [r for r in rows_by_version.values() if r["is_active"]]
-            if active_rows:
-                client.table("form_schemas").update({"is_active": False}).eq("id", schema_id).eq("is_active", True).execute()
-                log.info("  Deactivated old active version(s) of %s", schema_id)
-
-            client.table("form_schemas").insert(row_data).execute()
-            log.info("  Inserted  %s v%s", schema_id, schema_version)
+            if dry_run:
+                log.info("  [DRY RUN] Would insert %s v%s", schema_id, schema_version)
+            else:
+                client.table("form_schemas").insert(row_data).execute()
+                log.info("  Inserted %s v%s", schema_id, schema_version)
 
 
 # ---------------------------------------------------------------------------
@@ -175,8 +181,14 @@ def inject(schemas: list[dict], client) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    # Optional: filter to a single schema_id from CLI args
-    filter_id: str | None = sys.argv[1] if len(sys.argv) > 1 else None
+    # Parse CLI args: optional schema_id filter and --dry-run flag
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    flags = {a for a in sys.argv[1:] if a.startswith("--")}
+    filter_id: str | None = args[0] if args else None
+    dry_run = "--dry-run" in flags
+
+    if dry_run:
+        log.info("DRY RUN MODE — no database writes will be made")
 
     supabase_url = os.environ.get("SUPABASE_URL")
     supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
@@ -194,8 +206,8 @@ def main() -> None:
         sys.exit(0)
 
     log.info("Found %d schema file(s) to inject", len(schemas))
-    inject(schemas, client)
-    log.info("Done.")
+    inject(schemas, client, dry_run=dry_run)
+    log.info("Done%s.", " (DRY RUN — nothing written)" if dry_run else "")
 
 
 if __name__ == "__main__":

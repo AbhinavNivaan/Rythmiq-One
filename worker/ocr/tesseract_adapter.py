@@ -13,7 +13,7 @@ import io
 import pytesseract
 from PIL import Image
 
-from errors.error_codes import ProcessingError, ErrorCode, ProcessingStage
+from errors import WorkerError, ErrorCode, ProcessingStage
 
 
 # Default configuration
@@ -84,47 +84,52 @@ def extract_text(
     """
     # Validate: empty data
     if not data or len(data) == 0:
-        raise ProcessingError(
-            code=ErrorCode.CORRUPT_DATA,
+        raise WorkerError(
+            code=ErrorCode.CORRUPT_IMAGE,
             stage=ProcessingStage.OCR,
+            message="Empty data",
             details={"reason": "empty_data"}
         )
-    
+
     # Validate: size limit
     if len(data) > max_size_bytes:
-        raise ProcessingError(
+        raise WorkerError(
             code=ErrorCode.SIZE_EXCEEDED,
             stage=ProcessingStage.OCR,
+            message=f"Input size {len(data)} bytes exceeds limit {max_size_bytes} bytes",
             details={
                 "size_bytes": len(data),
                 "max_bytes": max_size_bytes
             }
         )
-    
+
     # Validate: format detection
     format_type = detect_format(data)
-    
+
     if format_type is None:
-        raise ProcessingError(
+        raise WorkerError(
             code=ErrorCode.UNSUPPORTED_FORMAT,
             stage=ProcessingStage.OCR,
+            message="Unrecognized image format",
             details={"reason": "unrecognized_format"}
         )
-    
+
     if format_type == "application/pdf":
-        raise ProcessingError(
+        raise WorkerError(
             code=ErrorCode.UNSUPPORTED_FORMAT,
             stage=ProcessingStage.OCR,
+            message="PDF not supported for OCR quality gate",
             details={"reason": "pdf_not_supported"}
         )
-    
+
     # Attempt to open image with PIL
     try:
         image = Image.open(io.BytesIO(data))
     except Exception:
-        raise ProcessingError(
-            code=ErrorCode.CORRUPT_DATA,
+        raise WorkerError(
+            code=ErrorCode.CORRUPT_IMAGE,
             stage=ProcessingStage.OCR,
+            message="Failed to decode image",
             details={"reason": "image_decode_failed"}
         )
     
@@ -154,25 +159,27 @@ def extract_text(
         
         # Validate: no text extracted
         if not text.strip():
-            raise ProcessingError(
-                code=ErrorCode.OCR_FAILURE,
+            raise WorkerError(
+                code=ErrorCode.OCR_NO_TEXT,
                 stage=ProcessingStage.OCR,
+                message="No text extracted from image",
                 details={"reason": "no_text_extracted"}
             )
-        
+
         return OCRResult(
             text=text,
             confidence=min(1.0, max(0.0, avg_confidence)),  # Clamp to [0, 1]
             page_count=1
         )
-        
-    except ProcessingError:
+
+    except WorkerError:
         # Re-raise our own errors
         raise
     except Exception:
-        # Any Tesseract error becomes OCR_FAILURE
-        raise ProcessingError(
-            code=ErrorCode.OCR_FAILURE,
+        # Any Tesseract error becomes OCR_FAILED
+        raise WorkerError(
+            code=ErrorCode.OCR_FAILED,
             stage=ProcessingStage.OCR,
+            message="Tesseract OCR failed",
             details={"reason": "tesseract_error"}
         )

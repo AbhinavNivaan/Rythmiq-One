@@ -188,6 +188,25 @@ async def webhook_camber(
     # 6. On success: package outputs
     # -------------------------------------------------------------------------
     if new_state == "completed" and body.result:
+        # --- Step 1: Persist master_path IMMEDIATELY (before packaging).
+        # Same pattern as _submit_job_to_processing Step 1.
+        output_data = body.result.get("output") or {}
+        artifacts_data = output_data.get("artifacts", {})
+        master_path_from_worker = artifacts_data.get("master_path")
+        if master_path_from_worker:
+            try:
+                db.table("jobs").update({"master_path": master_path_from_worker}).eq("id", str(job_id)).execute()
+                logger.info(
+                    "master_path persisted via webhook",
+                    extra={"job_id": str(job_id), "master_path": master_path_from_worker},
+                )
+            except Exception as mp_err:
+                logger.error(
+                    "Failed to persist master_path via webhook",
+                    extra={"job_id": str(job_id), "error": str(mp_err)},
+                )
+
+        # --- Step 2: Package artifacts into ZIP (best-effort).
         try:
             output_path = packaging.package_job_output(
                 job_id=job_id,
@@ -205,12 +224,23 @@ async def webhook_camber(
 
             # Store output metadata in job record
             try:
-                db.table("jobs").update({
-                    "metadata": {
+                job_row = db.table("jobs").select("input_metadata").eq("id", str(job_id)).limit(1).execute()
+                current_meta = ((job_row.data or [{}])[0].get("input_metadata") or {})
+                job_update: dict[str, Any] = {
+                    "input_metadata": {
+                        **current_meta,
                         "output_path": output_path,
                         "packaged": True,
-                    }
-                }).eq("id", str(job_id)).execute()
+                        "input_quality_score": output_data.get("input_quality_score"),
+                        "output_quality_score": output_data.get("output_quality_score"),
+                        "output_encrypted": artifacts_data.get("encrypted", False),
+                        "output_nonce": artifacts_data.get("encryption_nonce"),
+                    },
+                }
+                # Ensure master_path is set even if Step 1 above failed
+                if master_path_from_worker:
+                    job_update["master_path"] = master_path_from_worker
+                db.table("jobs").update(job_update).eq("id", str(job_id)).execute()
             except Exception as e:
                 logger.error(
                     "Failed to update output metadata",
@@ -228,10 +258,13 @@ async def webhook_camber(
                 },
                 exc_info=True,  # Include full traceback
             )
-            # Store error in metadata for debugging
+            # Store error in input_metadata for debugging
             try:
+                err_row = db.table("jobs").select("input_metadata").eq("id", str(job_id)).limit(1).execute()
+                err_meta = ((err_row.data or [{}])[0].get("input_metadata") or {})
                 db.table("jobs").update({
-                    "metadata": {
+                    "input_metadata": {
+                        **err_meta,
                         "packaging_error": str(e),
                         "error_type": type(e).__name__,
                     }

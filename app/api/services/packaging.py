@@ -146,12 +146,18 @@ class PackagingService:
         output = worker_result.get("output", {})
         artifacts = output.get("artifacts", [])
 
-        for artifact in artifacts:
-            if isinstance(artifact, dict) and "path" in artifact:
-                paths.append(artifact["path"])
-            elif isinstance(artifact, str):
-                # Handle simple path strings
-                paths.append(artifact)
+        # Worker returns artifacts as a dict {"master_path": ..., "preview_path": ..., "encrypted": ...}
+        # Older contract expected a list of {"path": ...} objects — handle both.
+        if isinstance(artifacts, dict):
+            for key, value in artifacts.items():
+                if isinstance(value, str) and key.endswith("_path"):
+                    paths.append(value)
+        else:
+            for artifact in artifacts:
+                if isinstance(artifact, dict) and "path" in artifact:
+                    paths.append(artifact["path"])
+                elif isinstance(artifact, str):
+                    paths.append(artifact)
 
         return paths
 

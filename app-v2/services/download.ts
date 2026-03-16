@@ -136,6 +136,33 @@ export async function downloadJobOutput(
 }
 
 /**
+ * Map MIME type to iOS Universal Type Identifier (UTI).
+ * Ensures the share sheet presents the file correctly and routes to appropriate apps.
+ */
+function getIOSUTI(mimeType?: string): string {
+  switch (mimeType) {
+    case 'application/pdf': return 'com.adobe.pdf';
+    case 'image/jpeg':      return 'public.jpeg';
+    case 'image/png':       return 'public.png';
+    case 'application/zip': return 'public.zip-archive';
+    default:                return 'public.data';
+  }
+}
+
+/**
+ * Map output_format string to MIME type and file extension.
+ */
+export function outputFormatToMime(outputFormat?: string): { mimeType: string; ext: string } {
+  switch ((outputFormat || '').toLowerCase()) {
+    case 'pdf':  return { mimeType: 'application/pdf', ext: 'pdf' };
+    case 'png':  return { mimeType: 'image/png',       ext: 'png' };
+    case 'jpeg':
+    case 'jpg':
+    default:     return { mimeType: 'image/jpeg',      ext: 'jpg' };
+  }
+}
+
+/**
  * Share a downloaded file
  */
 export async function shareFile(
@@ -147,7 +174,7 @@ export async function shareFile(
 ): Promise<boolean> {
   try {
     const canShare = await Sharing.isAvailableAsync();
-    
+
     if (!canShare) {
       Alert.alert(
         'Sharing Not Available',
@@ -156,13 +183,15 @@ export async function shareFile(
       );
       return false;
     }
-    
+
+    const mimeType = options?.mimeType || 'application/zip';
+
     await Sharing.shareAsync(localPath, {
-      mimeType: options?.mimeType || 'application/zip',
+      mimeType,
       dialogTitle: options?.dialogTitle || 'Save Document',
-      UTI: Platform.OS === 'ios' ? 'public.zip-archive' : undefined,
+      UTI: Platform.OS === 'ios' ? getIOSUTI(mimeType) : undefined,
     });
-    
+
     return true;
   } catch (error) {
     console.error('Share error:', error);

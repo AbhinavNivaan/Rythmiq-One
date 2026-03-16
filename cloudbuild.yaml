@@ -3,15 +3,33 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'build'
+      - '--platform=linux/amd64'
       - '-t'
       - 'asia-south1-docker.pkg.dev/rythmiq-one/rythmiq-images/worker:latest'
       - '-f'
-      - 'Dockerfile.cloudrun'
-      - '.'
+      - 'worker/Dockerfile.production'
+      - './worker'
 
   # Step 2: Push to Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'asia-south1-docker.pkg.dev/rythmiq-one/rythmiq-images/worker:latest']
+
+  # Step 3: Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'rythmiq-worker'
+      - '--image=asia-south1-docker.pkg.dev/rythmiq-one/rythmiq-images/worker:latest'
+      - '--region=asia-south1'
+      - '--allow-unauthenticated'
+      - '--cpu=2'
+      - '--memory=4Gi'
+      - '--max-instances=5'
+      - '--timeout=300'
+      - '--cpu-boost'
+      - '--project=rythmiq-one'
 
 images:
   - 'asia-south1-docker.pkg.dev/rythmiq-one/rythmiq-images/worker:latest'

@@ -36,7 +36,7 @@ import {
 import { useQuery } from '@tanstack/react-query';
 import Colors from '../../constants/Colors';
 import { documentsApi } from '../../services/api';
-import { downloadJobOutput, shareFile, formatFileSize } from '../../services/download';
+import { downloadJobOutput, shareFile, formatFileSize, outputFormatToMime } from '../../services/download';
 
 type JobStatusType = 'pending' | 'processing' | 'completed' | 'failed';
 
@@ -46,6 +46,13 @@ interface StatusConfig {
   label: string;
   hint?: string;
 }
+
+// ── Quality helpers ─────────────────────────────────────────────────────────
+const qualityColor = (score: number): string =>
+  score >= 0.8 ? Colors.palette.green : score >= 0.5 ? Colors.palette.amber : Colors.palette.red;
+
+const qualityLabel = (score: number): string =>
+  score >= 0.8 ? 'Good' : score >= 0.5 ? 'Fair' : 'Poor';
 
 const STATUS_CONFIG: Record<JobStatusType, StatusConfig> = {
   pending: {
@@ -137,20 +144,42 @@ export default function JobDetailScreen() {
   };
 
   const handleDownload = useCallback(async () => {
-    if (!jobId || jobStatus?.status !== 'completed' || !jobStatus?.preview_url) return;
+    if (!jobId || jobStatus?.status !== 'completed') return;
+    // Prefer the actual master/adapted file (output_url) when it is unencrypted.
+    // Encrypted masters cannot be decrypted client-side yet, so fall back to the
+    // unencrypted JPEG preview in that case. Also fall back for old jobs that
+    // predate the output_url field.
+    const isEncrypted = jobStatus.output_encrypted === true;
+    const downloadTarget = (!isEncrypted && jobStatus.output_url)
+      ? jobStatus.output_url
+      : jobStatus.preview_url;
+    if (!downloadTarget) {
+      // output_url and preview_url are both missing — job may still be finalising
+      // storage (edge case for older jobs). Give clear feedback rather than silent no-op.
+      Alert.alert(
+        'File Not Ready',
+        'The processed file is not yet available. Please wait a moment and try again.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
     setIsDownloading(true);
     setDownloadProgress(0);
     try {
+      // Determine file format from output_format metadata (reliable — stored at job creation).
+      // Fall back to URL extension check for legacy jobs that predate output_format field.
+      // Files are stored as .enc so we use output_format as the primary signal.
+      const { mimeType, ext } = outputFormatToMime(jobStatus.output_format);
       const result = await downloadJobOutput(
         jobId,
-        jobStatus.preview_url,
+        downloadTarget,
         (progress) => setDownloadProgress(progress.progress),
-        'jpg'
+        ext
       );
       if (!result.success) throw new Error(result.error || 'Download failed');
       setDownloadProgress(1);
       const shared = await shareFile(result.localPath, {
-        mimeType: 'image/jpeg',
+        mimeType,
         dialogTitle: 'Save Processed Document',
       });
       if (!shared) {
@@ -269,16 +298,16 @@ export default function JobDetailScreen() {
               <Text style={styles.statusHint}>{statusConfig.hint}</Text>
             )}
           </View>
-          {jobStatus?.quality_score !== undefined && isComplete && (
+          {isComplete && jobStatus?.output_quality_score != null && (
             <View style={[
               styles.qualityBadge,
-              { backgroundColor: jobStatus.quality_score >= 0.8 ? Colors.palette.green + '20' : Colors.palette.amber + '20' }
+              { backgroundColor: qualityColor(jobStatus.output_quality_score) + '20' },
             ]}>
               <Text style={[
                 styles.qualityText,
-                { color: jobStatus.quality_score >= 0.8 ? Colors.palette.green : Colors.palette.amber }
+                { color: qualityColor(jobStatus.output_quality_score) },
               ]}>
-                {Math.round(jobStatus.quality_score * 100)}% quality
+                {Math.round(jobStatus.output_quality_score * 100)}% · {qualityLabel(jobStatus.output_quality_score)}
               </Text>
             </View>
           )}
@@ -325,6 +354,38 @@ export default function JobDetailScreen() {
             </View>
           )}
         </View>
+
+        {/* Processing Quality */}
+        {isComplete && (jobStatus?.input_quality_score != null || jobStatus?.output_quality_score != null) && (
+          <View style={styles.card}>
+            <Text style={styles.sectionLabel}>Processing Quality</Text>
+
+            {jobStatus?.input_quality_score != null && (
+              <View style={[
+                styles.infoRow,
+                jobStatus?.output_quality_score == null ? styles.infoRowLast : undefined,
+              ]}>
+                <Text style={styles.infoLabel}>Before processing</Text>
+                <View style={[styles.qualityPill, { backgroundColor: qualityColor(jobStatus.input_quality_score) + '18' }]}>
+                  <Text style={[styles.qualityPillText, { color: qualityColor(jobStatus.input_quality_score) }]}>
+                    {Math.round(jobStatus.input_quality_score * 100)}% · {qualityLabel(jobStatus.input_quality_score)}
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            {jobStatus?.output_quality_score != null && (
+              <View style={[styles.infoRow, styles.infoRowLast]}>
+                <Text style={styles.infoLabel}>After processing</Text>
+                <View style={[styles.qualityPill, { backgroundColor: qualityColor(jobStatus.output_quality_score) + '18' }]}>
+                  <Text style={[styles.qualityPillText, { color: qualityColor(jobStatus.output_quality_score) }]}>
+                    {Math.round(jobStatus.output_quality_score * 100)}% · {qualityLabel(jobStatus.output_quality_score)}
+                  </Text>
+                </View>
+              </View>
+            )}
+          </View>
+        )}
 
         {/* Error Details */}
         {isFailed && (jobStatus?.error || jobStatus?.error_details) && (
@@ -576,6 +637,15 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   qualityText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  qualityPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
+  },
+  qualityPillText: {
     fontSize: 13,
     fontWeight: '600',
   },

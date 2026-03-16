@@ -38,7 +38,7 @@ import Colors from '../../constants/Colors';
 import { useAuth } from '../../contexts/AuthContext';
 import { documentsApi } from '../../services/api';
 import type { JobStatus } from '../../services/api';
-import { downloadJobOutput, shareFile } from '../../services/download';
+import { downloadJobOutput, shareFile, outputFormatToMime } from '../../services/download';
 import NotificationsPanel from '../../components/ui/NotificationsPanel';
 
 // ─── Document type display config ────────────────────────────────────────────
@@ -194,7 +194,6 @@ function DocumentDetailModal({ job, onClose }: { job: JobStatus; onClose: () => 
     });
 
     const previewUrl = detail?.preview_url ?? job.preview_url;
-    const downloadUrl = detail?.download_url;
     const displayName = job.document_name || docConfig.label;
     const qualityPct = job.quality_score != null ? Math.round(job.quality_score * 100) : null;
 
@@ -203,12 +202,30 @@ function DocumentDetailModal({ job, onClose }: { job: JobStatus; onClose: () => 
         : null;
 
     const handleDownload = async () => {
-        if (!downloadUrl) return;
+        // Prefer actual output file (JPEG/PDF), fall back to preview JPEG.
+        // Never download the ZIP — users expect the actual image/document.
+        const src = detail ?? job;
+        const isEncrypted = src.output_encrypted === true;
+        const downloadTarget =
+            (!isEncrypted && src.output_url) ? src.output_url
+            : src.preview_url                ? src.preview_url
+            : null;
+
+        if (!downloadTarget) {
+            Alert.alert('File Not Ready', 'The processed file is not yet available. Please wait a moment and try again.');
+            return;
+        }
+
+        const usingPreview = !(!isEncrypted && src.output_url) && !!src.preview_url;
+        const { mimeType, ext } = outputFormatToMime(src.output_format);
+        const fileExt  = usingPreview ? 'jpg' : ext;
+        const fileMime = usingPreview ? 'image/jpeg' : mimeType;
+
         setDownloading(true);
         try {
-            const result = await downloadJobOutput(job.job_id, downloadUrl, undefined, 'zip');
+            const result = await downloadJobOutput(job.job_id, downloadTarget, undefined, fileExt);
             if (result.success) {
-                await shareFile(result.localPath, { dialogTitle: 'Save Document' });
+                await shareFile(result.localPath, { mimeType: fileMime, dialogTitle: 'Save Document' });
             } else {
                 Alert.alert('Download Failed', result.error || 'Could not download the document.');
             }
@@ -315,7 +332,7 @@ function DocumentDetailModal({ job, onClose }: { job: JobStatus; onClose: () => 
                         <TouchableOpacity
                             style={styles.btnSecondary}
                             onPress={handleDownload}
-                            disabled={downloading || detailLoading || !downloadUrl}
+                            disabled={downloading || detailLoading}
                             activeOpacity={0.75}
                         >
                             {downloading

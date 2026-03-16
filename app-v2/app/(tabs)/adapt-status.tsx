@@ -3,6 +3,8 @@
  *
  * Shows adaptation job progress and provides download when complete.
  * Handles one or more adapt jobs (e.g. photo + signature for a single portal export).
+ *
+ * Downloads the actual adapted file (JPEG, PDF, etc.) — NOT a ZIP archive.
  */
 
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
@@ -21,15 +23,15 @@ import {
   CheckCircle,
   XCircle,
   Download,
-  Share2,
   ArrowLeft,
   RefreshCw,
-  FileArchive,
+  FileText,
+  FileImage,
 } from 'lucide-react-native';
 import { useQueries } from '@tanstack/react-query';
 import Colors from '../../constants/Colors';
 import { documentsApi, JobStatus } from '../../services/api';
-import { downloadJobOutput, shareFile } from '../../services/download';
+import { downloadJobOutput, shareFile, outputFormatToMime } from '../../services/download';
 
 type AdaptStatus = 'pending' | 'processing' | 'completed' | 'failed';
 
@@ -59,6 +61,14 @@ const STATUS_CONFIG: Record<AdaptStatus, {
     subtitle: 'Something went wrong',
   },
 };
+
+/** Human-readable label for a document slot, e.g. "id_proof" → "Id Proof" */
+function docLabel(job: JobStatus): string {
+  const subtype = job.document_subtype;
+  if (subtype) return subtype;
+  const raw = job.document_name || job.document_type || 'Document';
+  return raw.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 export default function AdaptStatusScreen() {
   const params = useLocalSearchParams<{ jobIds: string; portalName?: string }>();
@@ -115,26 +125,60 @@ export default function AdaptStatusScreen() {
     outputRange: ['0deg', '360deg'],
   });
 
+  /**
+   * Download the adapted document as its actual file format (JPEG, PDF, etc.).
+   *
+   * Preference order:
+   *   1. output_url  — direct signed URL to the adapted file (master_path)
+   *   2. preview_url — unencrypted JPEG preview (lower quality, but real image not ZIP)
+   *
+   * File format is determined from output_format ("jpeg" | "pdf") stored in job metadata.
+   * Never downloads a ZIP — if no direct file is available, shows an error.
+   */
   const handleDownload = useCallback(async (job: JobStatus) => {
-    if (!job.download_url) return;
+    const { mimeType, ext } = outputFormatToMime(job.output_format);
+
+    // Pick best available URL — prefer the actual output file, fall back to preview JPEG.
+    // Never use download_url (ZIP archive): that is not a user-friendly format.
+    const isEncrypted = job.output_encrypted === true;
+    const downloadTarget =
+      (!isEncrypted && job.output_url) ? job.output_url
+      : job.preview_url                ? job.preview_url
+      : null;
+
+    if (!downloadTarget) {
+      Alert.alert(
+        'File Not Ready',
+        'The processed file is still being prepared. Please wait a moment and try again.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
+    // Use correct format for the chosen URL (preview is always JPEG even if schema says PDF)
+    const usingPreview = !(!isEncrypted && job.output_url) && !!job.preview_url;
+    const fileExt  = usingPreview ? 'jpg' : ext;
+    const fileMime = usingPreview ? 'image/jpeg' : mimeType;
+
     setDownloadingId(job.job_id);
     try {
       const result = await downloadJobOutput(
         job.job_id,
-        job.download_url,
+        downloadTarget,
         () => {},
+        fileExt,
       );
       if (!result.success) throw new Error(result.error || 'Download failed');
       await shareFile(result.localPath, {
-        mimeType: 'application/zip',
-        dialogTitle: `Save ${portalName || 'Portal'} Export`,
+        mimeType: fileMime,
+        dialogTitle: `Save ${docLabel(job)}`,
       });
     } catch (error) {
       Alert.alert('Download Failed', 'Could not download the file. Please try again.');
     } finally {
       setDownloadingId(null);
     }
-  }, [portalName]);
+  }, []);
 
   const handleRetryAll = useCallback(() => {
     queries.forEach(q => q.refetch());
@@ -204,25 +248,31 @@ export default function AdaptStatusScreen() {
         {/* Per-job download items when complete */}
         {allComplete && (
           <View style={styles.fileList}>
-            {statuses.map((job) => (
-              <View key={job.job_id} style={styles.fileItem}>
-                <View style={styles.fileIcon}>
-                  <FileArchive size={20} color="#89C7FE" />
+            {statuses.map((job) => {
+              const { ext } = outputFormatToMime(job.output_format);
+              const isPdf = ext === 'pdf';
+              return (
+                <View key={job.job_id} style={styles.fileItem}>
+                  <View style={styles.fileIcon}>
+                    {isPdf
+                      ? <FileText size={20} color="#89C7FE" />
+                      : <FileImage size={20} color="#89C7FE" />}
+                  </View>
+                  <Text style={styles.fileName} numberOfLines={1}>
+                    {docLabel(job)}.{ext}
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.downloadButton, downloadingId === job.job_id && styles.downloadButtonDisabled]}
+                    onPress={() => handleDownload(job)}
+                    disabled={downloadingId === job.job_id}
+                  >
+                    {downloadingId === job.job_id
+                      ? <ActivityIndicator size="small" color={Colors.palette.white} />
+                      : <Download size={16} color={Colors.palette.white} />}
+                  </TouchableOpacity>
                 </View>
-                <Text style={styles.fileName} numberOfLines={1}>
-                  {portalName || 'Portal'}_{job.document_type || 'export'}.zip
-                </Text>
-                <TouchableOpacity
-                  style={[styles.downloadButton, downloadingId === job.job_id && styles.downloadButtonDisabled]}
-                  onPress={() => handleDownload(job)}
-                  disabled={downloadingId === job.job_id}
-                >
-                  {downloadingId === job.job_id
-                    ? <ActivityIndicator size="small" color={Colors.palette.white} />
-                    : <Download size={16} color={Colors.palette.white} />}
-                </TouchableOpacity>
-              </View>
-            ))}
+              );
+            })}
           </View>
         )}
       </View>
@@ -239,7 +289,7 @@ export default function AdaptStatusScreen() {
         {allComplete && jobIdList.length > 1 && (
           <TouchableOpacity
             style={styles.primaryButton}
-            onPress={() => statuses.forEach(j => j.download_url && handleDownload(j))}
+            onPress={() => statuses.forEach(j => handleDownload(j))}
             disabled={!!downloadingId}
             activeOpacity={0.8}
           >
@@ -255,7 +305,7 @@ export default function AdaptStatusScreen() {
         {allComplete && jobIdList.length === 1 && (
           <TouchableOpacity
             style={styles.primaryButton}
-            onPress={() => statuses[0]?.download_url && handleDownload(statuses[0])}
+            onPress={() => statuses[0] && handleDownload(statuses[0])}
             disabled={!!downloadingId}
             activeOpacity={0.8}
           >
@@ -263,7 +313,7 @@ export default function AdaptStatusScreen() {
               ? <ActivityIndicator size="small" color={Colors.palette.white} />
               : <>
                   <Download size={20} color={Colors.palette.white} />
-                  <Text style={styles.primaryButtonText}>Download ZIP</Text>
+                  <Text style={styles.primaryButtonText}>Download</Text>
                 </>}
           </TouchableOpacity>
         )}

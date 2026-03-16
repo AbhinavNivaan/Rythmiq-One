@@ -50,11 +50,11 @@ def compute_sharpness(gray: NDArray[np.uint8]) -> float:
     """
     laplacian = cv2.Laplacian(gray, cv2.CV_64F)
     variance = laplacian.var()
-    
-    # Normalize to [0, 1] range
-    # Typical document images have variance between 50-500
-    normalized = min(max(variance, 0.0), SHARPNESS_MAX) / SHARPNESS_MAX
-    return float(normalized)
+
+    # Normalize to [0, 1] range using [SHARPNESS_MIN, SHARPNESS_MAX].
+    # Images below SHARPNESS_MIN are considered blurry and score 0.0.
+    normalized = (variance - SHARPNESS_MIN) / (SHARPNESS_MAX - SHARPNESS_MIN)
+    return float(min(max(normalized, 0.0), 1.0))
 
 
 def compute_exposure(gray: NDArray[np.uint8]) -> float:
@@ -192,24 +192,25 @@ def compute_edge_density(gray: NDArray[np.uint8]) -> float:
     edge_pixels = np.count_nonzero(edges)
     density = edge_pixels / total_pixels
     
-    # Ideal density for documents is around 5-15%
-    # Too low = mostly blank
-    # Too high = noisy or overly complex
-    if density < 0.02:
-        # Very low density - likely blank or nearly blank
-        score = density / 0.02
-    elif density < 0.05:
-        # Low density - acceptable but not ideal
-        score = 0.7 + 0.3 * ((density - 0.02) / 0.03)
-    elif density < 0.15:
-        # Ideal range
+    # Ideal density for clean cropped documents is 2–12 % (text lines on white paper).
+    # The wider ideal band (vs. a full scene photo which has more background texture)
+    # prevents penalising clean document crops that were correctly separated from a
+    # busy background.
+    if density < 0.01:
+        # Nearly blank — no content
+        score = density / 0.01
+    elif density < 0.03:
+        # Very low — sparse text or margins
+        score = 0.75 + 0.25 * ((density - 0.01) / 0.02)
+    elif density < 0.12:
+        # Ideal range for text documents
         score = 1.0
-    elif density < 0.25:
-        # High density - getting noisy
-        score = 1.0 - 0.3 * ((density - 0.15) / 0.10)
+    elif density < 0.22:
+        # Getting noisy
+        score = 1.0 - 0.3 * ((density - 0.12) / 0.10)
     else:
-        # Very high density - probably noisy
-        score = max(0.3, 0.7 - (density - 0.25))
+        # Very high — probably noisy / cluttered
+        score = max(0.3, 0.7 - (density - 0.22))
     
     return float(score)
 

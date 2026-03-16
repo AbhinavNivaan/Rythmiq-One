@@ -160,28 +160,37 @@ class MockCamberClient:
         self, job_id: UUID, payload: dict[str, Any]
     ) -> dict[str, Any]:
         """
-        Generate a mock success result (simulating worker output).
-        
-        Minimal result that satisfies webhook handler:
-        - Contains dummy structured data
-        - Includes confidence scores
-        - Has quality score
+        Generate a mock success result matching the real worker's ProcessResponse.
+
+        Structure mirrors: worker/server.py ProcessResponse(success=True, output=SuccessResult.to_dict())
+        so that both the inline path (_submit_job_to_processing) and the webhook handler
+        can extract master_path, quality scores, and artifact paths correctly.
         """
+        user_id = payload.get("user_id", "mock-user")
+        jid = str(job_id)
         return {
             "status": "success",
-            "job_id": str(job_id),
-            "result": {
-                "structured": {
-                    "field_1": "mock_value_1",
-                    "field_2": "mock_value_2",
+            "job_id": jid,
+            "success": True,
+            "output": {
+                "status": "success",
+                "job_id": jid,
+                "input_quality_score": 0.85,
+                "output_quality_score": 0.92,
+                "warnings": [],
+                "artifacts": {
+                    "master_path": f"master/{user_id}/{jid}/{jid}.enc",
+                    "preview_path": f"output/{user_id}/{jid}/preview.jpg",
+                    "encrypted": False,
                 },
-                "confidence": {
-                    "field_1": 0.95,
-                    "field_2": 0.87,
+                "metrics": {
+                    "ocr_confidence": 0.95,
+                    "processing_ms": 150,
                 },
-                "quality_score": 0.92,
-                "page_count": 1,
-                "processing_time_ms": 150,
+            },
+            "metrics": {
+                "ocr_confidence": 0.95,
+                "processing_ms": 150,
             },
         }
 

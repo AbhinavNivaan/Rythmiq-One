@@ -26,10 +26,9 @@ import {
   Trash2,
 } from 'lucide-react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import * as Sharing from 'expo-sharing';
-import * as FileSystem from 'expo-file-system';
 import Colors from '../../constants/Colors';
 import { documentsApi, JobStatus } from '../../services/api';
+import { downloadJobOutput, shareFile, outputFormatToMime } from '../../services/download';
 import { subscribeUploadStatus, UploadStatus } from '../../services/backgroundUpload';
 
 type JobStatusType = 'pending' | 'processing' | 'completed' | 'failed';
@@ -101,18 +100,29 @@ export default function JobsScreen() {
       Alert.alert('Not Ready', 'This job is not yet complete.');
       return;
     }
+
+    // Prefer actual output file (JPEG/PDF), fall back to preview JPEG.
+    // Never download the ZIP — users expect the actual file.
+    const isEncrypted = job.output_encrypted === true;
+    const downloadTarget =
+      (!isEncrypted && job.output_url) ? job.output_url
+      : job.preview_url                ? job.preview_url
+      : null;
+
+    if (!downloadTarget) {
+      Alert.alert('File Not Ready', 'The processed file is not yet available. Please wait a moment and try again.');
+      return;
+    }
+
+    const usingPreview = !(!isEncrypted && job.output_url) && !!job.preview_url;
+    const { mimeType, ext } = outputFormatToMime(job.output_format);
+    const fileExt  = usingPreview ? 'jpg' : ext;
+    const fileMime = usingPreview ? 'image/jpeg' : mimeType;
+
     try {
-      const { download_url } = await documentsApi.getJobOutput(job.job_id);
-      const filename = `rythmiq_${job.job_id.substring(0, 8)}.zip`;
-      const fs = FileSystem as any;
-      const cacheDir = fs.cacheDirectory || fs.documentDirectory || '';
-      const result = await FileSystem.downloadAsync(download_url, `${cacheDir}${filename}`);
-      if (result.status !== 200) throw new Error('Download failed');
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(result.uri, { mimeType: 'application/zip', dialogTitle: 'Save Processed Documents' });
-      } else {
-        Alert.alert('Success', 'File downloaded to: ' + result.uri);
-      }
+      const result = await downloadJobOutput(job.job_id, downloadTarget, undefined, fileExt);
+      if (!result.success) throw new Error(result.error || 'Download failed');
+      await shareFile(result.localPath, { mimeType: fileMime, dialogTitle: 'Save Document' });
     } catch (error) {
       Alert.alert('Download Failed', 'Could not download the file. Please try again.');
     }
@@ -131,8 +141,16 @@ export default function JobsScreen() {
     const isNew = newJobIds.includes(item.job_id);
     const isActive = item.status === 'processing' || item.status === 'pending';
 
-    const hasQuality = item.quality_score !== undefined && item.status === 'completed';
-    const qualityColor = (item.quality_score ?? 0) >= 0.8 ? Colors.palette.green : Colors.palette.amber;
+    // Prefer output (post-processing) quality; fall back to input quality if output not yet available.
+    const displayScore = item.output_quality_score ?? item.input_quality_score ?? null;
+    const hasQuality = displayScore != null && item.status === 'completed';
+    const scoreColor = displayScore == null
+      ? Colors.palette.amber
+      : displayScore >= 0.8
+        ? Colors.palette.green
+        : displayScore >= 0.5
+          ? Colors.palette.amber
+          : Colors.palette.red;
 
     return (
       <TouchableOpacity
@@ -158,9 +176,9 @@ export default function JobsScreen() {
           <View style={styles.jobMeta}>
             <Text style={[styles.statusChip, { color: cfg.color }]}>{cfg.label}</Text>
             {hasQuality && (
-              <View style={[styles.qualityBadge, { backgroundColor: qualityColor + '18' }]}>
-                <Text style={[styles.qualityText, { color: qualityColor }]}>
-                  {Math.round((item.quality_score ?? 0) * 100)}%
+              <View style={[styles.qualityBadge, { backgroundColor: scoreColor + '18' }]}>
+                <Text style={[styles.qualityText, { color: scoreColor }]}>
+                  {Math.round((displayScore ?? 0) * 100)}%
                 </Text>
               </View>
             )}

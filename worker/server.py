@@ -162,6 +162,7 @@ async def _update_job_status_in_db(result: SuccessResult | FailureResult) -> Non
             update_data = {
                 "status": "completed",
                 "completed_at": datetime.now(timezone.utc).isoformat(),
+                "master_path": result.artifacts.master_path,
             }
         else:
             update_data = {

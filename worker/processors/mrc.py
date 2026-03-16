@@ -408,7 +408,13 @@ def _assemble_mrc_pdf_layers(
         Filter=pikepdf.Name.JPXDecode,
     )
 
-    # Foreground image XObject (JBIG2, full resolution, 1-bit greyscale)
+    # Foreground image XObject (JBIG2, full resolution, 1-bit image mask).
+    #
+    # ImageMask=True makes white pixels (bit=1) transparent so the JPEG2000
+    # background shows through.  Decode=[1, 0] inverts the sample mapping:
+    # bit 1 (text pixels, as encoded by decompose_layers) → paint with current
+    # fill colour; bit 0 (background pixels) → transparent.
+    # Per PDF spec §8.9.6.1 ColorSpace must be omitted for image masks.
     jbig2_globals_stream = pikepdf.Stream(pdf, fg_globals)
     fg_xobj = pikepdf.Stream(pdf, fg_page)
     fg_xobj.stream_dict = pikepdf.Dictionary(
@@ -416,17 +422,21 @@ def _assemble_mrc_pdf_layers(
         Subtype=pikepdf.Name.Image,
         Width=fg_width,
         Height=fg_height,
-        ColorSpace=pikepdf.Name.DeviceGray,
+        ImageMask=pikepdf.Boolean(True),
         BitsPerComponent=1,
+        Decode=pikepdf.Array([1, 0]),
         Filter=pikepdf.Name.JBIG2Decode,
         DecodeParms=pikepdf.Dictionary(
             JBIG2Globals=jbig2_globals_stream,
         ),
     )
 
-    # Content stream: background scaled to full page, foreground 1:1
+    # Content stream: background scaled to full page, then foreground stencil
+    # painted in black on top.  "0 0 0 rg" sets the non-stroking fill colour
+    # used by the image-mask paint operation.
     content_parts = [
         f"q {page_w_pts:.4f} 0 0 {page_h_pts:.4f} 0 0 cm /BG Do Q",
+        "0 0 0 rg",
         f"q {page_w_pts:.4f} 0 0 {page_h_pts:.4f} 0 0 cm /FG Do Q",
     ]
     if text_runs:

@@ -68,7 +68,7 @@ class CreateJobResponse(BaseModel):
 
 
 class SubmitJobRequest(BaseModel):
-    output_format: str = "jpeg"  # "jpeg" | "jpeg2000" | "pdf_mrc"
+    output_format: Literal["jpeg", "jpeg2000", "pdf_mrc"] = "jpeg"
 
 
 class SubmitJobResponse(BaseModel):
@@ -96,6 +96,10 @@ class JobStatusResponse(BaseModel):
     error_details: dict[str, Any] | None = None
     download_url: str | None = None
     preview_url: str | None = None
+    output_url: str | None = None
+    output_encrypted: bool = False
+    output_nonce: str | None = None
+    output_format: str | None = None  # "jpeg" | "pdf" — actual format of the file at output_url
     input_quality_score: float | None = None
     output_quality_score: float | None = None
 

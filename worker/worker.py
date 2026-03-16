@@ -57,6 +57,61 @@ from crypto import encrypt_file as crypto_encrypt, decrypt_file as crypto_decryp
 
 logger = logging.getLogger(__name__)
 
+_PDF_MAGIC = b"%PDF"
+
+
+def _extract_image_from_pdf(pdf_bytes: bytes) -> bytes:
+    """
+    Extract the first embedded raster image from a single-page PDF master.
+
+    Our lossless master pipeline (JPEG2000 / MRC) stores the processed image
+    inside a PDF XObject.  When that master is used as the source for an adapt
+    job we need raw image bytes so the quality-assessment and enhancement stages
+    can operate on them normally.
+
+    Uses pikepdf (already required by processors/mrc.py) so no new dependencies
+    are introduced.
+
+    Returns:
+        JPEG bytes of the first image found in the PDF.
+
+    Raises:
+        WorkerError: If the PDF has no extractable image.
+    """
+    try:
+        import io as _io
+        import pikepdf
+        from PIL import Image as _PILImage
+
+        pdf = pikepdf.open(_io.BytesIO(pdf_bytes))
+        page = pdf.pages[0]
+
+        for key in page.images:
+            pdfimage = pikepdf.PdfImage(page.images[key])
+            pil_img = pdfimage.as_pil_image().convert("RGB")
+            buf = _io.BytesIO()
+            pil_img.save(buf, format="JPEG", quality=95, optimize=True)
+            logger.info(
+                "Extracted image from PDF master: %dx%d → %d bytes JPEG",
+                pil_img.width, pil_img.height, buf.tell(),
+            )
+            return buf.getvalue()
+
+        raise WorkerError(
+            code=ErrorCode.DECODE_FAILED,
+            stage=ProcessingStage.FETCH,
+            message="PDF master contains no extractable image XObjects",
+        )
+    except WorkerError:
+        raise
+    except Exception as exc:
+        raise WorkerError(
+            code=ErrorCode.DECODE_FAILED,
+            stage=ProcessingStage.FETCH,
+            message=f"Failed to extract image from PDF master: {exc}",
+            details={"exception_type": type(exc).__name__},
+        )
+
 
 def parse_payload(raw: str) -> Dict[str, Any]:
     """
@@ -172,6 +227,15 @@ def process_job(payload: JobPayload) -> SuccessResult:
                 details={"exception_type": type(e).__name__},
             )
     
+    # Stage 1c: PDF UNWRAP — adapt-from-master only.
+    # Lossless masters (JPEG2000 / MRC) are stored as PDF files.  The rest of
+    # the pipeline (quality, enhancement, schema) operates on raster image
+    # bytes, so we extract the embedded image from the PDF page here.
+    # JPEG/PNG masters pass through unchanged (magic-byte check is O(4 bytes)).
+    if payload.mode == "adapt" and raw_data[:4] == _PDF_MAGIC:
+        logger.info("PDF master detected in adapt mode — extracting embedded image")
+        raw_data = _extract_image_from_pdf(raw_data)
+
     # Stage 2: QUALITY - Assess input quality (type-aware weights/metrics)
     quality_result = assess_quality(raw_data, payload.document_type)
 
@@ -194,6 +258,13 @@ def process_job(payload: JobPayload) -> SuccessResult:
     # Stage 3: ENHANCE - Route to type-specific pipeline
     # GUARD-001: treat high-quality images as readable so NLM denoising and CLAHE
     # are skipped.  Applying heavy denoising to a sharp 80 %+ image degrades it.
+    # WP-7: pre-binarise in Stage 3 (on full-res CLAHE image) for binary portal schemas.
+    # This gives Sauvola better input than the post-resize image it would see in Stage 5.
+    _is_binary_schema = (
+        payload.mode == "adapt"
+        and payload.portal_schema is not None
+        and payload.portal_schema.schema_definition.colour_mode == "binary"
+    )
     enhancement_options = EnhancementOptions(
         quality_score=quality_result.score,
         is_readable=quality_result.score >= READABLE_QUALITY_THRESHOLD,
@@ -201,6 +272,7 @@ def process_job(payload: JobPayload) -> SuccessResult:
         document_category=payload.document_category,
         document_subtype=payload.document_subtype,
         quality_breakdown=quality_result.breakdown,
+        binarise_output=_is_binary_schema,
     )
     enhanced = enhance_image(raw_data, enhancement_options)
 
@@ -278,8 +350,12 @@ def process_job(payload: JobPayload) -> SuccessResult:
         content_type=schema_result.content_type,
     )
     
+    # Preview must always be a JPEG for the mobile app's Image component.
+    # When the master is a PDF (lossless/MRC mode), use the enhanced JPEG
+    # (final_image_data) as the preview source instead of the PDF bytes.
+    preview_data = final_image_data if schema_result.content_type == "application/pdf" else schema_result.image_data
     preview_path = storage.upload_preview(
-        data=schema_result.image_data,
+        data=preview_data,
         user_id=payload.user_id,
         job_id=payload.job_id,
     )

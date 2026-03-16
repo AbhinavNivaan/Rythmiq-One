@@ -28,7 +28,7 @@ from typing import Dict, Optional, Tuple, Literal
 import cv2
 import numpy as np
 from numpy.typing import NDArray
-from PIL import Image
+from PIL import Image, ImageOps
 
 from models import EnhancementResult, QualityBreakdown
 from errors import WorkerError, ErrorCode, ProcessingStage
@@ -54,8 +54,46 @@ class EnhancementOptions:
     is_readable: bool = False
     # Document type: "photo", "signature", or "document"
     document_type: str = "document"
+    # Rich vault taxonomy — category and subtype chosen by the user in the app.
+    # e.g. category="photograph", subtype="Passport Photo"
+    #      category="identity",   subtype="PAN Card"
+    # Used to override enhancement routing and behaviour beyond the coarse 3-value
+    # document_type enum.
+    document_category: Optional[str] = None
+    document_subtype: Optional[str] = None
     # Full quality breakdown — used by photo/signature branches for per-metric decisions
     quality_breakdown: Optional[QualityBreakdown] = None
+    # WP-7: Pre-binarise in enhancement so Sauvola operates on the full-resolution
+    # CLAHE-normalised image rather than on a post-resize downsampled copy.
+    # Only active when GUARD-001 does NOT skip enhancement (i.e. skip_enhancement=False).
+    # For readable/high-quality images the Stage 5 convert_colour_mode path handles it.
+    binarise_output: bool = False
+
+
+def _apply_exif_transpose(data: bytes) -> bytes:
+    """
+    Apply Pillow's exif_transpose to upright the image using its EXIF
+    orientation tag before any OpenCV processing.
+
+    - Returns the original bytes unchanged when no rotation is needed
+      (avoids a JPEG re-encode cycle in the common case).
+    - Resets the orientation tag to 1 in the output so downstream
+      correct_orientation_exif calls are a guaranteed no-op.
+    - Any error returns original bytes silently.
+    """
+    try:
+        pil = Image.open(io.BytesIO(data))
+        transposed = ImageOps.exif_transpose(pil)
+        if transposed is pil:
+            return data  # already upright — skip re-encode
+        buf = io.BytesIO()
+        # Save as lossless PNG so the pipeline works on uncompressed pixels.
+        # The final JPEG encode happens once at the end of enhance_image.
+        transposed.save(buf, format="PNG")
+        logger.info("[ENHANCEMENT] EXIF transpose applied (phone camera rotation corrected)")
+        return buf.getvalue()
+    except Exception:
+        return data
 
 
 def decode_image(data: bytes) -> NDArray[np.uint8]:
@@ -231,6 +269,10 @@ def correct_orientation(img: NDArray[np.uint8]) -> Tuple[NDArray[np.uint8], bool
     Now includes GUARD-003: large rotation detection (90°/180°/270°)
     before skew correction.
     
+    Uses robust median-angle estimation (resistant to outlier lines)
+    instead of histogram peak, and applies Hough lines on multiple
+    preprocessed edge maps for better detection on low-contrast images.
+    
     Args:
         img: BGR image array
         
@@ -245,76 +287,85 @@ def correct_orientation(img: NDArray[np.uint8]) -> Tuple[NDArray[np.uint8], bool
         # Continue with skew correction on the rotated image
     
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    h, w = img.shape[:2]
+    min_line_len = max(30, w // 8)
+
+    # Try multiple edge detection approaches to find lines
+    edge_candidates = []
+
+    # Standard Canny
+    edges1 = cv2.Canny(gray, 50, 150)
+    edge_candidates.append(edges1)
+
+    # Bilateral + Canny (better for textured backgrounds)
+    bilateral = cv2.bilateralFilter(gray, d=9, sigmaColor=75, sigmaSpace=75)
+    edges2 = cv2.Canny(bilateral, 30, 100)
+    edge_candidates.append(edges2)
+
+    # Blurred + lower thresholds (for low contrast)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges3 = cv2.Canny(blurred, 20, 80)
+    edge_candidates.append(edges3)
+
+    # Collect angles from all edge maps
+    all_angles: list[float] = []
+    for edges in edge_candidates:
+        lines = cv2.HoughLinesP(
+            edges,
+            rho=1,
+            theta=np.pi / 180,
+            threshold=60,
+            minLineLength=min_line_len,
+            maxLineGap=10,
+        )
+        if lines is None:
+            continue
+        for line in lines:
+            x1, y1, x2, y2 = line[0]
+            dx = x2 - x1
+            dy = y2 - y1
+            if abs(dx) < 1:
+                continue
+            angle_deg = math.degrees(math.atan2(dy, dx))
+            # Only consider near-horizontal lines (within ±45°)
+            if abs(angle_deg) <= 45:
+                all_angles.append(angle_deg)
+
+    if len(all_angles) < 3:
+        return img, False
+
+    # Robust angle: use median (resistant to outlier lines)
+    dominant_angle = float(np.median(all_angles))
     
-    # Detect edges
-    edges = cv2.Canny(gray, 50, 150)
-    
-    # Use Hough transform to detect lines
-    lines = cv2.HoughLinesP(
-        edges,
-        rho=1,
-        theta=np.pi / 180,
-        threshold=100,
-        minLineLength=50,
-        maxLineGap=10,
+    # Only correct if angle is significant (> 0.5 degree)
+    if abs(dominant_angle) < 0.5:
+        return img, False
+
+    logger.info(
+        f"[ENHANCEMENT] Hough skew correction: {dominant_angle:.2f}° "
+        f"(from {len(all_angles)} lines)"
     )
     
-    if lines is None or len(lines) < 5:
-        # Not enough lines to determine orientation
-        return img, False
-    
-    # Calculate angles of all lines
-    angles = []
-    for line in lines:
-        x1, y1, x2, y2 = line[0]
-        if x2 != x1:
-            angle = np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi
-            angles.append(angle)
-    
-    if not angles:
-        return img, False
-    
-    # Find the dominant angle
-    angles = np.array(angles)
-    
-    # Normalize angles to [-90, 90]
-    angles = np.mod(angles + 90, 180) - 90
-    
-    # Compute histogram of angles
-    hist, bin_edges = np.histogram(angles, bins=180, range=(-90, 90))
-    
-    # Find peak (most common angle)
-    peak_idx = np.argmax(hist)
-    dominant_angle = bin_edges[peak_idx] + 0.5
-    
-    # Only correct if angle is significant (> 1 degree)
-    if abs(dominant_angle) < 1.0:
-        return img, False
-    
     # Rotate image
-    h, w = img.shape[:2]
-    center = (w // 2, h // 2)
-    
-    # Get rotation matrix
+    center = (w / 2.0, h / 2.0)
     rotation_matrix = cv2.getRotationMatrix2D(center, dominant_angle, 1.0)
     
-    # Calculate new image bounds
-    cos = abs(rotation_matrix[0, 0])
-    sin = abs(rotation_matrix[0, 1])
-    new_w = int(h * sin + w * cos)
-    new_h = int(h * cos + w * sin)
+    cos_a = abs(rotation_matrix[0, 0])
+    sin_a = abs(rotation_matrix[0, 1])
+    new_w = int(h * sin_a + w * cos_a)
+    new_h = int(h * cos_a + w * sin_a)
     
-    # Adjust rotation matrix for new bounds
     rotation_matrix[0, 2] += (new_w - w) / 2
     rotation_matrix[1, 2] += (new_h - h) / 2
     
-    # Apply rotation
+    # Apply rotation — use BORDER_CONSTANT (white) to avoid streak artifacts
     rotated = cv2.warpAffine(
         img,
         rotation_matrix,
         (new_w, new_h),
         flags=cv2.INTER_LINEAR,
-        borderMode=cv2.BORDER_REPLICATE,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(255, 255, 255),
     )
     
     return rotated, True
@@ -660,36 +711,616 @@ def crop_borders(
 # Document boundary detection + straighten/crop
 # ---------------------------------------------------------------------------
 
-# Document must cover at least this fraction of image area to be detected
-_DOC_DETECT_MIN_AREA_FRACTION = 0.15
-# Skip if it covers >90% — image is already cropped, no background to remove
-_DOC_DETECT_MAX_AREA_FRACTION = 0.90
-# Aspect ratio of detected document: longest side / shortest side must be ≤ this
+# Document must cover at least this fraction of image area to be detected.
+_DOC_DETECT_MIN_AREA_FRACTION = 0.10
+# Allow near-full-frame cards so already-cropped tilted docs can be straightened.
+_DOC_DETECT_MAX_AREA_FRACTION = 0.999
+# Aspect ratio of detected document: longest side / shortest side must be in range.
+_DOC_DETECT_MIN_ASPECT_RATIO = 1.12
 _DOC_DETECT_MAX_ASPECT_RATIO = 5.0
 # Contour must fill at least this fraction of its rotated bounding rect
-_DOC_DETECT_MIN_SOLIDITY = 0.65
+_DOC_DETECT_MIN_SOLIDITY = 0.60
+# Epsilon multiplier for polygon approximation (fraction of arc length)
+_POLY_APPROX_EPSILON = 0.02
+
+# ---------------------------------------------------------------------------
+# Document taxonomy — drives routing and orientation decisions.
+# These mirror the vault categories/subtypes the user selects in the app.
+# ---------------------------------------------------------------------------
+
+# Identity card subtypes that are LANDSCAPE (wider than tall).
+# Never rotate these to portrait after a successful perspective crop.
+_LANDSCAPE_IDENTITY_SUBTYPES: frozenset[str] = frozenset({
+    "PAN Card", "Aadhaar Card", "Voter ID", "Driving Licence", "Ration Card",
+})
+
+# Photograph subtypes that must come out PORTRAIT (taller than wide).
+# Only these trigger a 90° rotate-to-portrait correction after crop.
+_PORTRAIT_PHOTO_SUBTYPES: frozenset[str] = frozenset({
+    "Passport Photo", "ID Photo", "Profile Photo",
+})
+
+# Photograph subtypes that are expected to be LANDSCAPE (wider than tall).
+_LANDSCAPE_PHOTO_SUBTYPES: frozenset[str] = frozenset({
+    "Postcard Photo",
+})
+
+# document_category values that should always use the full document pipeline
+# (perspective crop + optional denoising/CLAHE) regardless of document_type.
+_DOCUMENT_PIPELINE_CATEGORIES: frozenset[str] = frozenset({
+    "identity", "academic", "certificate", "financial", "address", "other",
+})
+
+
+def _order_corners(pts: NDArray[np.float32]) -> NDArray[np.float32]:
+    """
+    Order 4 corner points as: top-left, top-right, bottom-right, bottom-left.
+
+    This is essential for a correct perspective transform — wrong ordering
+    produces hourglass/butterfly warps.
+
+    Algorithm:
+      1. Sum (x + y): smallest = top-left, largest = bottom-right
+      2. Diff (y - x): smallest = top-right, largest = bottom-left
+    """
+    rect = np.zeros((4, 2), dtype=np.float32)
+    s = pts.sum(axis=1)
+    d = np.diff(pts, axis=1).squeeze()
+
+    rect[0] = pts[np.argmin(s)]   # top-left
+    rect[2] = pts[np.argmax(s)]   # bottom-right
+    rect[1] = pts[np.argmin(d)]   # top-right
+    rect[3] = pts[np.argmax(d)]   # bottom-left
+
+    return rect
+
+
+def _perspective_crop(
+    img: NDArray[np.uint8],
+    corners: NDArray[np.float32],
+) -> Optional[NDArray[np.uint8]]:
+    """
+    Apply a 4-corner perspective transform to produce a top-down view.
+
+    Args:
+        img: Source BGR image
+        corners: Ordered 4 corner points (TL, TR, BR, BL)
+
+    Returns:
+        Warped image or None if the result would be degenerate.
+    """
+    tl, tr, br, bl = corners
+
+    # Compute output dimensions from the max of each edge pair
+    width_top = np.linalg.norm(tr - tl)
+    width_bot = np.linalg.norm(br - bl)
+    out_w = int(max(width_top, width_bot))
+
+    height_left = np.linalg.norm(bl - tl)
+    height_right = np.linalg.norm(br - tr)
+    out_h = int(max(height_left, height_right))
+
+    if out_w < 50 or out_h < 50:
+        return None
+
+    dst = np.array([
+        [0, 0],
+        [out_w - 1, 0],
+        [out_w - 1, out_h - 1],
+        [0, out_h - 1],
+    ], dtype=np.float32)
+
+    M = cv2.getPerspectiveTransform(corners, dst)
+    warped = cv2.warpPerspective(
+        img, M, (out_w, out_h),
+        flags=cv2.INTER_LANCZOS4,  # higher quality than INTER_LINEAR — preserves sharpness
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(255, 255, 255),
+    )
+    return warped
+
+
+def _find_quad_contour(
+    edges: NDArray[np.uint8],
+    min_area: float,
+    max_area: float,
+) -> Optional[Tuple[NDArray[np.float32], float]]:
+    """
+    Find the best (largest) 4-sided polygon contour in an edge image.
+
+    Walks the largest contours and tries polygon approximation.
+    Returns (ordered_4_corner_points, contour_area) or None.
+    """
+    contours, _ = cv2.findContours(
+        edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE,
+    )
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)
+
+    for cnt in contours[:20]:
+        area = cv2.contourArea(cnt)
+        if area < min_area or area > max_area:
+            continue
+
+        peri = cv2.arcLength(cnt, True)
+
+        # Inner helper: validate and return a 4-corner approximation.
+        def _validate_quad(pts4: NDArray[np.float32], quad_area: float):
+            ordered = _order_corners(pts4)
+            if not cv2.isContourConvex(ordered.astype(np.int32).reshape(-1, 1, 2)):
+                return None
+            angles_ok = True
+            for i in range(4):
+                p1 = ordered[i]
+                p2 = ordered[(i + 1) % 4]
+                p3 = ordered[(i + 2) % 4]
+                v1 = p1 - p2
+                v2 = p3 - p2
+                cos_angle = np.dot(v1, v2) / (
+                    np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-6
+                )
+                angle_deg = np.degrees(np.arccos(np.clip(cos_angle, -1, 1)))
+                if angle_deg < 50 or angle_deg > 130:
+                    angles_ok = False
+                    break
+            if not angles_ok:
+                return None
+            width_top = np.linalg.norm(ordered[1] - ordered[0])
+            width_bot = np.linalg.norm(ordered[2] - ordered[3])
+            height_left = np.linalg.norm(ordered[3] - ordered[0])
+            height_right = np.linalg.norm(ordered[2] - ordered[1])
+            est_w = max(width_top, width_bot)
+            est_h = max(height_left, height_right)
+            short_side = min(est_w, est_h)
+            long_side = max(est_w, est_h)
+            if short_side < 1:
+                return None
+            aspect = long_side / short_side
+            if aspect < _DOC_DETECT_MIN_ASPECT_RATIO or aspect > _DOC_DETECT_MAX_ASPECT_RATIO:
+                return None
+            return ordered, quad_area
+
+        # Try multiple epsilon values on the raw contour — tighter first, then looser
+        for eps_mult in [0.015, 0.02, 0.03, 0.04, 0.05]:
+            approx = cv2.approxPolyDP(cnt, eps_mult * peri, True)
+            if len(approx) == 4:
+                result = _validate_quad(approx.reshape(4, 2).astype(np.float32), area)
+                if result is not None:
+                    return result
+
+        # Rounded-corner fallback: approximate the CONVEX HULL instead.
+        # For cards like PAN / Aadhaar whose rounded corners mean
+        # approxPolyDP on the raw contour never yields exactly 4 corners,
+        # the convex hull (already corner-free) approximates cleanly to 4 pts.
+        hull = cv2.convexHull(cnt)
+        hull_peri = cv2.arcLength(hull, True)
+        for eps_mult in [0.01, 0.015, 0.02, 0.03, 0.04, 0.05]:
+            approx = cv2.approxPolyDP(hull, eps_mult * hull_peri, True)
+            if len(approx) == 4:
+                result = _validate_quad(approx.reshape(4, 2).astype(np.float32), area)
+                if result is not None:
+                    return result
+
+    return None
+
+
+def _fallback_perspective_crop(
+    img: NDArray[np.uint8],
+    min_area: float,
+    max_area: float,
+    edges: NDArray[np.uint8],
+) -> Tuple[NDArray[np.uint8], bool]:
+    """
+    Fallback: use minAreaRect corners + perspective transform when
+    4-corner polygon detection (approxPolyDP) fails.
+
+    Instead of rotating the whole image by the minAreaRect angle (which has
+    confusing sign conventions that vary across OpenCV versions), extract the
+    4 corner points via boxPoints() and apply a perspective warp — identical
+    to the Stage-1 path.  This guarantees a perfectly axis-aligned output.
+    """
+    h, w = img.shape[:2]
+
+    contours, _ = cv2.findContours(
+        edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE,
+    )
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)
+
+    for cnt in contours[:15]:
+        area = cv2.contourArea(cnt)
+        if area < min_area or area > max_area:
+            continue
+
+        rect = cv2.minAreaRect(cnt)
+        (_cx, _cy), (rw, rh), _angle = rect
+
+        rect_area = rw * rh
+        if rect_area <= 0 or area / rect_area < _DOC_DETECT_MIN_SOLIDITY:
+            continue
+
+        long_side = max(rw, rh)
+        short_side = min(rw, rh)
+        if short_side < 1:
+            continue
+        aspect = long_side / short_side
+        if aspect < _DOC_DETECT_MIN_ASPECT_RATIO or aspect > _DOC_DETECT_MAX_ASPECT_RATIO:
+            continue
+
+        # Get the 4 corners of the minimum area rectangle and use
+        # perspective transform — no angle sign headaches.
+        box = cv2.boxPoints(rect).astype(np.float32)
+        corners = _order_corners(box)
+
+        warped = _perspective_crop(img, corners)
+        if warped is None or warped.size == 0:
+            continue
+
+        out_h, out_w = warped.shape[:2]
+        logger.info(
+            "[ENHANCEMENT] document fallback perspective crop: "
+            f"{w}x{h} -> {out_w}x{out_h}"
+        )
+        return warped, True
+
+    return img, False
+
+
+def _find_filled_document_blob(
+    img: NDArray[np.uint8],
+    min_area: float,
+    max_area: float,
+) -> Tuple[NDArray[np.uint8], bool]:
+    """
+    Detect a document card using binary brightness threshold → filled blob.
+
+    Unlike edge-based detection, this approach is robust to:
+    - Rounded corners (no edge connectivity required — the card is a solid blob)
+    - Holographic / textured card surfaces creating spurious internal edges
+    - Cards whose boundary approxPolyDP never yields exactly 4 corners
+
+    Works best when the card luminance clearly differs from the background.
+    Three threshold strategies are tried in order:
+      A) Bright-value mask       — HIGH Value channel (V>180): captures bright
+                                   white paper which has very high brightness.
+                                   Most reliable for letter/A4 on any background.
+      B) Otsu on blurred gray    — adapts to any contrast level
+      C) Inverted Otsu           — handles dark card on light background
+      D) Fixed thresholds        — dark-background and mid-tone scenes
+      E) Saturation strategies   — colorful cards + white paper on wood
+
+    Returns (warped_img, True) on success, (img, False) on failure.
+    """
+    h, w = img.shape[:2]
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (9, 9), 0)
+
+    # Strategy A: High-brightness mask — white paper (V > 180) on any background.
+    # This is the most reliable candidate for letter/A4 documents because white
+    # paper has Value close to 255 while wood / fabric are noticeably darker.
+    # Placed FIRST so it is evaluated before all Otsu/fixed-threshold variants.
+    hsv_a = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    val = hsv_a[:, :, 2]
+    _, bright_mask = cv2.threshold(val, 180, 255, cv2.THRESH_BINARY)
+    bright_blur = cv2.GaussianBlur(bright_mask, (9, 9), 0)
+    _, bright_clean = cv2.threshold(bright_blur, 127, 255, cv2.THRESH_BINARY)
+
+    _, otsu_thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    _, inv_thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+    # Multiple fixed thresholds to cover dark-background, mid-tone, and light-background scenes.
+    binary_candidates = [bright_clean, otsu_thresh, inv_thresh]
+    for _tval in [40, 60, 90, 120, 150, 180]:
+        _, _t = cv2.threshold(blur, _tval, 255, cv2.THRESH_BINARY)
+        binary_candidates.append(_t)
+
+    # HSV saturation strategies:
+    # (A) High-saturation foreground: colorful cards (PAN, Aadhaar, Voter ID) are far
+    #     more saturated than most table surfaces — pixels with HIGH saturation are the card.
+    # (B) Low-saturation foreground: white/grey documents (letters, certificates) have
+    #     VERY LOW saturation compared to a wooden/fabric table background — inverse Otsu
+    #     finds the desaturated (white paper) blob.
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    sat = hsv[:, :, 1]
+    sat_blur = cv2.GaussianBlur(sat, (9, 9), 0)
+    _, sat_otsu = cv2.threshold(sat_blur, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    binary_candidates.append(sat_otsu)  # (A) colorful card on neutral background
+    _, sat_inv_otsu = cv2.threshold(sat_blur, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+    binary_candidates.append(sat_inv_otsu)  # (B) white/grey paper on coloured background
+
+    # Adaptive kernel: scale the fill kernel relative to image size so it can
+    # bridge the face-photo hole (~10-15 % of card width) on PAN cards.
+    fill_size = max(15, min(w, h) // 20)  # ~5 % of the shorter dimension
+    fill_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (fill_size, fill_size))
+    open_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+
+    best_warped: Optional[NDArray[np.uint8]] = None
+    best_size: int = 0
+
+    for binary in binary_candidates:
+        # Fill internal holes (text, QR code cutouts) and denoise small blobs
+        closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, fill_kernel)
+        cleaned = cv2.morphologyEx(closed, cv2.MORPH_OPEN, open_kernel)
+
+        # RETR_EXTERNAL: only outermost blobs — avoids internal card elements
+        contours, _ = cv2.findContours(
+            cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE,
+        )
+        contours = sorted(contours, key=cv2.contourArea, reverse=True)
+
+        for cnt in contours[:5]:
+            raw_area = cv2.contourArea(cnt)
+            if raw_area < min_area * 0.5:  # pre-filter: hull will be larger
+                continue
+
+            # Use the CONVEX HULL to bridge internal holes (face photo, holo strip).
+            # For a PAN card the raw contour can have significant holes that reduce
+            # solidity; the hull gives a clean outer boundary.
+            hull = cv2.convexHull(cnt)
+            area = cv2.contourArea(hull)
+            if area < min_area or area > max_area:
+                continue
+
+            rect = cv2.minAreaRect(hull)
+            (_cx, _cy), (rw, rh), _angle = rect
+
+            rect_area = rw * rh
+            if rect_area <= 0:
+                continue
+            # Solidity check on hull vs bounding rect (hull is already convex so
+            # the threshold can be a bit lower than for raw contours).
+            if area / rect_area < 0.50:
+                continue
+
+            long_side = max(rw, rh)
+            short_side = min(rw, rh)
+            if short_side < 1:
+                continue
+            aspect = long_side / short_side
+            if aspect < _DOC_DETECT_MIN_ASPECT_RATIO or aspect > _DOC_DETECT_MAX_ASPECT_RATIO:
+                continue
+
+            box = cv2.boxPoints(rect).astype(np.float32)
+            corners = _order_corners(box)
+            warped = _perspective_crop(img, corners)
+            if warped is None or warped.size == 0:
+                continue
+
+            size = warped.shape[0] * warped.shape[1]
+            if size > best_size:
+                best_warped = warped
+                best_size = size
+
+    if best_warped is not None:
+        out_h, out_w = best_warped.shape[:2]
+        logger.info(
+            f"[ENHANCEMENT] document filled-blob perspective crop: "
+            f"{w}x{h} → {out_w}x{out_h}"
+        )
+        return best_warped, True
+
+    return img, False
+
+
+def _preprocess_for_edges(
+    gray: NDArray[np.uint8],
+    bgr: Optional[NDArray[np.uint8]] = None,
+) -> list[NDArray[np.uint8]]:
+    """
+    Generate multiple edge maps using different preprocessing strategies
+    to handle varied backgrounds (wood, fabric, table, white surface, etc.).
+
+    When `bgr` is provided, also generates color-aware edge maps (saturation,
+    LAB) which are crucial for detecting colored documents (PAN cards, voter
+    IDs, mark sheets) on white/light backgrounds where grayscale contrast
+    is near zero.
+
+    Returns a list of edge images to try in order.
+    """
+    edge_maps: list[NDArray[np.uint8]] = []
+    close_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+
+    # ---- Strategy 1: Bilateral filter (edge-preserving) + Canny ----------
+    bilateral = cv2.bilateralFilter(gray, d=11, sigmaColor=80, sigmaSpace=80)
+    for lo, hi in [(30, 100), (50, 150), (20, 80)]:
+        e = cv2.Canny(bilateral, lo, hi)
+        e = cv2.morphologyEx(e, cv2.MORPH_CLOSE, close_kernel)
+        edge_maps.append(e)
+
+    # ---- Strategy 2: Adaptive threshold → edges -------------------------
+    adaptive = cv2.adaptiveThreshold(
+        bilateral, 255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV,
+        blockSize=15,
+        C=5,
+    )
+    adaptive = cv2.morphologyEx(adaptive, cv2.MORPH_CLOSE, close_kernel)
+    dilate_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    adaptive = cv2.dilate(adaptive, dilate_kernel, iterations=2)
+    adaptive = cv2.erode(adaptive, dilate_kernel, iterations=1)
+    edge_maps.append(adaptive)
+
+    # ---- Strategy 3: Heavy Gaussian + wider Canny thresholds -------------
+    heavy_blur = cv2.GaussianBlur(gray, (15, 15), 0)
+    for lo, hi in [(25, 90), (40, 120)]:
+        e = cv2.Canny(heavy_blur, lo, hi)
+        e = cv2.morphologyEx(e, cv2.MORPH_CLOSE, close_kernel)
+        edge_maps.append(e)
+
+    # ---- Strategy 4: Color-aware (saturation channel) --------------------
+    # PAN cards, voter IDs, etc. are colorful documents.  On a white/grey
+    # background the grayscale contrast is near zero, but the SATURATION
+    # channel cleanly separates the colored card from the desaturated bg.
+    if bgr is not None:
+        hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+        sat = hsv[:, :, 1]  # saturation channel
+
+        # 4a: Otsu threshold on saturation — card = saturated, bg = not
+        sat_blur = cv2.GaussianBlur(sat, (7, 7), 0)
+        _, sat_thresh = cv2.threshold(sat_blur, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+        # Heavy morphological close to fill internal gaps and get outer hull
+        big_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
+        sat_thresh = cv2.morphologyEx(sat_thresh, cv2.MORPH_CLOSE, big_kernel)
+        sat_thresh = cv2.morphologyEx(sat_thresh, cv2.MORPH_OPEN, close_kernel)
+        edge_maps.append(sat_thresh)
+
+        # 4b: Canny on saturation — useful when Otsu doesn't separate cleanly
+        sat_bilateral = cv2.bilateralFilter(sat, d=9, sigmaColor=75, sigmaSpace=75)
+        for lo, hi in [(20, 80), (30, 100)]:
+            e = cv2.Canny(sat_bilateral, lo, hi)
+            e = cv2.morphologyEx(e, cv2.MORPH_CLOSE, close_kernel)
+            edge_maps.append(e)
+
+        # ---- Strategy 5: LAB color space (a-channel) ---------------------
+        # The 'a' channel in LAB separates green-red axis — many ID cards
+        # have pink/red tones that stand out here.
+        lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
+        a_ch = lab[:, :, 1]
+        a_blur = cv2.GaussianBlur(a_ch, (7, 7), 0)
+        for lo, hi in [(15, 60), (25, 80)]:
+            e = cv2.Canny(a_blur, lo, hi)
+            e = cv2.morphologyEx(e, cv2.MORPH_CLOSE, close_kernel)
+            edge_maps.append(e)
+
+        # ---- Strategy 6: Morphological gradient on blurred gray ----------
+        # Catches subtle edges missed by Canny — good for low-contrast scenes
+        morph_blur = cv2.GaussianBlur(gray, (11, 11), 0)
+        grad_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        gradient = cv2.morphologyEx(morph_blur, cv2.MORPH_GRADIENT, grad_kernel)
+        _, grad_thresh = cv2.threshold(gradient, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+        grad_thresh = cv2.morphologyEx(grad_thresh, cv2.MORPH_CLOSE, close_kernel)
+        edge_maps.append(grad_thresh)
+
+    return edge_maps
+
+
+def _hough_fine_tune_rotation(
+    img: NDArray[np.uint8],
+    max_correction: float = 15.0,
+) -> NDArray[np.uint8]:
+    """
+    Fine-tune the rotation of an already-cropped document using Hough lines.
+
+    After perspective or affine cropping, there may be a small residual tilt
+    (1-15 degrees) from imprecise contour detection.  This function detects
+    the dominant near-horizontal line angle via HoughLinesP and corrects it.
+
+    Only corrects angles in (-max_correction, +max_correction).  Larger angles
+    likely indicate a badly cropped image and should not be "fixed" here.
+
+    Args:
+        img:  Already-cropped BGR image.
+        max_correction:  Maximum angle (degrees) to correct.
+
+    Returns:
+        Rotation-corrected image (or the original if no correction needed).
+    """
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    h, w = img.shape[:2]
+
+    # Use Canny on a lightly blurred image to pick up text baselines / edges
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blurred, 50, 150)
+
+    # Hough transform — look for long, near-horizontal lines
+    min_line_len = max(30, w // 8)
+    lines = cv2.HoughLinesP(
+        edges,
+        rho=1,
+        theta=np.pi / 180,
+        threshold=80,
+        minLineLength=min_line_len,
+        maxLineGap=10,
+    )
+
+    if lines is None or len(lines) < 3:
+        return img
+
+    # Collect angles of lines that are roughly horizontal (within ±max_correction)
+    angles: list[float] = []
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
+        dx = x2 - x1
+        dy = y2 - y1
+        if abs(dx) < 1:
+            continue  # skip vertical lines
+        angle_deg = math.degrees(math.atan2(dy, dx))
+        if abs(angle_deg) <= max_correction:
+            angles.append(angle_deg)
+
+    if len(angles) < 3:
+        return img
+
+    # Robust angle estimation: use the median (resistant to outliers)
+    median_angle = float(np.median(angles))
+
+    # Skip if the correction is negligible (< 0.3 degree)
+    if abs(median_angle) < 0.3:
+        return img
+
+    logger.info(
+        f"[ENHANCEMENT] Hough fine-tune rotation: {median_angle:.2f}° "
+        f"(from {len(angles)} lines)"
+    )
+
+    center = (w / 2.0, h / 2.0)
+    M = cv2.getRotationMatrix2D(center, median_angle, 1.0)
+    cos_a = abs(M[0, 0])
+    sin_a = abs(M[0, 1])
+    new_w = int(round(h * sin_a + w * cos_a))
+    new_h = int(round(h * cos_a + w * sin_a))
+    M[0, 2] += (new_w - w) / 2.0
+    M[1, 2] += (new_h - h) / 2.0
+
+    rotated = cv2.warpAffine(
+        img, M, (new_w, new_h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(255, 255, 255),
+    )
+
+    # Tight-crop: remove the white border added by the rotation
+    rotated = _trim_white_border(rotated)
+
+    return rotated
+
+
+def _trim_white_border(img: NDArray[np.uint8], threshold: int = 245) -> NDArray[np.uint8]:
+    """
+    Remove nearly-white borders from an image. Useful after rotation
+    introduces white fill around the document.
+    """
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # Pixels darker than threshold are "content"
+    mask = gray < threshold
+    coords = np.argwhere(mask)
+    if coords.size == 0:
+        return img
+    y0, x0 = coords.min(axis=0)
+    y1, x1 = coords.max(axis=0) + 1
+    cropped = img[y0:y1, x0:x1]
+    if cropped.size == 0:
+        return img
+    return cropped
 
 
 def detect_and_crop_document(
     img: NDArray[np.uint8],
+    raw_data: Optional[bytes] = None,
 ) -> Tuple[NDArray[np.uint8], bool]:
     """
-    Detect the largest valid document rectangle in a scene photo, straighten
-    it with an affine rotation, and crop to it.
+    Detect the largest valid document rectangle in a scene photo, correct
+    perspective, and crop to produce a clean top-down view.
 
-    Uses cv2.minAreaRect (rotation-invariant bounding rect) rather than a
-    4-corner perspective transform.  This avoids the corner-ordering step
-    that previously caused hourglass/butterfly warp artefacts when the
-    document was tilted.
+    Three-stage approach:
+      Stage 1 — 4-corner perspective transform (preferred):
+        Polygon approximation → corner ordering → perspective warp.
 
-    Algorithm:
-      1. Canny edges (multiple thresholds for different lighting conditions)
-      2. Morphological close to join broken document outlines
-      3. Find the largest contour that passes area + solidity + aspect-ratio
-         checks (filters laptop keyboards, table edges, etc.)
-      4. Fit a minimum-area bounding rectangle → get angle + centre + size
-      5. Rotate the whole image by that angle (warpAffine — no perspective)
-      6. Crop to the axis-aligned bounding box of the straightened document
+      Stage 2 — minAreaRect perspective fallback:
+        Uses minAreaRect → boxPoints → perspective warp.  Always produces
+        axis-aligned output without angle-sign confusion.
+
+      Stage 3 — Hough fine-tune:
+        After any successful crop, detect dominant near-horizontal text
+        baselines via HoughLinesP and correct residual tilt (±15°).
 
     Returns:
         (result_image, was_processed)
@@ -698,88 +1329,101 @@ def detect_and_crop_document(
     min_area = _DOC_DETECT_MIN_AREA_FRACTION * w * h
     max_area = _DOC_DETECT_MAX_AREA_FRACTION * w * h
 
+    cropped: Optional[NDArray[np.uint8]] = None
+
+    # ── Stage 0: Vision API crop hints (ML-based, preferred) ──────────────
+    # Sends the EXIF-corrected image to Vision API, which uses a trained
+    # model to locate the primary subject (the document).  If it returns a
+    # confident 4-corner polygon we use it directly and skip the OpenCV
+    # cascade below.
+    if raw_data is not None:
+        try:
+            from processors.vision_crop import get_crop_corners
+            vision_corners = get_crop_corners(raw_data)
+            if vision_corners is not None:
+                ordered = _order_corners(vision_corners)
+                warped = _perspective_crop(img, ordered)
+                if warped is not None and warped.size > 0:
+                    out_h, out_w = warped.shape[:2]
+                    logger.info(
+                        "[ENHANCEMENT] Vision API perspective crop: %dx%d -> %dx%d",
+                        w, h, out_w, out_h,
+                    )
+                    return _hough_fine_tune_rotation(warped), True
+        except Exception as _ve:
+            logger.warning(
+                "[ENHANCEMENT] Vision Stage 0 failed, continuing to OpenCV: %s", _ve
+            )
+
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    # 9×9 blur suppresses keyboard keys, table grain, fabric texture
-    blurred = cv2.GaussianBlur(gray, (9, 9), 0)
-    close_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    edge_maps = _preprocess_for_edges(gray, bgr=img)
 
-    for lo, hi in [(30, 100), (50, 150), (10, 60)]:
-        edges = cv2.Canny(blurred, lo, hi)
-        # MORPH_CLOSE fills gaps in the document outline
-        edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, close_kernel)
+    # ── Stage 1: 4-corner perspective transform ───────────────────────────
+    # Scan ALL edge maps and pick the LARGEST valid quad.  This prevents
+    # internal card elements (QR codes, photos) from being mistakenly
+    # selected when the first edge map happens to detect them.
+    best_corners: Optional[NDArray[np.float32]] = None
+    best_quad_area: float = 0.0
 
-        contours, _ = cv2.findContours(
-            edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE
-        )
-        contours = sorted(contours, key=cv2.contourArea, reverse=True)
+    for edge_img in edge_maps:
+        result = _find_quad_contour(edge_img, min_area, max_area)
+        if result is not None:
+            corners, quad_area = result
+            if quad_area > best_quad_area:
+                best_corners = corners
+                best_quad_area = quad_area
 
-        for cnt in contours[:15]:
-            area = cv2.contourArea(cnt)
-            if area < min_area or area > max_area:
-                continue
-
-            # Minimum-area bounding rectangle — gives angle without needing
-            # to order 4 corner points
-            (cx, cy), (rw, rh), angle = cv2.minAreaRect(cnt)
-
-            # Solidity: contour should fill most of its bounding rect.
-            # Low solidity → irregular shape (keyboard, clutter) → skip.
-            rect_area = rw * rh
-            if rect_area <= 0 or area / rect_area < _DOC_DETECT_MIN_SOLIDITY:
-                continue
-
-            # Aspect ratio guard
-            long_side  = max(rw, rh)
-            short_side = min(rw, rh)
-            if short_side < 1 or long_side / short_side > _DOC_DETECT_MAX_ASPECT_RATIO:
-                continue
-
-            # ── Straighten ────────────────────────────────────────────
-            # minAreaRect angle is in (-90, 0].  When rw < rh the rect is
-            # "standing up" and we add 90° so the rotation aligns the long
-            # axis horizontally (the natural orientation for ID cards etc.).
-            if rw < rh:
-                angle += 90.0
-                rw, rh = rh, rw   # rw is now the wider dimension
-
-            # Affine rotation around the image centre
-            M = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), angle, 1.0)
-            # Expand canvas so nothing gets clipped after rotation
-            cos_a = abs(M[0, 0])
-            sin_a = abs(M[0, 1])
-            new_w = int(round(h * sin_a + w * cos_a))
-            new_h = int(round(h * cos_a + w * sin_a))
-            M[0, 2] += (new_w - w) / 2.0
-            M[1, 2] += (new_h - h) / 2.0
-
-            rotated = cv2.warpAffine(
-                img, M, (new_w, new_h),
-                flags=cv2.INTER_LINEAR,
-                borderMode=cv2.BORDER_REPLICATE,
-            )
-
-            # Map the document centre into the new coordinate space
-            new_cx = M[0, 0] * cx + M[0, 1] * cy + M[0, 2]
-            new_cy = M[1, 0] * cx + M[1, 1] * cy + M[1, 2]
-
-            # Crop to document bounds with a small padding
-            pad = 8
-            x1 = max(0, int(new_cx - rw / 2.0) - pad)
-            y1 = max(0, int(new_cy - rh / 2.0) - pad)
-            x2 = min(new_w, int(new_cx + rw / 2.0) + pad)
-            y2 = min(new_h, int(new_cy + rh / 2.0) + pad)
-
-            cropped = rotated[y1:y2, x1:x2]
-            if cropped.size == 0:
-                continue
-
+    if best_corners is not None:
+        warped = _perspective_crop(img, best_corners)
+        if warped is not None and warped.size > 0:
+            out_h, out_w = warped.shape[:2]
             logger.info(
-                f"[ENHANCEMENT] document detected & straightened: "
-                f"{w}x{h} → {x2 - x1}x{y2 - y1} (angle={angle:.1f}°)"
+                "[ENHANCEMENT] document perspective-corrected: "
+                f"{w}x{h} -> {out_w}x{out_h} "
+                f"(quad_area={best_quad_area:.0f}/{w*h}={best_quad_area/(w*h):.1%})"
             )
-            return cropped, True
+            cropped = warped
 
-    return img, False
+    # ── Stage 2: Filled-blob detection (primary fallback) ─────────────────
+    # Treats the document as a bright filled region rather than an edge ring.
+    # This is robust to rounded corners (PAN cards, Aadhaar) and holographic
+    # surfaces that produce noisy internal edges which break Stage 1's polygon
+    # approximation.  Three binary-threshold strategies are tried in order.
+    if cropped is None:
+        cropped_blob, blob_found = _find_filled_document_blob(img, min_area, max_area)
+        if blob_found:
+            cropped = cropped_blob
+
+    # ── Stage 3: minAreaRect on edge contours (secondary fallback) ─────────
+    # Legacy fallback kept for documents on light/complex backgrounds where
+    # brightness thresholding cannot isolate the document cleanly.
+    if cropped is None:
+        best_fallback: Optional[NDArray[np.uint8]] = None
+        best_fb_size: int = 0
+
+        all_edges = edge_maps if edge_maps else [
+            cv2.Canny(cv2.GaussianBlur(gray, (9, 9), 0), 30, 100)
+        ]
+        for edge_img in all_edges:
+            result, found = _fallback_perspective_crop(
+                img, min_area, max_area, edge_img,
+            )
+            if found:
+                fb_size = result.shape[0] * result.shape[1]
+                if fb_size > best_fb_size:
+                    best_fallback = result
+                    best_fb_size = fb_size
+
+        if best_fallback is not None:
+            cropped = best_fallback
+
+    if cropped is None:
+        return img, False
+
+    # ── Stage 3: Hough fine-tune rotation ─────────────────────────────────
+    cropped = _hough_fine_tune_rotation(cropped)
+
+    return cropped, True
 
 
 # ---------------------------------------------------------------------------
@@ -790,6 +1434,7 @@ def _enhance_photo(
     img: NDArray[np.uint8],
     raw_data: bytes,
     breakdown: Optional[QualityBreakdown],
+    options: Optional["EnhancementOptions"] = None,
 ) -> Tuple[NDArray[np.uint8], bool, bool, bool, bool]:
     """
     Photo enhancement pipeline.
@@ -817,12 +1462,20 @@ def _enhance_photo(
     #    Finds the document rectangle in the scene, straightens it, and
     #    removes the background.  Falls back to dark-border removal + Hough
     #    rotation when no clear rectangle is detected.
-    img, doc_found = detect_and_crop_document(img)
+    img, doc_found = detect_and_crop_document(img, raw_data=raw_data)
     if doc_found:
         border_cropped = True
-        # Passport-size photos are always portrait; if the crop came out
-        # landscape (e.g. scene was rotated 90°), rotate back.
-        if img.shape[1] > img.shape[0]:
+        # Only rotate landscape output to portrait for explicitly portrait photo
+        # subtypes (Passport Photo, ID Photo, Profile Photo).  Landscape photo
+        # types (Postcard Photo) and unknown subtypes are left as-is so we don't
+        # incorrectly rotate wide-format outputs.
+        _subtype = options.document_subtype if options else None
+        _expects_portrait = (
+            _subtype in _PORTRAIT_PHOTO_SUBTYPES
+            if _subtype is not None
+            else True   # default: assume portrait for untagged photo uploads
+        )
+        if _expects_portrait and img.shape[1] > img.shape[0]:
             img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
             orientation_corrected = True
             logger.info("[ENHANCEMENT] photo: landscape→portrait after crop")
@@ -915,16 +1568,18 @@ def _enhance_signature(
 
 def _enhance_document(
     img: NDArray[np.uint8],
+    raw_data: bytes,
     options: EnhancementOptions,
 ) -> Tuple[NDArray[np.uint8], bool, bool, bool, bool]:
     """
     Document enhancement pipeline.
 
     Operations:
-      1. Border crop       — scanner borders removed if detected
-      2. Orientation correction (Hough skew + large-rotation detection)
-      3. NLM denoising     — gated by GUARD-001
-      4. White balance + CLAHE — gated by GUARD-001
+      1. EXIF auto-rotate  — corrects phone camera orientation via EXIF
+      2. Border crop       — scanner borders removed if detected
+      3. Orientation correction (Hough skew + large-rotation detection)
+      4. NLM denoising     — gated by GUARD-001
+      5. White balance + CLAHE — gated by GUARD-001
 
     Returns:
         (img, orientation_corrected, denoised, color_normalized, border_cropped)
@@ -934,14 +1589,19 @@ def _enhance_document(
         logger.info("[ENHANCEMENT] skipped (readable document)")
 
     border_cropped = False
-    orientation_corrected = False
     denoised = False
     color_normalized = False
 
-    # Document boundary detection → affine-rotate + crop.
-    # Handles PAN cards, voter IDs, etc. photographed on a surface.
-    # Falls back to dark-border removal + Hough skew when no rectangle found.
-    img, doc_found = detect_and_crop_document(img)
+    # Step 1: EXIF auto-rotate (phone camera uploads).
+    # raw_data already went through _apply_exif_transpose in enhance_image,
+    # so this is a no-op for phone photos.  Kept here as a guardrail for
+    # callers that bypass enhance_image and call _enhance_document directly.
+    img, orientation_corrected = correct_orientation_exif(img, raw_data)
+
+    # Step 2: Document boundary detection → perspective warp → crop.
+    # Tries Vision API first, then cascades through OpenCV detectors.
+    # Passes raw_data so the Vision stage can include the image bytes.
+    img, doc_found = detect_and_crop_document(img, raw_data=raw_data)
     if doc_found:
         border_cropped = True
         orientation_corrected = True
@@ -960,6 +1620,19 @@ def _enhance_document(
             clip_limit=options.clahe_clip_limit,
             grid_size=options.clahe_grid_size,
         )
+
+    # WP-7: Sauvola binarisation — only when caller requests binary output AND
+    # CLAHE actually ran (skip_enhancement=False).  Sauvola on a CLAHE-normalised
+    # image produces cleaner results than on a raw photo with ambient gradients.
+    # When GUARD-001 skips enhancement, Stage 5 convert_colour_mode handles this.
+    if options.binarise_output and not skip_enhancement:
+        from processors.schema import _sauvola_threshold
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        mask = _sauvola_threshold(gray)
+        black_on_white = cv2.bitwise_not(mask)
+        img = cv2.cvtColor(black_on_white, cv2.COLOR_GRAY2BGR)
+        color_normalized = True
+        logger.info("[ENHANCEMENT] document Sauvola binarisation applied (WP-7)")
 
     return img, orientation_corrected, denoised, color_normalized, border_cropped
 
@@ -990,11 +1663,21 @@ def enhance_image(
     options: Optional[EnhancementOptions] = None,
 ) -> EnhancementResult:
     """
-    Route to the correct enhancement branch based on document_type.
+    Route to the correct enhancement branch based on document_type, refined by
+    document_category and document_subtype where available.
 
-    - photo     → EXIF rotation, gamma correction, unsharp mask
+    Routing rules (in priority order):
+    1. category="signature" or document_type="signature" → signature pipeline
+    2. category in _DOCUMENT_PIPELINE_CATEGORIES (e.g. "identity", "academic")
+       → document pipeline regardless of document_type value.
+       This ensures identity cards (PAN, Aadhaar, Voter ID …) get perspective
+       correction even when the app sends document_type="photo".
+    3. document_type="photo" → photo pipeline
+    4. default → document pipeline
+
+    - photo     → EXIF rotation, perspective crop, gamma correction, unsharp mask
     - signature → EXIF rotation, unsharp mask, Otsu binarization
-    - document  → Hough skew correction, NLM denoising, CLAHE (GUARD-001 gated)
+    - document  → perspective crop, NLM denoising, CLAHE (GUARD-001 gated)
 
     Args:
         data: Raw image bytes
@@ -1010,14 +1693,34 @@ def enhance_image(
         options = EnhancementOptions()
 
     try:
+        # EXIF auto-rotate: correct phone camera orientation before any pipeline
+        # routing.  This ensures Vision API, OpenCV contour detection, and all
+        # colour corrections see a properly uprighted image.
+        # After this call, all downstream EXIF reads return angle=0 (no-op).
+        data = _apply_exif_transpose(data)
+
         img = decode_image(data)
-        doc_type = options.document_type
+
+        # ── Category-based routing override ───────────────────────────────
+        # document_category carries the user's explicit intent (from vault
+        # taxonomy) and is more precise than the coarse 3-value document_type.
+        _category = (options.document_category or "").lower()
+        _subtype  = options.document_subtype or ""
+
+        if _category == "signature" or options.document_type == "signature":
+            doc_type = "signature"
+        elif _category in _DOCUMENT_PIPELINE_CATEGORIES:
+            # e.g. identity, academic, certificate, financial → full document
+            # pipeline with perspective correction
+            doc_type = "document"
+        else:
+            doc_type = options.document_type  # honour explicit value
 
         if doc_type == "photo":
             img, orientation_corrected, exposure_corrected, sharpened, border_cropped = (
-                _enhance_photo(img, data, options.quality_breakdown)
+                _enhance_photo(img, data, options.quality_breakdown, options)
             )
-            result_data = encode_image(img, format="jpeg", quality=95)
+            result_data = encode_image(img, format="jpeg", quality=97)
             return EnhancementResult(
                 image_data=result_data,
                 orientation_corrected=orientation_corrected,
@@ -1030,7 +1733,7 @@ def enhance_image(
             img, orientation_corrected, binarized, sharpened, border_cropped = (
                 _enhance_signature(img, data, options.quality_breakdown)
             )
-            result_data = encode_image(img, format="jpeg", quality=95)
+            result_data = encode_image(img, format="jpeg", quality=97)
             return EnhancementResult(
                 image_data=result_data,
                 orientation_corrected=orientation_corrected,
@@ -1041,9 +1744,9 @@ def enhance_image(
 
         else:  # document
             img, orientation_corrected, denoised, color_normalized, border_cropped = (
-                _enhance_document(img, options)
+                _enhance_document(img, data, options)
             )
-            result_data = encode_image(img, format="jpeg", quality=95)
+            result_data = encode_image(img, format="jpeg", quality=97)
             return EnhancementResult(
                 image_data=result_data,
                 orientation_corrected=orientation_corrected,
@@ -1100,4 +1803,10 @@ __all__ = [
     'crop_borders',
     # Document boundary detection + straighten
     'detect_and_crop_document',
+    '_order_corners',
+    '_perspective_crop',
+    '_find_quad_contour',
+    '_fallback_perspective_crop',
+    '_hough_fine_tune_rotation',
+    '_trim_white_border',
 ]

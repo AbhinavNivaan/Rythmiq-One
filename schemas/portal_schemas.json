@@ -154,7 +154,8 @@
       "name": "NEET Photo",
       "portal": "NTA NEET",
       "document_type": "photo",
-      "is_active": true,
+      "is_active": false,
+      "deprecated_reason": "Superseded by form_schemas: neet_2026_registration / photograph_passport. Wrong dimensions (181x244 vs correct 400x400 for 2x2 inch at 200dpi).",
       "requirements": {
         "target_width": 181,
         "target_height": 244,
@@ -173,7 +174,8 @@
       "name": "NEET Signature",
       "portal": "NTA NEET",
       "document_type": "signature",
-      "is_active": true,
+      "is_active": false,
+      "deprecated_reason": "Superseded by form_schemas: neet_2026_registration / signature. Wrong max_kb (50 vs correct 30).",
       "requirements": {
         "target_width": 181,
         "target_height": 89,

@@ -70,23 +70,40 @@ class StorageService:
         self,
         storage_path: str,
         expiry_seconds: int | None = None,
+        filename: str | None = None,
+        content_type: str | None = None,
     ) -> tuple[str, datetime]:
         """
         Generate a presigned URL for downloading a file.
-        
+
+        Args:
+            storage_path: S3 key
+            expiry_seconds: Override default expiry
+            filename: When provided, sets Content-Disposition: attachment so the
+                      browser/client downloads with this filename instead of the
+                      S3 key (e.g. "document.jpg" instead of "{job_id}.enc").
+            content_type: When provided, overrides the stored Content-Type in the
+                          response (e.g. "image/jpeg" for .enc files).
+
         Returns:
             Tuple of (url, expires_at)
         """
         expiry = expiry_seconds or self._settings.download_url_expiry_seconds
         expires_at = datetime.now(timezone.utc).timestamp() + expiry
 
+        params: dict[str, str] = {
+            "Bucket": self._settings.spaces_bucket,
+            "Key": storage_path,
+        }
+        if filename:
+            params["ResponseContentDisposition"] = f'attachment; filename="{filename}"'
+        if content_type:
+            params["ResponseContentType"] = content_type
+
         try:
             url = self._client.generate_presigned_url(
                 "get_object",
-                Params={
-                    "Bucket": self._settings.spaces_bucket,
-                    "Key": storage_path,
-                },
+                Params=params,
                 ExpiresIn=expiry,
             )
         except (BotoCoreError, ClientError) as e:

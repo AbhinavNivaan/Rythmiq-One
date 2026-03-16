@@ -646,6 +646,14 @@ export interface JobStatus {
   output_file_path?: string;
   download_url?: string;
   preview_url?: string;
+  /** Signed URL to the actual master/adapted output file (JPEG or PDF). */
+  output_url?: string;
+  /** True if the output file at output_url is AES-256-GCM encrypted. */
+  output_encrypted?: boolean;
+  /** Base64-encoded nonce for decryption (only present when output_encrypted is true). */
+  output_nonce?: string;
+  /** Format of the output file: "jpeg" | "pdf". Use to determine MIME type and file extension. */
+  output_format?: string;
   error_details?: {
     code?: string;
     message?: string;
@@ -703,17 +711,20 @@ export const documentsApi = {
    * Create an ADAPTATION job (Export flow - requires portal)
    * Adapts an existing completed master job for a specific portal schema.
    * No file upload needed — the backend reuses the master's stored input.
+   * Uses the form_schema_id + doc_id path (all document types supported).
    */
   async createAdaptJob(
     masterJobId: string,
-    portalSchemaName: string
+    formSchemaId: string,
+    docId: string,
   ): Promise<{ job_id: string }> {
     return apiRequest<{ job_id: string }>('/jobs', {
       method: 'POST',
       body: JSON.stringify({
         job_type: 'adapt',
         source_job_id: masterJobId,
-        portal_schema_name: portalSchemaName,
+        form_schema_id: formSchemaId,
+        doc_id: docId,
       }),
     });
   },

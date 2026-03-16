@@ -173,15 +173,6 @@ function findAllMatchingMasters(
   return [...catMatch, ...untagged];
 }
 
-/**
- * Derive the portal_schema_name for adapt jobs from the form schema id.
- * Convention: first segment of the id + '_' + doc type.
- * e.g. 'neet_2026_registration' + 'photo' → 'neet_photo'
- */
-function portalSchemaName(formSchemaId: string, docType: 'photo' | 'signature'): string {
-  const prefix = formSchemaId.split('_')[0];
-  return `${prefix}_${docType}`;
-}
 
 interface RequirementStatus {
   type: 'photo' | 'signature' | 'document';
@@ -350,9 +341,8 @@ export default function PortalSelectorScreen() {
         : mandatoryRequirements;
 
       for (const req of slotsToProcess) {
-        if (req.available && req.masterId && (req.type === 'photo' || req.type === 'signature')) {
-          const schemaName = portalSchemaName(selectedSchema.id, req.type);
-          const result = await documentsApi.createAdaptJob(req.masterId, schemaName);
+        if (req.available && req.masterId) {
+          const result = await documentsApi.createAdaptJob(req.masterId, selectedSchema.id, req.doc_id);
           jobIds.push(result.job_id);
         }
       }
@@ -360,6 +350,12 @@ export default function PortalSelectorScreen() {
       return jobIds;
     },
     onSuccess: (jobIds) => {
+      if (jobIds.length === 0) {
+        // No adapt jobs were created (all matched slots are raw documents).
+        // Navigate back to the source job's detail screen for direct download.
+        router.back();
+        return;
+      }
       router.push({
         pathname: '/(tabs)/adapt-status',
         params: {

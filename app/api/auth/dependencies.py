@@ -4,6 +4,7 @@ Owns: JWT verification, user extraction.
 """
 
 import hmac
+import logging
 from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
@@ -13,18 +14,28 @@ from fastapi import Depends, Header, HTTPException, status
 from jwt.exceptions import ExpiredSignatureError, InvalidTokenError
 from supabase import create_client
 
+logger = logging.getLogger(__name__)
+
 from app.api.config import Settings, get_settings
 from .models import AuthenticatedUser
 
 
 def verify_jwt(token: str, secret: str) -> dict:
-    return jwt.decode(
-        token,
-        secret,
-        algorithms=["HS256"],
-        options={"require": ["exp", "sub"]},
-        audience="authenticated",
-    )
+    # Supabase may issue HS256 or RS256 tokens depending on project settings.
+    # Try HS256 first (legacy), then accept the token's stated algorithm.
+    try:
+        return jwt.decode(
+            token,
+            secret,
+            algorithms=["HS256"],
+            options={"require": ["exp", "sub"]},
+            audience="authenticated",
+        )
+    except jwt.exceptions.InvalidAlgorithmError:
+        # Token uses a different algorithm (e.g., RS256).
+        # Decode unverified to get claims — signature will be validated
+        # by the Supabase fallback in get_current_user.
+        raise InvalidTokenError("Token algorithm not HS256, falling back to Supabase verification")
 
 
 def decode_jwt_unverified(token: str) -> dict:
@@ -39,20 +50,29 @@ def decode_jwt_unverified(token: str) -> dict:
 
 
 def verify_jwt_with_supabase(token: str, settings: Settings) -> dict:
+    # Check expiry locally first, before making a network call to Supabase.
+    # This gives us a fast path for expired tokens.
+    claims = decode_jwt_unverified(token)
+    exp = claims.get("exp")
+    if exp is not None:
+        now = int(datetime.now(timezone.utc).timestamp())
+        if int(exp) <= now:
+            raise ExpiredSignatureError("Token expired")
+
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
-    response = supabase.auth.get_user(token)
+    try:
+        response = supabase.auth.get_user(token)
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "expired" in error_msg:
+            raise ExpiredSignatureError("Token expired (Supabase)")
+        raise
 
     if response.user is None:
         raise InvalidTokenError("Invalid token")
 
-    claims = decode_jwt_unverified(token)
-    exp = claims.get("exp")
     if exp is None:
         raise InvalidTokenError("Missing token expiry")
-
-    now = int(datetime.now(timezone.utc).timestamp())
-    if int(exp) <= now:
-        raise ExpiredSignatureError("Token expired")
 
     sub = claims.get("sub") or str(response.user.id)
     if str(response.user.id) != str(sub):
@@ -88,7 +108,8 @@ async def get_current_user(
 
     try:
         payload = verify_jwt(token, settings.supabase_jwt_secret)
-    except InvalidTokenError:
+    except InvalidTokenError as e:
+        logger.warning(f"JWT direct verification failed: {type(e).__name__}: {e}")
         try:
             payload = verify_jwt_with_supabase(token, settings)
         except ExpiredSignatureError:
@@ -96,7 +117,8 @@ async def get_current_user(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail={"error_code": "UNAUTHORIZED", "message": "Token expired", "token_expired": True},
             )
-        except Exception:
+        except Exception as e2:
+            logger.warning(f"Supabase verification also failed: {type(e2).__name__}: {e2}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail={"error_code": "UNAUTHORIZED", "message": "Invalid token"},
