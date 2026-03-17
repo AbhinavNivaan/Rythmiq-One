@@ -1,0 +1,26 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "worker",
+      "runtimeExecutable": "/Users/abhinav/Rythmiq One/.venv/bin/python",
+      "runtimeArgs": ["server.py"],
+      "port": 8080,
+      "cwd": "worker"
+    },
+    {
+      "name": "api",
+      "runtimeExecutable": "/Users/abhinav/Rythmiq One/.venv/bin/uvicorn",
+      "runtimeArgs": ["main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"],
+      "port": 8000,
+      "cwd": "app/api"
+    },
+    {
+      "name": "app-v2",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["start"],
+      "port": 8081,
+      "cwd": "app-v2"
+    }
+  ]
+}

@@ -708,6 +708,86 @@ def crop_borders(
 
 
 # ---------------------------------------------------------------------------
+# Already-framed photo detection (skip document-crop guard)
+# ---------------------------------------------------------------------------
+
+# Border sampling strip: fraction of each dimension used to sample the edges.
+_FRAME_BORDER_STRIP = 0.06  # 6 % on each side
+
+# If the mean standard-deviation across the 4 border strips (in grayscale)
+# is below this, the border is "uniform" (solid-colour backdrop / plain BG).
+_FRAME_BORDER_UNIFORMITY_THRESH = 28.0
+
+# Minimum ratio of centre-region std-dev to border std-dev.
+# A high ratio means "busy centre, quiet border" → already framed.
+_FRAME_CENTRE_CONTRAST_RATIO = 1.8
+
+# If both checks pass, the image looks like a studio/passport photo or a
+# pre-cropped product shot — no document-crop needed.
+
+
+def _photo_already_framed(img: NDArray[np.uint8]) -> bool:
+    """
+    Heuristic: detect whether a photo is already cleanly framed (studio
+    portrait, product shot, pre-cropped image) rather than a document
+    photographed on a surface.
+
+    Checks:
+      1. Border uniformity — the 4 edge strips have low intensity variance,
+         indicating a solid-colour or near-uniform background with no
+         table/surface clutter.
+      2. Centre-vs-border contrast — the centre of the image has
+         significantly higher variance than the borders, indicating a
+         subject filling the frame.
+
+    Returns True when BOTH conditions hold, meaning
+    ``detect_and_crop_document`` should be skipped.
+    """
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+    h, w = gray.shape[:2]
+
+    bh = max(1, int(h * _FRAME_BORDER_STRIP))
+    bw = max(1, int(w * _FRAME_BORDER_STRIP))
+
+    # 4 border strips
+    top    = gray[:bh, :]
+    bottom = gray[h - bh:, :]
+    left   = gray[:, :bw]
+    right  = gray[:, w - bw:]
+
+    border_stds = [float(np.std(s)) for s in (top, bottom, left, right)]
+    mean_border_std = float(np.mean(border_stds))
+
+    # Centre region (middle 50 %)
+    cy0, cy1 = h // 4, 3 * h // 4
+    cx0, cx1 = w // 4, 3 * w // 4
+    centre = gray[cy0:cy1, cx0:cx1]
+    centre_std = float(np.std(centre))
+
+    # Guard: avoid division by zero
+    ratio = centre_std / max(mean_border_std, 1.0)
+
+    uniform_border = mean_border_std < _FRAME_BORDER_UNIFORMITY_THRESH
+    busy_centre    = ratio > _FRAME_CENTRE_CONTRAST_RATIO
+
+    logger.debug(
+        "[ENHANCEMENT] already-framed check: border_std=%.1f, centre_std=%.1f, "
+        "ratio=%.2f → uniform=%s, busy_centre=%s",
+        mean_border_std, centre_std, ratio, uniform_border, busy_centre,
+    )
+
+    if uniform_border and busy_centre:
+        logger.info(
+            "[ENHANCEMENT] photo appears already framed (border_std=%.1f, "
+            "ratio=%.2f) — skipping document crop",
+            mean_border_std, ratio,
+        )
+        return True
+
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Document boundary detection + straighten/crop
 # ---------------------------------------------------------------------------
 
@@ -1462,32 +1542,44 @@ def _enhance_photo(
     #    Finds the document rectangle in the scene, straightens it, and
     #    removes the background.  Falls back to dark-border removal + Hough
     #    rotation when no clear rectangle is detected.
-    img, doc_found = detect_and_crop_document(img, raw_data=raw_data)
-    if doc_found:
-        border_cropped = True
-        # Only rotate landscape output to portrait for explicitly portrait photo
-        # subtypes (Passport Photo, ID Photo, Profile Photo).  Landscape photo
-        # types (Postcard Photo) and unknown subtypes are left as-is so we don't
-        # incorrectly rotate wide-format outputs.
-        _subtype = options.document_subtype if options else None
-        _expects_portrait = (
-            _subtype in _PORTRAIT_PHOTO_SUBTYPES
-            if _subtype is not None
-            else True   # default: assume portrait for untagged photo uploads
-        )
-        if _expects_portrait and img.shape[1] > img.shape[0]:
-            img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
-            orientation_corrected = True
-            logger.info("[ENHANCEMENT] photo: landscape→portrait after crop")
-    else:
+    #
+    #    GUARD: Skip document crop when the photo is already cleanly framed
+    #    (studio portrait, product shot, pre-cropped image).  The document
+    #    crop pipeline is designed for documents photographed on a surface
+    #    and will destructively mis-crop photos that have a uniform backdrop
+    #    with the subject filling the frame.
+    already_framed = _photo_already_framed(img)
+
+    if already_framed:
+        # Photo is already cleanly framed — only do light border cleanup.
         img, border_cropped = crop_borders(img)
-        # Fallback rotation: if EXIF gave nothing, try Hough-based detection
-        if not orientation_corrected:
-            rotation = detect_large_rotation(img)
-            if rotation is not None:
-                img = apply_large_rotation(img, rotation)
+    else:
+        img, doc_found = detect_and_crop_document(img, raw_data=raw_data)
+        if doc_found:
+            border_cropped = True
+            # Only rotate landscape output to portrait for explicitly portrait photo
+            # subtypes (Passport Photo, ID Photo, Profile Photo).  Landscape photo
+            # types (Postcard Photo) and unknown subtypes are left as-is so we don't
+            # incorrectly rotate wide-format outputs.
+            _subtype = options.document_subtype if options else None
+            _expects_portrait = (
+                _subtype in _PORTRAIT_PHOTO_SUBTYPES
+                if _subtype is not None
+                else True   # default: assume portrait for untagged photo uploads
+            )
+            if _expects_portrait and img.shape[1] > img.shape[0]:
+                img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
                 orientation_corrected = True
-                logger.info(f"[ENHANCEMENT] photo fallback rotation: {rotation}°")
+                logger.info("[ENHANCEMENT] photo: landscape→portrait after crop")
+        else:
+            img, border_cropped = crop_borders(img)
+            # Fallback rotation: if EXIF gave nothing, try Hough-based detection
+            if not orientation_corrected:
+                rotation = detect_large_rotation(img)
+                if rotation is not None:
+                    img = apply_large_rotation(img, rotation)
+                    orientation_corrected = True
+                    logger.info(f"[ENHANCEMENT] photo fallback rotation: {rotation}°")
 
     # 3. Exposure — compute mean brightness on processed image
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
