@@ -708,6 +708,215 @@ def crop_borders(
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Face-aware orientation correction
+# ---------------------------------------------------------------------------
+# Uses OpenCV's built-in Haar cascade to detect faces.  Tries all 4
+# rotations (0°, 90° CW, 90° CCW, 180°) and picks the one where the
+# face detector fires with the largest bounding box — indicating the
+# face is upright and fully visible.  This replaces the blind "rotate
+# 90° clockwise" heuristic which has a 50/50 chance of being wrong
+# when the physical photo is tilted on the surface.
+
+_FACE_CASCADE: Optional[cv2.CascadeClassifier] = None
+
+
+def _get_face_cascade() -> cv2.CascadeClassifier:
+    """Lazy-load the Haar frontal-face cascade (singleton)."""
+    global _FACE_CASCADE
+    if _FACE_CASCADE is None:
+        _FACE_CASCADE = cv2.CascadeClassifier(
+            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        )
+    return _FACE_CASCADE
+
+
+def _orient_by_face_detection(
+    img: NDArray[np.uint8],
+) -> Tuple[NDArray[np.uint8], Optional[bool]]:
+    """
+    Try all 4 rotations and pick the one where face detection returns
+    the largest face bounding box.
+
+    Returns:
+        (oriented_image, result) where result is:
+          True  — rotated to correct orientation
+          False — already upright (face found at 0°, no rotation needed)
+          None  — no face detected in any rotation (caller should fallback)
+    """
+    cascade = _get_face_cascade()
+
+    # Use higher resolution for detection — passport photos have small faces
+    # relative to the full cropped image (face may be ~15-20% of frame).
+    max_dim = max(img.shape[:2])
+    scale = min(1.0, 1024.0 / max_dim)
+
+    rotations: list[Tuple[Optional[int], str]] = [
+        (None, "0°"),
+        (cv2.ROTATE_90_CLOCKWISE, "90° CW"),
+        (cv2.ROTATE_90_COUNTERCLOCKWISE, "90° CCW"),
+        (cv2.ROTATE_180, "180°"),
+    ]
+
+    best_rot_code: Optional[int] = None
+    best_rot_label: str = "0°"
+    best_face_area: float = 0.0
+    all_detections: list[Tuple[str, float]] = []
+
+    for rot_code, label in rotations:
+        rotated = cv2.rotate(img, rot_code) if rot_code is not None else img
+        if scale < 1.0:
+            small = cv2.resize(rotated, None, fx=scale, fy=scale)
+        else:
+            small = rotated
+        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+
+        # Use stricter minNeighbors to reduce false positives on textured
+        # areas (shirt collars, tie knots, wood grain).
+        faces = cascade.detectMultiScale(
+            gray, scaleFactor=1.1, minNeighbors=8, minSize=(50, 50),
+        )
+        if len(faces) > 0:
+            largest = max(faces, key=lambda f: int(f[2]) * int(f[3]))
+            area = float(largest[2]) * float(largest[3])
+            # Minimum face-to-image ratio: a real face in a passport photo
+            # should be at least 3% of the image area.  Smaller detections
+            # are likely false positives (buttons, patterns, etc.).
+            img_area = float(small.shape[0]) * float(small.shape[1])
+            face_ratio = area / max(img_area, 1.0)
+            all_detections.append((label, face_ratio))
+            if face_ratio >= 0.03 and area > best_face_area:
+                best_face_area = area
+                best_rot_code = rot_code
+                best_rot_label = label
+
+    logger.info(
+        "[ENHANCEMENT] face detection results: %s",
+        ", ".join(f"{lbl}={ratio:.3f}" for lbl, ratio in all_detections)
+        if all_detections else "none",
+    )
+
+    if best_face_area > 0 and best_rot_code is not None:
+        logger.info(
+            "[ENHANCEMENT] face-aware orientation: best rotation = %s "
+            "(face_area=%.0f px²)",
+            best_rot_label, best_face_area / (scale * scale),
+        )
+        return cv2.rotate(img, best_rot_code), True
+
+    if best_face_area > 0:
+        # Face found at 0° — already correct
+        logger.info("[ENHANCEMENT] face-aware orientation: already upright")
+        return img, False
+
+    logger.info("[ENHANCEMENT] face-aware orientation: no face detected in any rotation")
+    return img, None
+
+
+# ---------------------------------------------------------------------------
+# Face-based crop for portrait photos
+# ---------------------------------------------------------------------------
+# When contour detection fails to find the passport photo border on a
+# surface (low contrast white-on-wood), use face detection to locate the
+# subject and derive crop boundaries from standard passport photo
+# proportions.
+#
+# Standard passport photo: 35mm × 45mm (aspect ratio 7:9).
+# - Face width ≈ 60-70% of photo width
+# - Face is roughly centred horizontally
+# - Face top is at ≈ 20-30% from photo top
+
+# How much wider the photo is than the face (each side gets half the excess)
+_PORTRAIT_FACE_WIDTH_RATIO = 0.65   # face_width / photo_width
+# Vertical padding above face bounding box (fraction of face height)
+_PORTRAIT_TOP_PAD_RATIO = 0.45
+# Standard passport aspect ratio (width / height)
+_PORTRAIT_ASPECT = 35.0 / 45.0  # ≈ 0.778
+
+
+def _crop_portrait_by_face(
+    img: NDArray[np.uint8],
+) -> Tuple[NDArray[np.uint8], bool]:
+    """
+    Locate the face in the image and crop to standard passport photo
+    proportions around it.
+
+    This is more reliable than border detection for photos of printed
+    passport photos on surfaces, because the face is a strong, unambiguous
+    signal regardless of surface texture or lighting.
+
+    Returns:
+        (cropped_image, success)
+    """
+    h, w = img.shape[:2]
+    cascade = _get_face_cascade()
+
+    # Use moderate downscale — need enough resolution for reliable detection
+    max_dim = max(h, w)
+    scale = min(1.0, 1024.0 / max_dim)
+
+    if scale < 1.0:
+        small = cv2.resize(img, None, fx=scale, fy=scale)
+    else:
+        small = img
+
+    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+    faces = cascade.detectMultiScale(
+        gray, scaleFactor=1.05, minNeighbors=6, minSize=(40, 40),
+    )
+
+    if len(faces) == 0:
+        logger.info("[ENHANCEMENT] face-crop: no face detected")
+        return img, False
+
+    # Pick the largest face (most likely the passport photo subject)
+    largest = max(faces, key=lambda f: int(f[2]) * int(f[3]))
+    fx, fy, fw, fh = [int(v / scale) for v in largest]
+
+    # Derive passport photo boundaries from face position
+    photo_w = int(fw / _PORTRAIT_FACE_WIDTH_RATIO)
+    photo_h = int(photo_w / _PORTRAIT_ASPECT)
+
+    # Centre horizontally on face
+    face_cx = fx + fw // 2
+    x1 = face_cx - photo_w // 2
+
+    # Position vertically: face top with padding above for hair/forehead
+    y1 = fy - int(fh * _PORTRAIT_TOP_PAD_RATIO)
+
+    x2 = x1 + photo_w
+    y2 = y1 + photo_h
+
+    # Clamp to image bounds
+    x1 = max(0, x1)
+    y1 = max(0, y1)
+    x2 = min(w, x2)
+    y2 = min(h, y2)
+
+    # Validate: crop should be meaningful
+    crop_w = x2 - x1
+    crop_h = y2 - y1
+    if crop_w < 100 or crop_h < 100:
+        logger.info("[ENHANCEMENT] face-crop: computed crop too small (%dx%d)", crop_w, crop_h)
+        return img, False
+
+    crop_area = crop_w * crop_h
+    img_area = w * h
+    if crop_area > 0.8 * img_area:
+        logger.info(
+            "[ENHANCEMENT] face-crop: computed crop too large (%.0f%% of image)",
+            100 * crop_area / img_area,
+        )
+        return img, False
+
+    cropped = img[y1:y2, x1:x2]
+    logger.info(
+        "[ENHANCEMENT] face-crop: %dx%d -> %dx%d (face at %d,%d %dx%d)",
+        w, h, crop_w, crop_h, fx, fy, fw, fh,
+    )
+    return cropped, True
+
+
 # Already-framed photo detection (skip document-crop guard)
 # ---------------------------------------------------------------------------
 
@@ -722,8 +931,15 @@ _FRAME_BORDER_UNIFORMITY_THRESH = 28.0
 # A high ratio means "busy centre, quiet border" → already framed.
 _FRAME_CENTRE_CONTRAST_RATIO = 1.8
 
-# If both checks pass, the image looks like a studio/passport photo or a
-# pre-cropped product shot — no document-crop needed.
+# Maximum Laplacian variance (texture energy) in border strips.
+# Smooth studio backdrops have very low texture (~5–80).
+# Natural surfaces (wood grain, fabric, marble) have visible texture (~100–500+)
+# even when their grayscale intensity std is relatively low.
+# This prevents surfaces like wood from being misclassified as "uniform backdrop".
+_FRAME_BORDER_MAX_TEXTURE = 90.0
+
+# If ALL three checks pass (uniform intensity + busy centre + smooth border),
+# the image looks like a studio/passport photo or a pre-cropped product shot.
 
 
 def _photo_already_framed(img: NDArray[np.uint8]) -> bool:
@@ -739,8 +955,12 @@ def _photo_already_framed(img: NDArray[np.uint8]) -> bool:
       2. Centre-vs-border contrast — the centre of the image has
          significantly higher variance than the borders, indicating a
          subject filling the frame.
+      3. Border smoothness — the border strips have low texture energy
+         (Laplacian variance).  Natural surfaces like wood, fabric, and
+         marble can fool check 1 (low grayscale std) but have visible
+         grain/texture that produces high Laplacian variance.
 
-    Returns True when BOTH conditions hold, meaning
+    Returns True when ALL THREE conditions hold, meaning
     ``detect_and_crop_document`` should be skipped.
     """
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
@@ -758,6 +978,14 @@ def _photo_already_framed(img: NDArray[np.uint8]) -> bool:
     border_stds = [float(np.std(s)) for s in (top, bottom, left, right)]
     mean_border_std = float(np.mean(border_stds))
 
+    # Texture energy: Laplacian variance measures high-frequency detail.
+    # Smooth backdrops → low variance; wood grain / fabric → high variance.
+    border_textures = [
+        float(cv2.Laplacian(s, cv2.CV_64F).var())
+        for s in (top, bottom, left, right)
+    ]
+    mean_border_texture = float(np.mean(border_textures))
+
     # Centre region (middle 50 %)
     cy0, cy1 = h // 4, 3 * h // 4
     cx0, cx1 = w // 4, 3 * w // 4
@@ -769,18 +997,20 @@ def _photo_already_framed(img: NDArray[np.uint8]) -> bool:
 
     uniform_border = mean_border_std < _FRAME_BORDER_UNIFORMITY_THRESH
     busy_centre    = ratio > _FRAME_CENTRE_CONTRAST_RATIO
+    smooth_border  = mean_border_texture < _FRAME_BORDER_MAX_TEXTURE
 
-    logger.debug(
-        "[ENHANCEMENT] already-framed check: border_std=%.1f, centre_std=%.1f, "
-        "ratio=%.2f → uniform=%s, busy_centre=%s",
-        mean_border_std, centre_std, ratio, uniform_border, busy_centre,
+    logger.info(
+        "[ENHANCEMENT] already-framed check: border_std=%.1f, texture=%.1f, "
+        "centre_std=%.1f, ratio=%.2f → uniform=%s, smooth=%s, busy_centre=%s",
+        mean_border_std, mean_border_texture, centre_std, ratio,
+        uniform_border, smooth_border, busy_centre,
     )
 
-    if uniform_border and busy_centre:
+    if uniform_border and busy_centre and smooth_border:
         logger.info(
             "[ENHANCEMENT] photo appears already framed (border_std=%.1f, "
-            "ratio=%.2f) — skipping document crop",
-            mean_border_std, ratio,
+            "texture=%.1f, ratio=%.2f) — skipping document crop",
+            mean_border_std, mean_border_texture, ratio,
         )
         return True
 
@@ -1425,11 +1655,23 @@ def detect_and_crop_document(
                 warped = _perspective_crop(img, ordered)
                 if warped is not None and warped.size > 0:
                     out_h, out_w = warped.shape[:2]
-                    logger.info(
-                        "[ENHANCEMENT] Vision API perspective crop: %dx%d -> %dx%d",
-                        w, h, out_w, out_h,
-                    )
-                    return _hough_fine_tune_rotation(warped), True
+                    warped_area = out_h * out_w
+                    original_area = h * w
+                    area_ratio = warped_area / max(original_area, 1)
+                    if area_ratio < _DOC_DETECT_MIN_AREA_FRACTION:
+                        logger.warning(
+                            "[ENHANCEMENT] Vision API crop too small "
+                            "(%.1f%% of original, min %.0f%%) — rejecting, "
+                            "falling through to OpenCV",
+                            area_ratio * 100,
+                            _DOC_DETECT_MIN_AREA_FRACTION * 100,
+                        )
+                    else:
+                        logger.info(
+                            "[ENHANCEMENT] Vision API perspective crop: %dx%d -> %dx%d",
+                            w, h, out_w, out_h,
+                        )
+                        return _hough_fine_tune_rotation(warped), True
         except Exception as _ve:
             logger.warning(
                 "[ENHANCEMENT] Vision Stage 0 failed, continuing to OpenCV: %s", _ve
@@ -1538,48 +1780,66 @@ def _enhance_photo(
     # 1. EXIF rotation (handles most phone camera photos)
     img, orientation_corrected = correct_orientation_exif(img, raw_data)
 
-    # 2. Document boundary detection → affine-rotate + crop.
-    #    Finds the document rectangle in the scene, straightens it, and
-    #    removes the background.  Falls back to dark-border removal + Hough
-    #    rotation when no clear rectangle is detected.
+    # 2. Crop: extract the photo from the background.
     #
-    #    GUARD: Skip document crop when the photo is already cleanly framed
-    #    (studio portrait, product shot, pre-cropped image).  The document
-    #    crop pipeline is designed for documents photographed on a surface
-    #    and will destructively mis-crop photos that have a uniform backdrop
-    #    with the subject filling the frame.
-    already_framed = _photo_already_framed(img)
+    #    Portrait subtypes (Passport Photo, ID Photo, etc.):
+    #       Always use face-based crop — the face is the most reliable anchor
+    #       regardless of whether the photo is on a surface or already framed.
+    #       Re-cropping an already-correct passport photo to passport proportions
+    #       is a near-no-op (the face is already centred at those proportions).
+    #       This avoids the framing-guard threshold game entirely.
+    #
+    #    Non-portrait photo types:
+    #       Use framing guard → document-boundary detection (contour-based).
+    _subtype = options.document_subtype if options else None
+    _expects_portrait = (
+        _subtype in _PORTRAIT_PHOTO_SUBTYPES
+        if _subtype is not None
+        else True   # default: assume portrait for untagged photo uploads
+    )
 
-    if already_framed:
-        # Photo is already cleanly framed — only do light border cleanup.
-        img, border_cropped = crop_borders(img)
-    else:
-        img, doc_found = detect_and_crop_document(img, raw_data=raw_data)
-        if doc_found:
+    crop_done = False
+
+    if _expects_portrait:
+        # Face-based crop: works for both photo-on-surface and already-framed
+        img_face, face_found = _crop_portrait_by_face(img)
+        if face_found:
+            img = img_face
             border_cropped = True
-            # Only rotate landscape output to portrait for explicitly portrait photo
-            # subtypes (Passport Photo, ID Photo, Profile Photo).  Landscape photo
-            # types (Postcard Photo) and unknown subtypes are left as-is so we don't
-            # incorrectly rotate wide-format outputs.
-            _subtype = options.document_subtype if options else None
-            _expects_portrait = (
-                _subtype in _PORTRAIT_PHOTO_SUBTYPES
-                if _subtype is not None
-                else True   # default: assume portrait for untagged photo uploads
-            )
-            if _expects_portrait and img.shape[1] > img.shape[0]:
-                img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+            crop_done = True
+            # Orientation check for edge cases
+            img, face_result = _orient_by_face_detection(img)
+            if face_result is True:
                 orientation_corrected = True
-                logger.info("[ENHANCEMENT] photo: landscape→portrait after crop")
-        else:
+
+    if not crop_done:
+        # Non-portrait path: framing guard + contour-based detection
+        already_framed = _photo_already_framed(img)
+        if already_framed:
             img, border_cropped = crop_borders(img)
-            # Fallback rotation: if EXIF gave nothing, try Hough-based detection
-            if not orientation_corrected:
-                rotation = detect_large_rotation(img)
-                if rotation is not None:
-                    img = apply_large_rotation(img, rotation)
-                    orientation_corrected = True
-                    logger.info(f"[ENHANCEMENT] photo fallback rotation: {rotation}°")
+        else:
+            img, doc_found = detect_and_crop_document(img, raw_data=raw_data)
+            if doc_found:
+                border_cropped = True
+                if _expects_portrait:
+                    img, face_result = _orient_by_face_detection(img)
+                    if face_result is True:
+                        orientation_corrected = True
+                    elif face_result is False:
+                        pass  # already upright
+                    elif img.shape[1] > img.shape[0]:
+                        img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+                        orientation_corrected = True
+                        logger.info("[ENHANCEMENT] photo: landscape→portrait fallback (no face)")
+            else:
+                img, border_cropped = crop_borders(img)
+                # Fallback rotation: if EXIF gave nothing, try Hough-based detection
+                if not orientation_corrected:
+                    rotation = detect_large_rotation(img)
+                    if rotation is not None:
+                        img = apply_large_rotation(img, rotation)
+                        orientation_corrected = True
+                        logger.info(f"[ENHANCEMENT] photo fallback rotation: {rotation}°")
 
     # 3. Exposure — compute mean brightness on processed image
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
