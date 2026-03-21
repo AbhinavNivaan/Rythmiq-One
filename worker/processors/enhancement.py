@@ -1907,16 +1907,26 @@ def _enhance_photo(
     crop_done = False
 
     if _expects_portrait:
-        # Face-based crop: works for both photo-on-surface and already-framed
-        img_face, face_found = _crop_portrait_by_face(img)
-        if face_found:
-            img = img_face
-            border_cropped = True
+        # Fast path: already-framed photos (studio scans, digital files).
+        # Framing guard is cheap; if it fires, skip card-localization entirely.
+        if _photo_already_framed(img):
+            img, border_cropped = crop_borders(img)
             crop_done = True
-            # Orientation check for edge cases
+            logger.info("[ENHANCEMENT] portrait: already-framed -> skip card-localization")
             img, face_result = _orient_by_face_detection(img)
             if face_result is True:
                 orientation_corrected = True
+        else:
+            # Card-in-scene path: validate each face candidate against
+            # its card-background context before committing to a crop.
+            img_card, card_found = _find_portrait_card(img)
+            if card_found:
+                img = img_card
+                border_cropped = True
+                crop_done = True
+                img, face_result = _orient_by_face_detection(img)
+                if face_result is True:
+                    orientation_corrected = True
 
     if not crop_done:
         # Non-portrait path: framing guard + contour-based detection

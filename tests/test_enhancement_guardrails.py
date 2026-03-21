@@ -506,5 +506,45 @@ class TestFindPortraitCard:
         assert isinstance(result[1], bool)
 
 
+class TestPortraitEnhancementRouting:
+    """Verify enhance_image() portrait routing doesn't crash on edge cases."""
+
+    def test_plain_image_with_portrait_subtype_does_not_crash(self):
+        """
+        A featureless image submitted as Passport Photo must complete
+        without error and return a valid image.
+        """
+        img_bgr = _solid_bgr(600, 800, (200, 190, 180))
+        import io
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.fromarray(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)).save(buf, format="JPEG")
+        raw = buf.getvalue()
+
+        opts = EnhancementOptions(
+            document_type="photo",
+            document_subtype="Passport Photo",
+        )
+        result = enhance_image(raw, opts)
+        assert result is not None
+        assert len(result.image_data) > 0  # non-empty JPEG bytes
+
+    def test_portrait_path_succeeds_with_no_face(self):
+        """
+        When no face is detected (and image is not already-framed),
+        enhance_image must still return a result (not raise).
+        """
+        img_bgr = np.zeros((600, 800, 3), dtype=np.uint8)  # pure black
+        import io
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.fromarray(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)).save(buf, format="JPEG")
+        raw = buf.getvalue()
+
+        opts = EnhancementOptions(document_type="photo", document_subtype="Passport Photo")
+        result = enhance_image(raw, opts)
+        assert result is not None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
