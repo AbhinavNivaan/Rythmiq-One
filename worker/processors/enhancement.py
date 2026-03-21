@@ -833,6 +833,26 @@ _PORTRAIT_TOP_PAD_RATIO = 0.45
 # Standard passport aspect ratio (width / height)
 _PORTRAIT_ASPECT = 35.0 / 45.0  # ≈ 0.778
 
+# Maximum HSV-Value std across the 4 card-corner patches that is still
+# considered "uniform background".
+# Real card (passport blue / white / grey studio): std ≈ 10–35.
+# Cluttered-desk false-positive (corners land on wood, cables, pens): std ≈ 60–130.
+# Set conservatively at 45.0: wide margin above worst real-card (35) and
+# below best false-positive (60).  Analogous to _FRAME_BORDER_UNIFORMITY_THRESH.
+_CARD_BG_UNIFORMITY_THRESHOLD = 45.0
+
+# Size of each corner sampling patch as a fraction of estimated card size.
+# 8% of a 140×180 card ≈ 11×14 px patch (~154 px) — enough for stable std
+# while staying well clear of the face/hair region.
+_CARD_CORNER_PATCH_FRACTION = 0.08
+
+# Minimum face-to-SCENE area ratio inside _find_portrait_card().
+# A 4%-of-scene card with 65%-of-card-width face → face ≈ 1.3% of scene.
+# 0.5% leaves 2.6× headroom while rejecting sub-pixel noise.
+# (Different from _orient_by_face_detection's 3% guard, which operates on
+#  an already-isolated crop where the face is large.)
+_PORTRAIT_SCENE_MIN_FACE_RATIO = 0.005
+
 
 def _crop_portrait_by_face(
     img: NDArray[np.uint8],

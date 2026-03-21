@@ -29,6 +29,9 @@ from processors.enhancement import (
     READABLE_QUALITY_THRESHOLD,
     decode_image,
     encode_image,
+    _CARD_BG_UNIFORMITY_THRESHOLD,
+    _CARD_CORNER_PATCH_FRACTION,
+    _PORTRAIT_SCENE_MIN_FACE_RATIO,
 )
 
 
