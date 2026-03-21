@@ -36,6 +36,8 @@ from processors.enhancement import (
     _PORTRAIT_FACE_WIDTH_RATIO,
     _PORTRAIT_ASPECT,
     _PORTRAIT_TOP_PAD_RATIO,
+    _find_portrait_card,
+    _crop_portrait_by_face,
 )
 
 
@@ -448,6 +450,60 @@ class TestScoreCardBackground:
         s_clu = _score_card_background(img_clu, 300, 200, 160, 200)
 
         assert s_uni < s_clu
+
+
+class TestFindPortraitCard:
+    """Unit tests for _find_portrait_card()."""
+
+    def test_returns_ndarray_and_bool(self):
+        """Function signature is always (NDArray, bool)."""
+        img = np.zeros((400, 300, 3), dtype=np.uint8)
+        result_img, success = _find_portrait_card(img)
+        assert isinstance(result_img, np.ndarray)
+        assert isinstance(success, bool)
+
+    def test_featureless_image_returns_false(self):
+        """Blank image — no faces detected — returns (original, False)."""
+        img = _solid_bgr(600, 800, (200, 200, 200))
+        result_img, success = _find_portrait_card(img)
+        assert success is False
+        assert result_img.shape == img.shape
+
+    def test_background_gate_rejects_cluttered_false_positive(self):
+        """
+        Gate logic: a face candidate whose estimated card corners land on a
+        high-variance (cluttered) background must be rejected.
+        Test verifies the gate independently via _score_card_background.
+        """
+        img = np.zeros((800, 1200, 3), dtype=np.uint8)
+        img[:400, :] = (220, 200, 180)
+        img[400:, :] = (20, 30, 40)
+        fx, fy, fw, fh = 500, 300, 120, 150
+
+        score = _score_card_background(img, fx, fy, fw, fh)
+        assert score >= _CARD_BG_UNIFORMITY_THRESHOLD, (
+            "Cluttered background gate did not fire — "
+            f"score={score:.1f} should be >= {_CARD_BG_UNIFORMITY_THRESHOLD}"
+        )
+
+    def test_background_gate_accepts_uniform_background(self):
+        """
+        Gate logic: a face candidate with uniform card-corner background
+        must score below threshold.
+        """
+        img = _solid_bgr(600, 800, (180, 160, 140))
+        cv2.rectangle(img, (300, 200), (460, 400), (80, 120, 160), -1)
+        fx, fy, fw, fh = 300, 200, 160, 200
+
+        score = _score_card_background(img, fx, fy, fw, fh)
+        assert score < _CARD_BG_UNIFORMITY_THRESHOLD
+
+    def test_backward_compat_alias_callable(self):
+        """_crop_portrait_by_face must still exist and be callable."""
+        img = np.zeros((300, 250, 3), dtype=np.uint8)
+        result = _crop_portrait_by_face(img)
+        assert len(result) == 2
+        assert isinstance(result[1], bool)
 
 
 if __name__ == "__main__":

@@ -911,87 +911,116 @@ def _score_card_background(
     return float(np.std(all_v))
 
 
-def _crop_portrait_by_face(
+def _find_portrait_card(
     img: NDArray[np.uint8],
 ) -> Tuple[NDArray[np.uint8], bool]:
     """
-    Locate the face in the image and crop to standard passport photo
-    proportions around it.
+    Locate a printed passport-photo card in a scene image and crop to it.
 
-    This is more reliable than border detection for photos of printed
-    passport photos on surfaces, because the face is a strong, unambiguous
-    signal regardless of surface texture or lighting.
+    Replaces the old "pick largest face" approach with a principled two-gate
+    selection:
+
+      Gate 1 — minimum face-to-scene area ratio (0.5%)
+        Rejects sub-pixel noise.  Calibrated for faces that are ~1–2% of the
+        full scene (a 35×45mm card at ~4% of a typical phone photo).
+
+      Gate 2 — card background uniformity (_score_card_background)
+        Estimates where the card boundary would be from passport proportions,
+        samples the 4 card corners, and checks that they form a uniform solid
+        colour.  A real card has a consistent backdrop colour at every corner;
+        a charger, earbuds, or power bank does not.
+
+    The candidate with the LOWEST background std that also beats
+    _CARD_BG_UNIFORMITY_THRESHOLD wins.
 
     Returns:
-        (cropped_image, success)
+        (cropped_image, success)  — same signature as original
     """
     h, w = img.shape[:2]
     cascade = _get_face_cascade()
 
-    # Use moderate downscale — need enough resolution for reliable detection
     max_dim = max(h, w)
     scale = min(1.0, 1024.0 / max_dim)
 
-    if scale < 1.0:
-        small = cv2.resize(img, None, fx=scale, fy=scale)
-    else:
-        small = img
-
+    small = cv2.resize(img, None, fx=scale, fy=scale) if scale < 1.0 else img
     gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+
+    # Slightly permissive detection: the background scorer is the real gate.
+    # minNeighbors=5 / minSize=(30,30) ensures a small-in-scene face (which
+    # generates fewer cascade hits) survives candidate proposal.
     faces = cascade.detectMultiScale(
-        gray, scaleFactor=1.05, minNeighbors=6, minSize=(40, 40),
+        gray, scaleFactor=1.05, minNeighbors=5, minSize=(30, 30),
     )
 
     if len(faces) == 0:
-        logger.info("[ENHANCEMENT] face-crop: no face detected")
+        logger.info("[ENHANCEMENT] face-crop: no face candidates")
         return img, False
 
-    # Pick the largest face (most likely the passport photo subject)
-    largest = max(faces, key=lambda f: int(f[2]) * int(f[3]))
-    fx, fy, fw, fh = [int(v / scale) for v in largest]
+    img_area = float(w * h)
+    best_score = float("inf")
+    best_face: Optional[Tuple[int, int, int, int]] = None
 
-    # Derive passport photo boundaries from face position
-    photo_w = int(fw / _PORTRAIT_FACE_WIDTH_RATIO)
-    photo_h = int(photo_w / _PORTRAIT_ASPECT)
+    for (fx_s, fy_s, fw_s, fh_s) in faces:
+        fx = int(fx_s / scale)
+        fy = int(fy_s / scale)
+        fw = int(fw_s / scale)
+        fh = int(fh_s / scale)
 
-    # Centre horizontally on face
-    face_cx = fx + fw // 2
-    x1 = face_cx - photo_w // 2
+        # Gate 1: reject sub-pixel noise
+        if float(fw * fh) / img_area < _PORTRAIT_SCENE_MIN_FACE_RATIO:
+            continue
 
-    # Position vertically: face top with padding above for hair/forehead
-    y1 = fy - int(fh * _PORTRAIT_TOP_PAD_RATIO)
+        # Gate 2: card background uniformity
+        score = _score_card_background(img, fx, fy, fw, fh)
+        logger.debug(
+            "[ENHANCEMENT] face-crop: candidate (%d,%d %dx%d) bg_std=%.1f",
+            fx, fy, fw, fh, score,
+        )
+        if score < best_score:
+            best_score = score
+            best_face = (fx, fy, fw, fh)
 
-    x2 = x1 + photo_w
-    y2 = y1 + photo_h
-
-    # Clamp to image bounds
-    x1 = max(0, x1)
-    y1 = max(0, y1)
-    x2 = min(w, x2)
-    y2 = min(h, y2)
-
-    # Validate: crop should be meaningful
-    crop_w = x2 - x1
-    crop_h = y2 - y1
-    if crop_w < 100 or crop_h < 100:
-        logger.info("[ENHANCEMENT] face-crop: computed crop too small (%dx%d)", crop_w, crop_h)
+    if best_face is None:
+        logger.info("[ENHANCEMENT] face-crop: all candidates below area threshold")
         return img, False
 
-    crop_area = crop_w * crop_h
-    img_area = w * h
-    if crop_area > 0.8 * img_area:
+    if best_score >= _CARD_BG_UNIFORMITY_THRESHOLD:
         logger.info(
-            "[ENHANCEMENT] face-crop: computed crop too large (%.0f%% of image)",
-            100 * crop_area / img_area,
+            "[ENHANCEMENT] face-crop: best bg_std=%.1f >= %.1f — "
+            "no card-like background found",
+            best_score, _CARD_BG_UNIFORMITY_THRESHOLD,
         )
         return img, False
 
-    cropped = img[y1:y2, x1:x2]
+    fx, fy, fw, fh = best_face
+    photo_w = int(fw / _PORTRAIT_FACE_WIDTH_RATIO)
+    photo_h = int(photo_w / _PORTRAIT_ASPECT)
+
+    face_cx = fx + fw // 2
+    x1 = max(0, face_cx - photo_w // 2)
+    y1 = max(0, fy - int(fh * _PORTRAIT_TOP_PAD_RATIO))
+    x2 = min(w, x1 + photo_w)
+    y2 = min(h, y1 + photo_h)
+
+    crop_w, crop_h = x2 - x1, y2 - y1
+    if crop_w < 100 or crop_h < 100:
+        logger.info("[ENHANCEMENT] face-crop: crop too small (%dx%d)", crop_w, crop_h)
+        return img, False
+
+    if float(crop_w * crop_h) > 0.8 * img_area:
+        logger.info("[ENHANCEMENT] face-crop: crop too large (>80%% of image)")
+        return img, False
+
     logger.info(
-        "[ENHANCEMENT] face-crop: %dx%d -> %dx%d (face at %d,%d %dx%d)",
-        w, h, crop_w, crop_h, fx, fy, fw, fh,
+        "[ENHANCEMENT] face-crop: accepted bg_std=%.1f — %dx%d -> %dx%d "
+        "(face at %d,%d %dx%d)",
+        best_score, w, h, crop_w, crop_h, fx, fy, fw, fh,
     )
-    return cropped, True
+    return img[y1:y2, x1:x2], True
+
+
+# Backward-compatibility alias
+_crop_portrait_by_face = _find_portrait_card
 
 
 # Already-framed photo detection (skip document-crop guard)
