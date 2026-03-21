@@ -32,6 +32,10 @@ from processors.enhancement import (
     _CARD_BG_UNIFORMITY_THRESHOLD,
     _CARD_CORNER_PATCH_FRACTION,
     _PORTRAIT_SCENE_MIN_FACE_RATIO,
+    _score_card_background,
+    _PORTRAIT_FACE_WIDTH_RATIO,
+    _PORTRAIT_ASPECT,
+    _PORTRAIT_TOP_PAD_RATIO,
 )
 
 
@@ -359,6 +363,91 @@ class TestNoRegressions:
         # Orientation correction should still run (may or may not actually correct)
         # The key is it doesn't crash and produces valid output
         assert len(result.image_data) > 0
+
+
+# ---------------------------------------------------------------------------
+# Helpers for portrait card tests
+# ---------------------------------------------------------------------------
+
+def _solid_bgr(h: int, w: int, color: tuple) -> np.ndarray:
+    img = np.zeros((h, w, 3), dtype=np.uint8)
+    img[:] = color
+    return img
+
+
+# ---------------------------------------------------------------------------
+
+class TestScoreCardBackground:
+    """Unit tests for _score_card_background()."""
+
+    def test_uniform_backdrop_scores_below_threshold(self):
+        """Face on a solid-colour card background → low score → accepted."""
+        img = _solid_bgr(600, 800, (180, 160, 140))  # uniform passport-blue-ish
+        # Draw face-region in a different colour (won't affect corner patches)
+        fx, fy, fw, fh = 300, 200, 160, 200
+        cv2.rectangle(img, (fx, fy), (fx + fw, fy + fh), (80, 120, 160), -1)
+
+        score = _score_card_background(img, fx, fy, fw, fh)
+
+        assert score < _CARD_BG_UNIFORMITY_THRESHOLD, (
+            f"Uniform background should score below threshold, got {score:.1f}"
+        )
+
+    def test_cluttered_background_scores_above_threshold(self):
+        """
+        High-contrast background (desk clutter) → high score → rejected.
+
+        Real desk clutter has distinct objects with very different brightness
+        (a white charger next to a dark cable). Top card corners land in a
+        bright region; bottom corners land in a dark region → high V std.
+        Pure random pixels are NOT a good proxy because V = max(B,G,R) for
+        Uniform[20, 219] has theoretical std ≈ 38.5 (below the 45 threshold).
+        """
+        img = np.zeros((600, 800, 3), dtype=np.uint8)
+        img[:300, :] = (220, 200, 180)   # bright region (light desk / paper)
+        img[300:, :] = (20, 30, 40)      # dark region (shadow / cable)
+        fx, fy, fw, fh = 300, 200, 160, 200
+        # y1 = 200 - int(200 * 0.45) = 110  → top corners in bright region
+        # y2 = 110 + int(246 * 45/35) ≈ 426 → bottom corners in dark region
+        # Combined V std ≈ 90 — well above 45
+
+        score = _score_card_background(img, fx, fy, fw, fh)
+
+        assert score >= _CARD_BG_UNIFORMITY_THRESHOLD, (
+            f"Cluttered background should score above threshold, got {score:.1f}"
+        )
+
+    def test_out_of_bounds_corner_returns_penalty(self):
+        """Estimated card extends outside image → 999.0 penalty (not a real card)."""
+        img = _solid_bgr(200, 200, (150, 150, 150))
+        # Face near right edge so estimated card goes OOB
+        fx, fy, fw, fh = 190, 50, 60, 80
+
+        score = _score_card_background(img, fx, fy, fw, fh)
+
+        assert score == 999.0
+
+    def test_white_background_also_scores_low(self):
+        """Plain white backdrop (common ID photo) passes the uniformity gate."""
+        img = _solid_bgr(600, 800, (250, 250, 250))
+        fx, fy, fw, fh = 300, 200, 160, 200
+        cv2.rectangle(img, (fx, fy), (fx + fw, fy + fh), (120, 140, 160), -1)
+
+        score = _score_card_background(img, fx, fy, fw, fh)
+
+        assert score < _CARD_BG_UNIFORMITY_THRESHOLD
+
+    def test_uniform_scores_lower_than_cluttered(self):
+        """Ordering sanity: uniform < cluttered."""
+        img_uni = _solid_bgr(600, 800, (180, 160, 140))
+        cv2.rectangle(img_uni, (300, 200), (460, 400), (80, 120, 160), -1)
+        s_uni = _score_card_background(img_uni, 300, 200, 160, 200)
+
+        rng = np.random.RandomState(99)
+        img_clu = rng.randint(20, 220, (600, 800, 3)).astype(np.uint8)
+        s_clu = _score_card_background(img_clu, 300, 200, 160, 200)
+
+        assert s_uni < s_clu
 
 
 if __name__ == "__main__":

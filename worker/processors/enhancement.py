@@ -854,6 +854,63 @@ _CARD_CORNER_PATCH_FRACTION = 0.08
 _PORTRAIT_SCENE_MIN_FACE_RATIO = 0.005
 
 
+def _score_card_background(
+    img: NDArray[np.uint8],
+    fx: int,
+    fy: int,
+    fw: int,
+    fh: int,
+) -> float:
+    """
+    Measure how much the region around a face candidate looks like a printed
+    passport-photo card with a uniform solid-colour backdrop.
+
+    Uses the same passport-proportion constants as _find_portrait_card to
+    estimate the card boundary, then samples a small patch at each of the
+    4 card corners (which are always inside the backdrop area, never inside
+    the face).  Returns the HSV-Value std across all corner patch pixels —
+    lower is more uniform (more card-like).
+
+    Returns 999.0 when any corner falls outside the image (the estimated
+    card does not fit, so this cannot be an in-scene card).
+
+    Args:
+        img:  Full-scene BGR image (full-scale coordinates).
+        fx, fy, fw, fh:  Face bounding box in full-scale pixel coordinates.
+    """
+    h, w = img.shape[:2]
+
+    photo_w = int(fw / _PORTRAIT_FACE_WIDTH_RATIO)
+    photo_h = int(photo_w / _PORTRAIT_ASPECT)
+
+    face_cx = fx + fw // 2
+    x1 = face_cx - photo_w // 2
+    y1 = fy - int(fh * _PORTRAIT_TOP_PAD_RATIO)
+    x2 = x1 + photo_w
+    y2 = y1 + photo_h
+
+    pw = max(4, int(photo_w * _CARD_CORNER_PATCH_FRACTION))
+    ph = max(4, int(photo_h * _CARD_CORNER_PATCH_FRACTION))
+
+    corners = [
+        (x1,      y1),
+        (x2 - pw, y1),
+        (x1,      y2 - ph),
+        (x2 - pw, y2 - ph),
+    ]
+
+    patches: list[NDArray[np.uint8]] = []
+    for cx, cy in corners:
+        if cx < 0 or cy < 0 or cx + pw > w or cy + ph > h:
+            return 999.0
+        patch = img[cy: cy + ph, cx: cx + pw]
+        hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
+        patches.append(hsv[:, :, 2].ravel())  # Value channel only
+
+    all_v = np.concatenate(patches)
+    return float(np.std(all_v))
+
+
 def _crop_portrait_by_face(
     img: NDArray[np.uint8],
 ) -> Tuple[NDArray[np.uint8], bool]:
