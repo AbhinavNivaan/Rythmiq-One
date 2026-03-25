@@ -42,3 +42,6 @@ test_results/
 
 # Secrets / Keys
 *.pem
+
+# Generated files
+docs/Edge_Case_Test_Checklist.pdf
