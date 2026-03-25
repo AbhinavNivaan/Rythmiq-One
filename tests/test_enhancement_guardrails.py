@@ -439,6 +439,27 @@ class TestScoreCardBackground:
 
         assert score < _CARD_BG_UNIFORMITY_THRESHOLD
 
+    def test_one_oob_corner_still_scores(self):
+        """Face near edge with 1 OOB corner → valid score (not 999.0).
+
+        The inset + skip-OOB logic should allow scoring when 3 of 4 corners
+        are inside the image.  A uniform image ensures the 3 valid patches
+        produce a low score.
+        """
+        # 600×800 image, face near right edge so top-right corner goes OOB
+        img = _solid_bgr(600, 800, (180, 160, 140))
+        # Face at x=680: card extends past right edge for ~1 corner
+        fx, fy, fw, fh = 680, 200, 100, 130
+
+        score = _score_card_background(img, fx, fy, fw, fh)
+
+        assert score != 999.0, (
+            "With 3 valid corners the score should not be the OOB penalty"
+        )
+        assert score < _CARD_BG_UNIFORMITY_THRESHOLD, (
+            f"Uniform background with 3 corners should score low, got {score:.1f}"
+        )
+
     def test_uniform_scores_lower_than_cluttered(self):
         """Ordering sanity: uniform < cluttered."""
         img_uni = _solid_bgr(600, 800, (180, 160, 140))

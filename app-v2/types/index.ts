@@ -58,6 +58,8 @@ export interface QualityBreakdown {
   exposure: number;
   noise: number;
   edge_density: number;
+  saturation?: number;
+  contrast?: number;
 }
 
 // =============================================================================

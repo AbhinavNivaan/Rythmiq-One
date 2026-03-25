@@ -26,12 +26,18 @@ from errors import WorkerError, ErrorCode, ProcessingStage
 QUALITY_WARNING_THRESHOLD = 0.80
 SHARPNESS_MIN = 50.0  # Below this is considered blurry
 SHARPNESS_MAX = 500.0  # Normalize to this range
+# Photo-specific sharpness constants — portraits have smoother regions than text
+SHARPNESS_MIN_PHOTO = 20.0
+SHARPNESS_MAX_PHOTO = 300.0
 
 # Type-aware quality weights — each document type has different priorities
 QUALITY_WEIGHTS = {
-    "photo":     {"sharpness": 0.50, "exposure": 0.40, "noise": 0.10, "edge_density": 0.00},
-    "signature": {"sharpness": 0.40, "exposure": 0.30, "noise": 0.20, "edge_density": 0.10},
-    "document":  {"sharpness": 0.35, "exposure": 0.30, "noise": 0.20, "edge_density": 0.15},
+    "photo":     {"sharpness": 0.25, "exposure": 0.20, "noise": 0.20,
+                  "saturation": 0.20, "contrast": 0.15, "edge_density": 0.00},
+    "signature": {"sharpness": 0.40, "exposure": 0.30, "noise": 0.20,
+                  "saturation": 0.00, "contrast": 0.00, "edge_density": 0.10},
+    "document":  {"sharpness": 0.35, "exposure": 0.30, "noise": 0.20,
+                  "saturation": 0.00, "contrast": 0.00, "edge_density": 0.15},
 }
 
 
@@ -215,6 +221,99 @@ def compute_edge_density(gray: NDArray[np.uint8]) -> float:
     return float(score)
 
 
+def compute_sharpness_photo(gray: NDArray[np.uint8]) -> float:
+    """
+    Compute sharpness for photos using noise-resilient Laplacian variance.
+
+    A light Gaussian pre-blur suppresses noise-band energy so that
+    Laplacian variance reflects real focus quality rather than grain.
+    Uses photo-calibrated constants (portraits have smoother regions
+    than text documents).
+
+    Args:
+        gray: Grayscale image as uint8 array
+
+    Returns:
+        Normalized sharpness score [0.0, 1.0]
+    """
+    denoised = cv2.GaussianBlur(gray, (3, 3), 0)
+    laplacian = cv2.Laplacian(denoised, cv2.CV_64F)
+    variance = laplacian.var()
+
+    normalized = (variance - SHARPNESS_MIN_PHOTO) / (SHARPNESS_MAX_PHOTO - SHARPNESS_MIN_PHOTO)
+    return float(min(max(normalized, 0.0), 1.0))
+
+
+def compute_saturation(img_bgr: NDArray[np.uint8]) -> float:
+    """
+    Compute color saturation score from the BGR image.
+
+    Uses mean HSV saturation with a B&W-aware curve: true monochrome
+    photos (mean S < 10) receive a neutral 0.50 rather than being
+    penalised, while suspiciously desaturated colour photos (S 10-25)
+    score lower.
+
+    Args:
+        img_bgr: BGR image as uint8 array
+
+    Returns:
+        Saturation quality score [0.0, 1.0]
+    """
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+    mean_sat = float(np.mean(hsv[:, :, 1]))
+
+    if mean_sat < 10:
+        # True B&W / near-monochrome — neutral score (not penalised)
+        return 0.50
+    elif mean_sat < 25:
+        # Suspiciously desaturated colour photo
+        return 0.30 + 0.20 * ((mean_sat - 10) / 15.0)
+    elif mean_sat < 40:
+        # Low saturation but potentially intentional
+        return 0.50 + 0.50 * ((mean_sat - 25) / 15.0)
+    elif mean_sat <= 160:
+        # Ideal range for portraits
+        return 1.0
+    elif mean_sat <= 200:
+        # Oversaturated
+        return 1.0 - 0.5 * ((mean_sat - 160) / 40.0)
+    else:
+        # Extremely oversaturated
+        return max(0.3, 0.5 - (mean_sat - 200) / 110.0)
+
+
+def compute_contrast(gray: NDArray[np.uint8]) -> float:
+    """
+    Compute tonal contrast using the percentile dynamic range.
+
+    Dynamic range = P95 - P5 of grayscale intensity.  More robust than
+    standard deviation because it ignores small numbers of extreme
+    outlier pixels (specular highlights, dead pixels).
+
+    Args:
+        gray: Grayscale image as uint8 array
+
+    Returns:
+        Contrast quality score [0.0, 1.0]
+    """
+    p5 = float(np.percentile(gray, 5))
+    p95 = float(np.percentile(gray, 95))
+    dynamic_range = p95 - p5
+
+    if dynamic_range < 30:
+        # Very flat — almost no tonal variation
+        return dynamic_range / 30.0 * 0.3
+    elif dynamic_range < 80:
+        # Low contrast
+        return 0.3 + 0.5 * ((dynamic_range - 30) / 50.0)
+    elif dynamic_range < 180:
+        # Good contrast
+        return 0.8 + 0.2 * min((dynamic_range - 80) / 100.0, 1.0)
+    else:
+        # Excellent dynamic range
+        return 1.0
+
+
 def decode_image(data: bytes) -> Tuple[NDArray[np.uint8], NDArray[np.uint8]]:
     """
     Decode image bytes to OpenCV arrays.
@@ -263,14 +362,17 @@ def assess_quality(data: bytes, document_type: str = "document") -> QualityResul
         WorkerError: If quality assessment fails
     """
     try:
-        _, gray = decode_image(data)
+        img_bgr, gray = decode_image(data)
 
         # Compute individual metrics
-        sharpness = compute_sharpness(gray)
+        # Photos use noise-resilient sharpness with photo-calibrated constants
+        sharpness = compute_sharpness_photo(gray) if document_type == "photo" else compute_sharpness(gray)
         # Photos use mean-brightness exposure; documents/signatures use contrast std-dev
         exposure = compute_exposure_photo(gray) if document_type == "photo" else compute_exposure(gray)
         noise = compute_noise(gray)
         edge_density = compute_edge_density(gray)
+        saturation = compute_saturation(img_bgr)
+        contrast = compute_contrast(gray)
 
         # Type-aware weighted average
         weights = QUALITY_WEIGHTS.get(document_type, QUALITY_WEIGHTS["document"])
@@ -279,14 +381,18 @@ def assess_quality(data: bytes, document_type: str = "document") -> QualityResul
             weights['sharpness'] * sharpness +
             weights['exposure'] * exposure +
             weights['noise'] * noise +
-            weights['edge_density'] * edge_density
+            weights['edge_density'] * edge_density +
+            weights.get('saturation', 0.0) * saturation +
+            weights.get('contrast', 0.0) * contrast
         )
-        
+
         breakdown = QualityBreakdown(
             sharpness=sharpness,
             exposure=exposure,
             noise=noise,
             edge_density=edge_density,
+            saturation=saturation,
+            contrast=contrast,
         )
         
         return QualityResult(
@@ -322,6 +428,9 @@ __all__ = [
     'assess_quality',
     'check_quality_warning',
     'compute_exposure_photo',
+    'compute_sharpness_photo',
+    'compute_saturation',
+    'compute_contrast',
     'QualityResult',
     'QualityBreakdown',
     'QUALITY_WARNING_THRESHOLD',

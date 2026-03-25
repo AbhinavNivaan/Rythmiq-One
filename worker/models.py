@@ -401,6 +401,8 @@ class QualityBreakdown:
     exposure: float
     noise: float
     edge_density: float
+    saturation: float = 0.0
+    contrast: float = 0.0
 
     def to_dict(self) -> Dict[str, float]:
         return {
@@ -408,6 +410,8 @@ class QualityBreakdown:
             "exposure": round(self.exposure, 4),
             "noise": round(self.noise, 4),
             "edge_density": round(self.edge_density, 4),
+            "saturation": round(self.saturation, 4),
+            "contrast": round(self.contrast, 4),
         }
 
 

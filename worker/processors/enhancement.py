@@ -846,6 +846,11 @@ _CARD_BG_UNIFORMITY_THRESHOLD = 45.0
 # while staying well clear of the face/hair region.
 _CARD_CORNER_PATCH_FRACTION = 0.08
 
+# How far inward (as fraction of estimated card dimension) to pull corner
+# patches from each edge.  Compensates for Haar cascade face-bbox error
+# (~10-20%) amplified by the 1/0.65 card-width ratio.
+_CARD_CORNER_INSET_FRACTION = 0.15
+
 # Minimum face-to-SCENE area ratio inside _find_portrait_card().
 # A 4%-of-scene card with 65%-of-card-width face → face ≈ 1.3% of scene.
 # 0.5% leaves 2.6× headroom while rejecting sub-pixel noise.
@@ -892,20 +897,28 @@ def _score_card_background(
     pw = max(4, int(photo_w * _CARD_CORNER_PATCH_FRACTION))
     ph = max(4, int(photo_h * _CARD_CORNER_PATCH_FRACTION))
 
+    # Pull corner patches inward so they stay inside the physical card
+    # even when the face bbox (and thus estimated card boundary) is off.
+    inset_x = int(photo_w * _CARD_CORNER_INSET_FRACTION)
+    inset_y = int(photo_h * _CARD_CORNER_INSET_FRACTION)
+
     corners = [
-        (x1,      y1),
-        (x2 - pw, y1),
-        (x1,      y2 - ph),
-        (x2 - pw, y2 - ph),
+        (x1 + inset_x,          y1 + inset_y),
+        (x2 - pw - inset_x,     y1 + inset_y),
+        (x1 + inset_x,          y2 - ph - inset_y),
+        (x2 - pw - inset_x,     y2 - ph - inset_y),
     ]
 
     patches: list[NDArray[np.uint8]] = []
     for cx, cy in corners:
         if cx < 0 or cy < 0 or cx + pw > w or cy + ph > h:
-            return 999.0
+            continue  # skip OOB corner; require ≥3 valid patches below
         patch = img[cy: cy + ph, cx: cx + pw]
         hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
         patches.append(hsv[:, :, 2].ravel())  # Value channel only
+
+    if len(patches) < 3:
+        return 999.0
 
     all_v = np.concatenate(patches)
     return float(np.std(all_v))
@@ -1138,6 +1151,10 @@ _DOC_DETECT_MAX_ASPECT_RATIO = 5.0
 _DOC_DETECT_MIN_SOLIDITY = 0.60
 # Epsilon multiplier for polygon approximation (fraction of arc length)
 _POLY_APPROX_EPSILON = 0.02
+# A4 paper: 210 × 297 mm → portrait aspect ratio (height/width) = 1.4143
+_A4_ASPECT_RATIO: float = 297.0 / 210.0        # ≈ 1.4143
+_A4_SNAP_TOLERANCE: float = 0.10               # ±10% band → [1.273, 1.556]
+_A4_ENFORCE_CATEGORIES: frozenset[str] = frozenset({"academic", "certificate"})
 
 # ---------------------------------------------------------------------------
 # Document taxonomy — drives routing and orientation decisions.
@@ -1605,6 +1622,31 @@ def _preprocess_for_edges(
         grad_thresh = cv2.morphologyEx(grad_thresh, cv2.MORPH_CLOSE, close_kernel)
         edge_maps.append(grad_thresh)
 
+        # ---- Strategy 7: Value-channel Otsu (white paper on wood) ----------
+        # White paper (~V=220-255) vs warm wood (~V=130-180): Otsu auto-finds
+        # the split.  Strong 25×25 blur kills wood grain before thresholding.
+        # Uses THRESH_OTSU so it adapts to warm-lamp colour shifts automatically.
+        hsv_s7 = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+        val_blur_s7 = cv2.GaussianBlur(hsv_s7[:, :, 2], (25, 25), 0)
+        _, val_thresh_s7 = cv2.threshold(
+            val_blur_s7, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU
+        )
+        big_k  = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
+        open_k = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+        val_thresh_s7 = cv2.morphologyEx(val_thresh_s7, cv2.MORPH_CLOSE, big_k)
+        val_thresh_s7 = cv2.morphologyEx(val_thresh_s7, cv2.MORPH_OPEN,  open_k)
+        edge_maps.append(val_thresh_s7)
+
+        # ---- Strategy 8: CLAHE-boosted Canny (document boundary contrast) --
+        # CLAHE amplifies local contrast at the paper/wood boundary while
+        # suppressing uniform wood texture (grain period < CLAHE tile size).
+        clahe_s8 = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        gray_clahe_s8 = clahe_s8.apply(gray)
+        for lo_t, hi_t in [(40, 130), (30, 100)]:
+            e = cv2.Canny(gray_clahe_s8, lo_t, hi_t)
+            e = cv2.morphologyEx(e, cv2.MORPH_CLOSE, close_kernel)
+            edge_maps.append(e)
+
     return edge_maps
 
 
@@ -1855,6 +1897,58 @@ def detect_and_crop_document(
 
 
 # ---------------------------------------------------------------------------
+# A4 aspect ratio normalization
+# ---------------------------------------------------------------------------
+
+def _snap_to_a4_ratio(img: NDArray[np.uint8]) -> NDArray[np.uint8]:
+    """
+    Pad a near-A4 crop to exact A4 proportions using white borders.
+
+    Only called when document_category is in _A4_ENFORCE_CATEGORIES
+    (academic / certificate).  Does nothing if the image aspect ratio is
+    outside the ±10% tolerance band around 1.4143 — avoids mis-snapping
+    non-A4 documents.
+    """
+    h, w = img.shape[:2]
+    is_portrait = h >= w
+    current_aspect = (h / w) if is_portrait else (w / h)   # long / short
+
+    lo = _A4_ASPECT_RATIO * (1 - _A4_SNAP_TOLERANCE)  # ≈ 1.273
+    hi = _A4_ASPECT_RATIO * (1 + _A4_SNAP_TOLERANCE)  # ≈ 1.556
+    if not (lo <= current_aspect <= hi):
+        return img   # too far from A4 — don't guess
+
+    if is_portrait:
+        target_h = round(w * _A4_ASPECT_RATIO)
+        target_w = w
+    else:
+        target_w = round(h * _A4_ASPECT_RATIO)
+        target_h = h
+
+    pad_h = target_h - h
+    pad_w = target_w - w
+
+    # Guard: never pad more than 15% — avoids floating document in whitespace
+    if pad_h > 0.15 * h or pad_w > 0.15 * w:
+        logger.warning("[ENHANCEMENT] A4 snap: padding >15%% — skipping")
+        return img
+
+    top    = pad_h // 2;  bottom = pad_h - top
+    left   = pad_w // 2;  right  = pad_w - left
+
+    result = cv2.copyMakeBorder(
+        img, top, bottom, left, right,
+        borderType=cv2.BORDER_CONSTANT,
+        value=(255, 255, 255),
+    )
+    logger.info(
+        "[ENHANCEMENT] A4 snap: %dx%d → %dx%d (aspect %.3f → %.3f)",
+        w, h, result.shape[1], result.shape[0], current_aspect, _A4_ASPECT_RATIO,
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Type-specific enhancement branches
 # ---------------------------------------------------------------------------
 
@@ -1907,32 +2001,32 @@ def _enhance_photo(
     crop_done = False
 
     if _expects_portrait:
-        # Fast path: already-framed photos (studio scans, digital files).
-        # Framing guard is cheap; if it fires, skip card-localization entirely.
-        if _photo_already_framed(img):
-            img, border_cropped = crop_borders(img)
+        # Face-based crop: the face is the most reliable anchor for portrait
+        # subtypes, regardless of whether the photo is on a surface or
+        # already framed.  _find_portrait_card() has built-in guards:
+        #   - Gate 1: face >= 0.5% of scene area
+        #   - Gate 2: card-corner background uniformity (std < 45.0)
+        #   - Size guard: rejects crop > 80% of image (already-framed)
+        # For already-framed portraits the size guard fires and the
+        # fallback path below handles them via crop_borders().
+        img_card, card_found = _find_portrait_card(img)
+        if card_found:
+            img = img_card
+            border_cropped = True
             crop_done = True
-            logger.info("[ENHANCEMENT] portrait: already-framed -> skip card-localization")
             img, face_result = _orient_by_face_detection(img)
             if face_result is True:
                 orientation_corrected = True
-        else:
-            # Card-in-scene path: validate each face candidate against
-            # its card-background context before committing to a crop.
-            img_card, card_found = _find_portrait_card(img)
-            if card_found:
-                img = img_card
-                border_cropped = True
-                crop_done = True
-                img, face_result = _orient_by_face_detection(img)
-                if face_result is True:
-                    orientation_corrected = True
 
     if not crop_done:
-        # Non-portrait path: framing guard + contour-based detection
+        # Fallback: framing guard + contour-based detection
         already_framed = _photo_already_framed(img)
         if already_framed:
             img, border_cropped = crop_borders(img)
+            if _expects_portrait:
+                img, face_result = _orient_by_face_detection(img)
+                if face_result is True:
+                    orientation_corrected = True
         else:
             img, doc_found = detect_and_crop_document(img, raw_data=raw_data)
             if doc_found:
@@ -1969,13 +2063,12 @@ def _enhance_photo(
         )
         exposure_corrected = True
 
-    # 3. Sharpness — use breakdown if available, otherwise compute inline
-    if breakdown is not None:
-        sharp_score = breakdown.sharpness
-    else:
-        from processors.quality import compute_sharpness
-        gray2 = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        sharp_score = compute_sharpness(gray2)
+    # 3. Sharpness — always compute inline on the current (post-crop/rotation)
+    #    image using noise-resilient Laplacian with photo-calibrated range.
+    gray2 = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    denoised = cv2.GaussianBlur(gray2, (3, 3), 0)
+    lap_var = cv2.Laplacian(denoised, cv2.CV_64F).var()
+    sharp_score = float(min(max((lap_var - 20.0) / 280.0, 0.0), 1.0))
 
     if sharp_score < _PHOTO_SHARPNESS_THRESHOLD:
         img = apply_unsharp_mask(img)
@@ -2013,13 +2106,11 @@ def _enhance_signature(
     # 2. Border crop (scanner black borders)
     img, border_cropped = crop_borders(img)
 
-    # 3. Sharpness check
-    if breakdown is not None:
-        sharp_score = breakdown.sharpness
-    else:
-        from processors.quality import compute_sharpness
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        sharp_score = compute_sharpness(gray)
+    # 3. Sharpness — compute inline on current image state
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    denoised = cv2.GaussianBlur(gray, (3, 3), 0)
+    lap_var = cv2.Laplacian(denoised, cv2.CV_64F).var()
+    sharp_score = float(min(max((lap_var - 20.0) / 280.0, 0.0), 1.0))
 
     if sharp_score < _PHOTO_SHARPNESS_THRESHOLD:
         img = apply_unsharp_mask(img, sigma=1.0, strength=1.2)
@@ -2077,6 +2168,13 @@ def _enhance_document(
         img, border_cropped = crop_borders(img)
         if options.correct_orientation:
             img, orientation_corrected = correct_orientation(img)
+
+    # Step 2b: A4 aspect ratio normalization (academic / certificate only).
+    # Pads the cropped image to exact A4 proportions with white borders.
+    # Must run after crop but before denoise so padding sees the full pipeline.
+    _category = (options.document_category or "").lower()
+    if _category in _A4_ENFORCE_CATEGORIES:
+        img = _snap_to_a4_ratio(img)
 
     if options.denoise and not skip_enhancement:
         img, denoised = denoise(img, strength=options.denoise_strength)
