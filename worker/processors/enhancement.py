@@ -68,6 +68,9 @@ class EnhancementOptions:
     # Only active when GUARD-001 does NOT skip enhancement (i.e. skip_enhancement=False).
     # For readable/high-quality images the Stage 5 convert_colour_mode path handles it.
     binarise_output: bool = False
+    # Confirmed crop quad from app's crop preview (normalised 0.0–1.0).
+    # When set, detect_and_crop_document() skips its detection cascade.
+    confirmed_crop_quad: Optional[tuple] = None
 
 
 def _apply_exif_transpose(data: bytes) -> bytes:

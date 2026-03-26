@@ -216,6 +216,19 @@ class StorageSpec:
         )
 
 
+def _parse_quad(raw) -> Optional[tuple]:
+    """Parse [[x,y],[x,y],[x,y],[x,y]] from JSON into tuple of tuples. Returns None if invalid."""
+    if not raw:
+        return None
+    try:
+        pts = list(raw)
+        if len(pts) != 4:
+            return None
+        return tuple(tuple(float(c) for c in pt) for pt in pts)
+    except (TypeError, ValueError):
+        return None
+
+
 @dataclass(frozen=True)
 class JobPayload:
     """
@@ -242,6 +255,11 @@ class JobPayload:
     # Worker will decrypt in-memory with sek_b64 before processing.
     # Blob format: first 12 bytes = AES-GCM nonce, remainder = ciphertext.
     encrypted_input: bool = False
+    # Confirmed crop quad from the app's crop preview screen.
+    # 4 corner points in normalised 0.0–1.0 coordinates (TL, TR, BR, BL).
+    # When present, the enhancement pipeline skips its own document detection
+    # and goes straight to perspective warp using these corners.
+    confirmed_crop_quad: Optional[tuple] = None
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> JobPayload:
@@ -298,6 +316,7 @@ class JobPayload:
             input=InputSpec.from_dict(data.get("input", {})),
             storage=StorageSpec.from_dict(data.get("storage", {})),
             encrypted_input=bool(data.get("encrypted_input", False)),
+            confirmed_crop_quad=_parse_quad(data.get("confirmed_crop_quad")),
         )
 
 

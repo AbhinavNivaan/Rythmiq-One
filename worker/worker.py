@@ -273,6 +273,7 @@ def process_job(payload: JobPayload) -> SuccessResult:
         document_subtype=payload.document_subtype,
         quality_breakdown=quality_result.breakdown,
         binarise_output=_is_binary_schema,
+        confirmed_crop_quad=payload.confirmed_crop_quad,
     )
     enhanced = enhance_image(raw_data, enhancement_options)
 
