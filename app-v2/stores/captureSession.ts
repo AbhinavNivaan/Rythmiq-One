@@ -19,13 +19,13 @@ interface CaptureSessionState {
   sessionId: string | null
   images: CapturedImage[]
   docType: string
-  confirmed: ConfirmedCrop[]
+  confirmed: (ConfirmedCrop | undefined)[]
 
   startSession: (images: CapturedImage[], docType: string) => string
   confirmCrop: (index: number, crop: ConfirmedCrop) => void
   replaceImage: (index: number, image: CapturedImage) => void
   clearSession: () => void
-  getSession: () => { images: CapturedImage[]; docType: string; confirmed: ConfirmedCrop[] }
+  getSession: () => { images: CapturedImage[]; docType: string; confirmed: (ConfirmedCrop | undefined)[] }
 }
 
 export const useCaptureSession = create<CaptureSessionState>((set, get) => ({
@@ -54,7 +54,7 @@ export const useCaptureSession = create<CaptureSessionState>((set, get) => ({
       images[index] = image
       // Clear the confirmed entry for this index so it re-runs detection
       const confirmed = [...state.confirmed]
-      delete confirmed[index]
+      confirmed[index] = undefined
       return { images, confirmed }
     })
   },
@@ -65,6 +65,6 @@ export const useCaptureSession = create<CaptureSessionState>((set, get) => ({
 
   getSession: () => {
     const { images, docType, confirmed } = get()
-    return { images, docType, confirmed }
+    return { images: [...images], docType, confirmed: [...confirmed] }
   },
 }))
