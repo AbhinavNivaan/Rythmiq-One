@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# Brainstorming session files
+.superpowers/
+
 # Environment variables
 .env
 .env.*
