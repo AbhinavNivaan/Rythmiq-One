@@ -700,10 +700,17 @@ export const documentsApi = {
    * Used after uploading to the presigned URL.
    * @param outputFormat - 'jpeg' (default), 'jpeg2000', or 'pdf_mrc' (lossless MRC)
    */
-  async submitJob(jobId: string, outputFormat: string = 'jpeg'): Promise<{ job_id: string; status: string }> {
+  async submitJob(
+    jobId: string,
+    outputFormat: string = 'jpeg',
+    confirmedCropQuad?: [[number,number],[number,number],[number,number],[number,number]],
+  ): Promise<{ job_id: string; status: string }> {
     return apiRequest<{ job_id: string; status: string }>(`/jobs/${jobId}/submit`, {
       method: 'POST',
-      body: JSON.stringify({ output_format: outputFormat }),
+      body: JSON.stringify({
+        output_format: outputFormat,
+        ...(confirmedCropQuad ? { confirmed_crop_quad: confirmedCropQuad } : {}),
+      }),
     });
   },
 

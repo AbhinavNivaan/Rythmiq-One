@@ -8,6 +8,7 @@
 import { Alert } from 'react-native';
 import { documentsApi } from './api';
 import type { QueryClient } from '@tanstack/react-query';
+import type { ConfirmedCrop } from '../stores/captureSession';
 
 export type UploadStatus = {
   total: number;
@@ -36,7 +37,7 @@ export function getUploadStatus(): UploadStatus {
 }
 
 export function startBackgroundUpload(
-  imageUris: string[],
+  confirmedCrops: ConfirmedCrop[],
   documentName: string,
   selectedCategory: string,
   selectedType: string,
@@ -44,16 +45,16 @@ export function startBackgroundUpload(
   queryClient: QueryClient,
   outputFormat: string = 'jpeg',
 ) {
-  notify({ total: imageUris.length, current: 0, done: false, error: undefined });
+  notify({ total: confirmedCrops.length, current: 0, done: false, error: undefined });
 
   (async () => {
     try {
-      for (let i = 0; i < imageUris.length; i++) {
-        const uri = imageUris[i];
+      for (let i = 0; i < confirmedCrops.length; i++) {
+        const crop = confirmedCrops[i];
         const name = documentName || `${selectedType}_${Date.now()}`;
         const filename = `${name}_${i + 1}.jpg`;
 
-        const response = await fetch(uri);
+        const response = await fetch(crop.originalUri);
         const blob = await response.blob();
 
         const { job_id, upload_url } = await documentsApi.createMasterJob(
@@ -65,8 +66,12 @@ export function startBackgroundUpload(
           selectedType,
         );
 
-        await documentsApi.uploadToPresignedUrl(upload_url, uri, 'image/jpeg');
-        await documentsApi.submitJob(job_id, outputFormat);
+        await documentsApi.uploadToPresignedUrl(upload_url, crop.originalUri, 'image/jpeg');
+        await documentsApi.submitJob(
+          job_id,
+          outputFormat,
+          crop.quad as [[number,number],[number,number],[number,number],[number,number]],
+        );
 
         notify({ current: i + 1 });
 
