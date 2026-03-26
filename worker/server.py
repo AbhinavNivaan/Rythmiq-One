@@ -21,11 +21,15 @@ Environment:
 - DO_SPACES_SECRET_KEY: S3-compatible secret key
 """
 
+import base64
 import json
 import logging
 import os
 import sys
 from typing import Any
+
+import cv2
+import numpy as np
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -336,8 +340,7 @@ async def process_document(request: ProcessRequest) -> ProcessResponse:
 
 class DetectRequest(BaseModel):
     """Request body for /detect: base64-encoded image."""
-    class Config:
-        extra = "allow"
+    image_b64: str = ""
 
 
 class DetectResponse(BaseModel):
@@ -353,9 +356,6 @@ async def detect_document(request: DetectRequest) -> DetectResponse:
 
     Body field: image_b64 — base64-encoded JPEG/PNG bytes of the image.
     """
-    import base64
-    import numpy as np
-    import cv2
     from processors.enhancement import (
         _find_quad_contour,
         _preprocess_for_edges,
@@ -365,7 +365,7 @@ async def detect_document(request: DetectRequest) -> DetectResponse:
     )
 
     try:
-        image_b64: str = request.__dict__.get("image_b64", "")
+        image_b64: str = request.image_b64
         if not image_b64:
             logger.warning("[DETECT] No image_b64 provided")
             return DetectResponse(quad=None)
@@ -389,7 +389,7 @@ async def detect_document(request: DetectRequest) -> DetectResponse:
                 corners, _ = result
                 ordered = _order_corners(corners)
                 quad = [[float(x) / w, float(y) / h] for x, y in ordered]
-                logger.info(f"[DETECT] Quad found: {quad}")
+                logger.info("[DETECT] Quad found")
                 return DetectResponse(quad=quad)
 
     except Exception as e:
