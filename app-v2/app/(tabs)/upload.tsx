@@ -26,7 +26,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Colors from '../../constants/Colors';
 import { documentsApi, formSchemasApi } from '../../services/api';
 import { startBackgroundUpload } from '../../services/backgroundUpload';
-import { useCaptureSession } from '../../stores/captureSession';
+import { useCaptureSession, type ConfirmedCrop } from '../../stores/captureSession';
 
 // Theme colors
 const colors = {
@@ -192,9 +192,10 @@ function Dropdown({
 
 export default function UploadScreen() {
   const queryClient = useQueryClient();
-  const { getSession, clearSession } = useCaptureSession();
-  const session = getSession();
-  const confirmedCrops = session.confirmed.filter((c): c is NonNullable<typeof c> => c !== undefined);
+  const clearSession = useCaptureSession(s => s.clearSession);
+  const confirmed = useCaptureSession(s => s.confirmed);
+  const docType = useCaptureSession(s => s.docType);
+  const confirmedCrops = confirmed.filter((c): c is ConfirmedCrop => c !== undefined);
   const imageUris = confirmedCrops.map(c => c.croppedUri ?? c.originalUri);
   const [documentName, setDocumentName] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<DocumentCategory>('identity');
@@ -206,10 +207,7 @@ export default function UploadScreen() {
 
   // Pre-select document category/type from session
   useEffect(() => {
-    const docType = session.docType;
-    if (!docType) {
-      return;
-    }
+    if (!docType) return;
 
     const docTypeToCategory: Record<string, DocumentCategory> = {
       Photo: 'photograph',
@@ -222,7 +220,7 @@ export default function UploadScreen() {
     const mappedCategory = docTypeToCategory[docType] ?? 'identity';
     setSelectedCategory(mappedCategory);
     setSelectedType(documentCategories[mappedCategory].types[0]);
-  }, [session.docType]);
+  }, [docType, documentCategories]);
 
   const handleUpload = useCallback(() => {
     if (imageUris.length === 0) {
