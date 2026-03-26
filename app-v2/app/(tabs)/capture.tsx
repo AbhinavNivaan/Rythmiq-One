@@ -20,7 +20,8 @@ import {
 } from 'react-native';
 import { CameraView, useCameraPermissions, CameraType } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useCaptureSession } from '../../stores/captureSession';
 import { Ionicons } from '@expo/vector-icons';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -41,6 +42,9 @@ export default function CaptureScreen() {
   const [isMuted, setIsMuted] = useState(false);
   const [selectedDocType, setSelectedDocType] = useState('Photo');
   const cameraRef = useRef<CameraView>(null);
+  const params = useLocalSearchParams<{ replaceIndex?: string; sessionId?: string }>()
+  const replaceIndex = params.replaceIndex !== undefined ? parseInt(params.replaceIndex, 10) : null
+  const { startSession, replaceImage } = useCaptureSession()
 
   const docTypes = ['Photo', 'ID Card', 'Mark Sheet', 'Signature', 'Other'];
 
@@ -80,11 +84,13 @@ export default function CaptureScreen() {
       });
       
       if (photo) {
-        setCapturedImages(prev => [...prev, {
-          uri: photo.uri,
-          width: photo.width,
-          height: photo.height,
-        }]);
+        const newImage = { uri: photo.uri, width: photo.width, height: photo.height };
+        if (replaceIndex !== null) {
+          // Single-shot recapture mode: replace all with just this one image
+          setCapturedImages([newImage]);
+        } else {
+          setCapturedImages(prev => [...prev, newImage]);
+        }
       }
     } catch (error) {
       console.error('Failed to take picture:', error);
@@ -92,7 +98,7 @@ export default function CaptureScreen() {
     } finally {
       setIsCapturing(false);
     }
-  }, [isCapturing]);
+  }, [isCapturing, replaceIndex]);
 
   const pickFromGallery = useCallback(async () => {
     try {
@@ -143,15 +149,23 @@ export default function CaptureScreen() {
       return;
     }
 
-    // Navigate to upload/schema selection with images
+    if (replaceIndex !== null && params.sessionId) {
+      // Recapture mode: replace one image in the existing session
+      replaceImage(replaceIndex, capturedImages[0]);
+      router.replace({
+        pathname: '/(tabs)/crop-preview',
+        params: { sessionId: params.sessionId, index: String(replaceIndex) },
+      });
+      return;
+    }
+
+    // Normal mode: start a new session, go to crop preview from index 0
+    const sessionId = startSession(capturedImages, selectedDocType);
     router.push({
-      pathname: '/(tabs)/upload',
-      params: {
-        images: JSON.stringify(capturedImages.map(img => img.uri)),
-        docType: selectedDocType,
-      },
+      pathname: '/(tabs)/crop-preview',
+      params: { sessionId, index: '0' },
     });
-  }, [capturedImages, selectedDocType]);
+  }, [capturedImages, selectedDocType, replaceIndex, params.sessionId, startSession, replaceImage]);
 
   // Permission handling
   if (!permission) {
