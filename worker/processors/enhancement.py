@@ -1795,6 +1795,7 @@ def detect_and_crop_document(
     # perspective warp. _order_corners() ensures correct TL/TR/BR/BL order
     # even if the user dragged corners in an unexpected sequence.
     if confirmed_crop_quad is not None:
+        logger.info("[ENHANCEMENT] fast-path triggered, quad=%s, img=%dx%d", confirmed_crop_quad, w, h)
         try:
             pixel_pts = np.array(
                 [[x * w, y * h] for x, y in confirmed_crop_quad],
@@ -2030,7 +2031,33 @@ def _enhance_photo(
 
     crop_done = False
 
-    if _expects_portrait:
+    # Fast-path: user confirmed the crop corners in the app.
+    # Skip all crop detection (face, Vision API, contour) and go straight to
+    # perspective warp. Mirrors the same fast-path in detect_and_crop_document.
+    _confirmed_quad = options.confirmed_crop_quad if options is not None else None
+    if _confirmed_quad is not None:
+        h, w = img.shape[:2]
+        try:
+            pixel_pts = np.array(
+                [[x * w, y * h] for x, y in _confirmed_quad],
+                dtype=np.float32,
+            )
+            ordered = _order_corners(pixel_pts)
+            warped = _perspective_crop(img, ordered)
+            if warped is not None and warped.size > 0:
+                logger.info(
+                    "[ENHANCEMENT] photo fast-path: confirmed quad applied %dx%d→%dx%d",
+                    w, h, warped.shape[1], warped.shape[0],
+                )
+                img = warped
+                border_cropped = True
+                crop_done = True
+        except Exception as _e:
+            logger.warning(
+                "[ENHANCEMENT] photo confirmed_crop_quad failed (%s), falling through to detection", _e,
+            )
+
+    if _expects_portrait and not crop_done:
         # Face-based crop: the face is the most reliable anchor for portrait
         # subtypes, regardless of whether the photo is on a surface or
         # already framed.  _find_portrait_card() has built-in guards:

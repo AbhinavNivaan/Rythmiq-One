@@ -252,6 +252,12 @@ async def process_document(request: ProcessRequest) -> ProcessResponse:
         
         # Parse and validate payload
         try:
+            has_quad = "confirmed_crop_quad" in payload_dict and payload_dict["confirmed_crop_quad"] is not None
+            logger.info(
+                "[PROCESS] confirmed_crop_quad present in payload: %s",
+                has_quad,
+                extra={"job_id": payload_dict.get("job_id", "unknown")},
+            )
             parsed = parse_payload(json.dumps(payload_dict))
             job_payload = JobPayload.from_dict(parsed)
         except Exception as e:
@@ -362,6 +368,7 @@ async def detect_document(request: DetectRequest) -> DetectResponse:
         _order_corners,
         _DOC_DETECT_MIN_AREA_FRACTION,
         _DOC_DETECT_MAX_AREA_FRACTION,
+        _apply_exif_transpose,
     )
 
     try:
@@ -371,6 +378,11 @@ async def detect_document(request: DetectRequest) -> DetectResponse:
             return DetectResponse(quad=None)
 
         img_bytes = base64.b64decode(image_b64)
+        # Apply EXIF transpose before detection — must match enhance_image() which
+        # does the same at its entry point. Without this, detection runs on raw
+        # landscape pixels while the full pipeline processes EXIF-corrected portrait
+        # pixels, producing quad coordinates in the wrong orientation.
+        img_bytes = _apply_exif_transpose(img_bytes)
         nparr = np.frombuffer(img_bytes, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         if img is None:

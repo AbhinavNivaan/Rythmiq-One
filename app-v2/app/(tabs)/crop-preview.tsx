@@ -18,6 +18,7 @@ import {
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router, useLocalSearchParams } from 'expo-router'
+import * as ImageManipulator from 'expo-image-manipulator'
 import { useCaptureSession, type NormalisedQuad } from '../../stores/captureSession'
 import { detectDocument, defaultQuad } from '../../services/documentDetector'
 import CropOverlay from '../../components/CropOverlay'
@@ -40,9 +41,9 @@ export default function CropPreviewScreen() {
   const currentImage = images[index]
 
   const [isDetecting, setIsDetecting] = useState(true)
+  const [isConfirming, setIsConfirming] = useState(false)
   const [detectionFailed, setDetectionFailed] = useState(false)
   const [currentQuad, setCurrentQuad] = useState<NormalisedQuad>(defaultQuad())
-  const [croppedUri, setCroppedUri] = useState<string | undefined>()
   const [hintVisible, setHintVisible] = useState(true)
   const hasInteracted = useRef(false)
 
@@ -59,11 +60,9 @@ export default function CropPreviewScreen() {
       .then(result => {
         if (result) {
           setCurrentQuad(result.quad)
-          setCroppedUri(result.croppedUri)
           setDetectionFailed(false)
         } else {
           setCurrentQuad(defaultQuad())
-          setCroppedUri(undefined)
           setDetectionFailed(true)
         }
       })
@@ -82,12 +81,33 @@ export default function CropPreviewScreen() {
     }
   }, [])
 
-  const handleLooksGood = useCallback(() => {
-    if (!currentImage) return
+  const handleLooksGood = useCallback(async () => {
+    if (!currentImage || isConfirming) return
+    setIsConfirming(true)
+
+    // Generate a bounding-box crop for the upload screen thumbnail.
+    // Not perspective-corrected, but shows the document area the user confirmed.
+    let previewUri: string | undefined
+    try {
+      const xs = currentQuad.map(p => p[0])
+      const ys = currentQuad.map(p => p[1])
+      const originX = Math.max(0, Math.min(...xs)) * currentImage.width
+      const originY = Math.max(0, Math.min(...ys)) * currentImage.height
+      const width = Math.max(1, (Math.max(...xs) - Math.min(...xs)) * currentImage.width)
+      const height = Math.max(1, (Math.max(...ys) - Math.min(...ys)) * currentImage.height)
+      const result = await ImageManipulator.manipulateAsync(
+        currentImage.uri,
+        [{ crop: { originX, originY, width, height } }],
+        { compress: 0.85, format: ImageManipulator.SaveFormat.JPEG },
+      )
+      previewUri = result.uri
+    } catch {
+      // Non-fatal: fall back to original
+    }
 
     confirmCrop(index, {
       originalUri: currentImage.uri,
-      croppedUri,
+      croppedUri: previewUri,
       quad: currentQuad,
     })
 
@@ -100,7 +120,7 @@ export default function CropPreviewScreen() {
     } else {
       router.replace('/(tabs)/upload')
     }
-  }, [currentImage, currentQuad, croppedUri, index, images.length, confirmCrop, params.sessionId])
+  }, [currentImage, currentQuad, isConfirming, index, images.length, confirmCrop, params.sessionId])
 
   const handleRecapture = useCallback(() => {
     router.push({
@@ -146,6 +166,8 @@ export default function CropPreviewScreen() {
             <CropOverlay
               containerWidth={imageLayout.width}
               containerHeight={imageLayout.height}
+              imageNativeWidth={currentImage.width}
+              imageNativeHeight={currentImage.height}
               initialQuad={currentQuad}
               onQuadChange={handleQuadChange}
             />
@@ -175,11 +197,13 @@ export default function CropPreviewScreen() {
           <Text style={styles.recaptureText}>↺  Recapture</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.looksGoodButton, isDetecting && styles.buttonDisabled]}
+          style={[styles.looksGoodButton, (isDetecting || isConfirming) && styles.buttonDisabled]}
           onPress={handleLooksGood}
-          disabled={isDetecting}
+          disabled={isDetecting || isConfirming}
         >
-          <Text style={styles.looksGoodText}>Looks Good  →</Text>
+          {isConfirming
+            ? <ActivityIndicator color={colors.white} size="small" />
+            : <Text style={styles.looksGoodText}>Looks Good  →</Text>}
         </TouchableOpacity>
       </View>
     </SafeAreaView>

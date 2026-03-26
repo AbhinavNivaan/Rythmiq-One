@@ -5,7 +5,7 @@
  * NO portal selection - that happens in the Export flow.
  */
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -205,9 +205,12 @@ export default function UploadScreen() {
   const [isTypeOpen, setIsTypeOpen] = useState(false);
   const [useLossless, setUseLossless] = useState(false);
 
-  // Pre-select document category/type from session
+  // Pre-select document category/type from session — runs once when docType is known.
+  // Must not re-run when documentCategories changes (async query resolving would
+  // reset any user override back to the session default).
+  const hasPreSelected = useRef(false);
   useEffect(() => {
-    if (!docType) return;
+    if (!docType || hasPreSelected.current) return;
 
     const docTypeToCategory: Record<string, DocumentCategory> = {
       Photo: 'photograph',
@@ -220,6 +223,7 @@ export default function UploadScreen() {
     const mappedCategory = docTypeToCategory[docType] ?? 'identity';
     setSelectedCategory(mappedCategory);
     setSelectedType(documentCategories[mappedCategory].types[0]);
+    hasPreSelected.current = true;
   }, [docType, documentCategories]);
 
   const handleUpload = useCallback(() => {
