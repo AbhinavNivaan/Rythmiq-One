@@ -69,6 +69,8 @@ class CreateJobResponse(BaseModel):
 
 class SubmitJobRequest(BaseModel):
     output_format: Literal["jpeg", "jpeg2000", "pdf_mrc"] = "jpeg"
+    confirmed_crop_quad: list[list[float]] | None = None
+    # [[x,y],[x,y],[x,y],[x,y]] normalised 0.0–1.0, TL/TR/BR/BL order
 
 
 class SubmitJobResponse(BaseModel):

@@ -63,6 +63,7 @@ async def _submit_job_to_processing(
     sek_b64: str | None = None,
     encrypted_input: bool = False,
     output_format: str = "jpeg",
+    confirmed_crop_quad: list[list[float]] | None = None,
 ) -> None:
     settings = get_settings()
 
@@ -90,6 +91,9 @@ async def _submit_job_to_processing(
             "correlation_id": correlation_id,
             "encrypted_input": encrypted_input,
         }
+
+        if confirmed_crop_quad is not None:
+            camber_payload["confirmed_crop_quad"] = confirmed_crop_quad
 
         # Forward SEK when provided (zero-knowledge: key transits in-memory only,
         # never stored server-side). Required for encrypt-on-output and
@@ -771,6 +775,7 @@ async def submit_job(
         correlation_id=correlation_id,
         camber=camber,
         output_format=body.output_format,
+        confirmed_crop_quad=body.confirmed_crop_quad,
     )
 
     return SubmitJobResponse(job_id=job_id, status="processing")
