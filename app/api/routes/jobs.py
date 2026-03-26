@@ -515,6 +515,7 @@ async def create_job(
             camber=camber,
             sek_b64=body.sek_b64,
             encrypted_input=encrypted_input,
+            confirmed_crop_quad=None,
         )
 
         return CreateJobResponse(job_id=adapt_job_id)
@@ -675,6 +676,7 @@ async def create_job(
             camber=camber,
             sek_b64=body.sek_b64,
             encrypted_input=False,  # Fresh upload is never pre-encrypted
+            confirmed_crop_quad=None,
         )
     else:
         logger.info(
