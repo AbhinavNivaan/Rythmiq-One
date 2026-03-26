@@ -1766,6 +1766,7 @@ def _trim_white_border(img: NDArray[np.uint8], threshold: int = 245) -> NDArray[
 def detect_and_crop_document(
     img: NDArray[np.uint8],
     raw_data: Optional[bytes] = None,
+    confirmed_crop_quad: Optional[tuple] = None,
 ) -> Tuple[NDArray[np.uint8], bool]:
     """
     Detect the largest valid document rectangle in a scene photo, correct
@@ -1787,6 +1788,32 @@ def detect_and_crop_document(
         (result_image, was_processed)
     """
     h, w = img.shape[:2]
+
+    # ── Fast-path: user-confirmed quad from app crop preview ─────────────
+    # When the user has already verified and optionally adjusted the crop
+    # corners in the app, we skip all detection stages and go straight to
+    # perspective warp. _order_corners() ensures correct TL/TR/BR/BL order
+    # even if the user dragged corners in an unexpected sequence.
+    if confirmed_crop_quad is not None:
+        try:
+            pixel_pts = np.array(
+                [[x * w, y * h] for x, y in confirmed_crop_quad],
+                dtype=np.float32,
+            )
+            ordered = _order_corners(pixel_pts)
+            warped = _perspective_crop(img, ordered)
+            if warped is not None and warped.size > 0:
+                logger.info(
+                    "[ENHANCEMENT] Using confirmed crop quad from app preview: %dx%d -> %dx%d",
+                    w, h, warped.shape[1], warped.shape[0],
+                )
+                return _hough_fine_tune_rotation(warped), True
+        except Exception as _e:
+            logger.warning(
+                "[ENHANCEMENT] confirmed_crop_quad fast-path failed (%s), falling through to cascade",
+                _e,
+            )
+
     min_area = _DOC_DETECT_MIN_AREA_FRACTION * w * h
     max_area = _DOC_DETECT_MAX_AREA_FRACTION * w * h
 
@@ -2163,7 +2190,11 @@ def _enhance_document(
     # Step 2: Document boundary detection → perspective warp → crop.
     # Tries Vision API first, then cascades through OpenCV detectors.
     # Passes raw_data so the Vision stage can include the image bytes.
-    img, doc_found = detect_and_crop_document(img, raw_data=raw_data)
+    img, doc_found = detect_and_crop_document(
+        img,
+        raw_data=raw_data,
+        confirmed_crop_quad=options.confirmed_crop_quad,
+    )
     if doc_found:
         border_cropped = True
         orientation_corrected = True
