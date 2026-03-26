@@ -20,12 +20,13 @@ import {
   Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, Camera, X, Upload, CheckCircle, FileImage, PenTool, File, ChevronUp, Check } from 'lucide-react-native';
+import { router } from 'expo-router';
+import { ArrowLeft, Camera, Upload, CheckCircle, FileImage, PenTool, File, ChevronUp, Check } from 'lucide-react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Colors from '../../constants/Colors';
 import { documentsApi, formSchemasApi } from '../../services/api';
 import { startBackgroundUpload } from '../../services/backgroundUpload';
+import { useCaptureSession } from '../../stores/captureSession';
 
 // Theme colors
 const colors = {
@@ -190,9 +191,11 @@ function Dropdown({
 }
 
 export default function UploadScreen() {
-  const params = useLocalSearchParams<{ images?: string; docType?: string }>();
   const queryClient = useQueryClient();
-  const [imageUris, setImageUris] = useState<string[]>([]);
+  const { getSession, clearSession } = useCaptureSession();
+  const session = getSession();
+  const confirmedCrops = session.confirmed.filter((c): c is NonNullable<typeof c> => c !== undefined);
+  const imageUris = confirmedCrops.map(c => c.croppedUri ?? c.originalUri);
   const [documentName, setDocumentName] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<DocumentCategory>('identity');
   const [selectedType, setSelectedType] = useState<string>('Aadhaar Card');
@@ -201,21 +204,10 @@ export default function UploadScreen() {
   const [isTypeOpen, setIsTypeOpen] = useState(false);
   const [useLossless, setUseLossless] = useState(false);
 
-  // Parse images from params
+  // Pre-select document category/type from session
   useEffect(() => {
-    if (params.images) {
-      try {
-        const parsed = JSON.parse(params.images);
-        setImageUris(parsed);
-      } catch (e) {
-        console.error('Failed to parse images:', e);
-      }
-    }
-  }, [params.images]);
-
-  // Pre-select document category/type from capture screen
-  useEffect(() => {
-    if (!params.docType) {
+    const docType = session.docType;
+    if (!docType) {
       return;
     }
 
@@ -227,10 +219,10 @@ export default function UploadScreen() {
       Other: 'other',
     };
 
-    const mappedCategory = docTypeToCategory[params.docType] ?? 'identity';
+    const mappedCategory = docTypeToCategory[docType] ?? 'identity';
     setSelectedCategory(mappedCategory);
     setSelectedType(documentCategories[mappedCategory].types[0]);
-  }, [params.docType]);
+  }, [session.docType]);
 
   const handleUpload = useCallback(() => {
     if (imageUris.length === 0) {
@@ -244,7 +236,7 @@ export default function UploadScreen() {
 
     // Fire upload in the background — it continues after navigation
     startBackgroundUpload(
-      imageUris,
+      confirmedCrops,
       documentName,
       selectedCategory,
       selectedType,
@@ -252,14 +244,12 @@ export default function UploadScreen() {
       queryClient,
       useLossless ? 'pdf_mrc' : 'jpeg',
     );
+    clearSession();
 
     // Go to jobs immediately so the user can see progress and explore freely
     router.replace('/(tabs)/jobs');
-  }, [imageUris, documentName, selectedCategory, selectedType, queryClient, useLossless]);
+  }, [confirmedCrops, documentName, selectedCategory, selectedType, queryClient, useLossless, clearSession]);
 
-  const removeImage = useCallback((index: number) => {
-    setImageUris(prev => prev.filter((_, i) => i !== index));
-  }, []);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -284,15 +274,9 @@ export default function UploadScreen() {
               data={imageUris}
               keyExtractor={(_, index) => index.toString()}
               showsHorizontalScrollIndicator={false}
-              renderItem={({ item, index }) => (
+              renderItem={({ item }) => (
                 <View style={styles.imagePreview}>
                   <Image source={{ uri: item }} style={styles.previewImage} />
-                  <TouchableOpacity 
-                    style={styles.removeButton}
-                    onPress={() => removeImage(index)}
-                  >
-                    <X size={16} color={colors.white} />
-                  </TouchableOpacity>
                 </View>
               )}
               contentContainerStyle={styles.imageList}
