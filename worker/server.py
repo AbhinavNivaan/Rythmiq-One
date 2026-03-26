@@ -331,6 +331,74 @@ async def process_document(request: ProcessRequest) -> ProcessResponse:
 
 
 # ============================================================================
+# Document Detection (fast-path, no Vision API)
+# ============================================================================
+
+class DetectRequest(BaseModel):
+    """Request body for /detect: base64-encoded image."""
+    class Config:
+        extra = "allow"
+
+
+class DetectResponse(BaseModel):
+    """Response from /detect: normalised quad or null."""
+    quad: list[list[float]] | None  # [[x,y],[x,y],[x,y],[x,y]] normalised 0.0–1.0, or null
+
+
+@app.post("/detect")
+async def detect_document(request: DetectRequest) -> DetectResponse:
+    """
+    Fast document corner detection. Runs Stage 1 (OpenCV contour) only.
+    No Vision API, no full pipeline. Returns normalised quad or null.
+
+    Body field: image_b64 — base64-encoded JPEG/PNG bytes of the image.
+    """
+    import base64
+    import numpy as np
+    import cv2
+    from processors.enhancement import (
+        _find_quad_contour,
+        _preprocess_for_edges,
+        _order_corners,
+        _DOC_DETECT_MIN_AREA_FRACTION,
+        _DOC_DETECT_MAX_AREA_FRACTION,
+    )
+
+    try:
+        image_b64: str = request.__dict__.get("image_b64", "")
+        if not image_b64:
+            logger.warning("[DETECT] No image_b64 provided")
+            return DetectResponse(quad=None)
+
+        img_bytes = base64.b64decode(image_b64)
+        nparr = np.frombuffer(img_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if img is None:
+            logger.warning("[DETECT] Could not decode image")
+            return DetectResponse(quad=None)
+
+        h, w = img.shape[:2]
+        min_area = _DOC_DETECT_MIN_AREA_FRACTION * w * h
+        max_area = _DOC_DETECT_MAX_AREA_FRACTION * w * h
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        edge_maps = _preprocess_for_edges(gray, bgr=img)
+
+        for edge_img in edge_maps:
+            result = _find_quad_contour(edge_img, min_area, max_area)
+            if result is not None:
+                corners, _ = result
+                ordered = _order_corners(corners)
+                quad = [[float(x) / w, float(y) / h] for x, y in ordered]
+                logger.info(f"[DETECT] Quad found: {quad}")
+                return DetectResponse(quad=quad)
+
+    except Exception as e:
+        logger.warning(f"[DETECT] failed: {e}")
+
+    return DetectResponse(quad=None)
+
+
+# ============================================================================
 # Error Handlers
 # ============================================================================
 
