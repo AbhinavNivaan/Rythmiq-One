@@ -22,12 +22,23 @@ export const CONFIDENCE_THRESHOLD = 0.5
 
 const MODEL_SIZE = 640
 
+export interface TensorPadding {
+  padLeft: number
+  padTop: number
+  scaledW: number
+  scaledH: number
+}
+
 /**
  * Decode TFLite output into 4 normalised corners [0,1] or null.
  *
  * @param output Flat Float32Array from model.runSync() — shape [17 * 8400]
+ * @param padding letterbox info from imageUriToTensor — corrects for grey borders.
  */
-export function decodeYoloPoseOutput(output: Float32Array): NormalisedQuad | null {
+export function decodeYoloPoseOutput(
+  output: Float32Array,
+  padding: TensorPadding,
+): NormalisedQuad | null {
   // Find anchor with highest confidence
   let bestConf = 0
   let bestAnchor = -1
@@ -44,15 +55,19 @@ export function decodeYoloPoseOutput(output: Float32Array): NormalisedQuad | nul
     return null
   }
 
-  // Extract 4 keypoints (channels 5–16)
+  const { padLeft, padTop, scaledW, scaledH } = padding
   const corners: [number, number][] = []
   for (let k = 0; k < 4; k++) {
     const rawX = output[(5 + k * 3 + 0) * NUM_ANCHORS + bestAnchor]
     const rawY = output[(5 + k * 3 + 1) * NUM_ANCHORS + bestAnchor]
-    const x = Math.max(0, Math.min(1, rawX / MODEL_SIZE))
-    const y = Math.max(0, Math.min(1, rawY / MODEL_SIZE))
+    // Remove letterbox padding, normalise to [0,1] in original image space
+    const x = Math.max(0, Math.min(1, (rawX - padLeft) / scaledW))
+    const y = Math.max(0, Math.min(1, (rawY - padTop) / scaledH))
     corners.push([x, y])
   }
 
   return corners as NormalisedQuad
 }
+
+// Re-export MODEL_SIZE for tests that may reference it
+export { MODEL_SIZE }

@@ -61,16 +61,16 @@ async function getModel(): Promise<TensorflowModel | null> {
  */
 export async function detectDocument(
   imageUri: string,
-  _imageWidth: number,
-  _imageHeight: number,
+  imageWidth: number,
+  imageHeight: number,
 ): Promise<DetectionResult | null> {
   try {
     const model = await getModel()
     if (!model) return null
 
-    const tensor = await imageUriToTensor(imageUri)
-    const [output] = model.runSync([tensor])
-    const corners = decodeYoloPoseOutput(output as Float32Array)
+    const { tensor, ...padding } = await imageUriToTensor(imageUri, imageWidth, imageHeight)
+    const [rawOutput] = model.runSync([tensor])
+    const corners = decodeYoloPoseOutput(new Float32Array(rawOutput.buffer), padding)
 
     if (!corners) return null
     return { quad: corners }

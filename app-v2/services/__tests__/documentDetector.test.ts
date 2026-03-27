@@ -28,6 +28,15 @@ const FAKE_QUAD: [[number,number],[number,number],[number,number],[number,number
   [0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9],
 ]
 
+/** A TensorWithPadding for a square 640×640 image (no letterboxing). */
+const FAKE_TENSOR_WITH_PADDING = {
+  tensor: new Float32Array(640 * 640 * 3),
+  padLeft: 0,
+  padTop: 0,
+  scaledW: 640,
+  scaledH: 640,
+}
+
 beforeEach(() => {
   jest.clearAllMocks()
   // Reset module-level model cache between tests
@@ -42,9 +51,10 @@ test('defaultQuad returns 4 corner points near image edges', () => {
 })
 
 test('returns detected quad on success', async () => {
-  const mockModel = { runSync: jest.fn().mockReturnValue([new Float32Array(17 * 8400)]) }
+  const fakeArrayBuffer = new Float32Array(17 * 8400).buffer
+  const mockModel = { runSync: jest.fn().mockReturnValue([fakeArrayBuffer]) }
   mockLoad.mockResolvedValue(mockModel)
-  mockToTensor.mockResolvedValue(new Float32Array(640 * 640 * 3))
+  mockToTensor.mockResolvedValue(FAKE_TENSOR_WITH_PADDING)
   mockDecode.mockReturnValue(FAKE_QUAD)
 
   const result = await detectDocument('file://photo.jpg', 1200, 900)
@@ -53,10 +63,48 @@ test('returns detected quad on success', async () => {
   expect(result!.quad).toEqual(FAKE_QUAD)
 })
 
-test('returns null when model detects nothing (decode returns null)', async () => {
-  const mockModel = { runSync: jest.fn().mockReturnValue([new Float32Array(17 * 8400)]) }
+test('passes padding from imageUriToTensor to decodeYoloPoseOutput', async () => {
+  const paddedTensor = {
+    tensor: new Float32Array(640 * 640 * 3),
+    padLeft: 0,
+    padTop: 140,
+    scaledW: 640,
+    scaledH: 360,
+  }
+  const fakeArrayBuffer = new Float32Array(17 * 8400).buffer
+  const mockModel = { runSync: jest.fn().mockReturnValue([fakeArrayBuffer]) }
   mockLoad.mockResolvedValue(mockModel)
-  mockToTensor.mockResolvedValue(new Float32Array(640 * 640 * 3))
+  mockToTensor.mockResolvedValue(paddedTensor)
+  mockDecode.mockReturnValue(FAKE_QUAD)
+
+  await detectDocument('file://photo.jpg', 1280, 720)
+
+  // decodeYoloPoseOutput should receive padding (not the tensor)
+  expect(mockDecode).toHaveBeenCalledWith(
+    expect.any(Float32Array),
+    { padLeft: 0, padTop: 140, scaledW: 640, scaledH: 360 },
+  )
+})
+
+test('wraps runSync output in new Float32Array (ArrayBuffer fix)', async () => {
+  const fakeArrayBuffer = new Float32Array(17 * 8400).buffer  // pure ArrayBuffer
+  const mockModel = { runSync: jest.fn().mockReturnValue([fakeArrayBuffer]) }
+  mockLoad.mockResolvedValue(mockModel)
+  mockToTensor.mockResolvedValue(FAKE_TENSOR_WITH_PADDING)
+  mockDecode.mockReturnValue(FAKE_QUAD)
+
+  await detectDocument('file://photo.jpg', 1200, 900)
+
+  // The first arg to decodeYoloPoseOutput must be a Float32Array, not an ArrayBuffer
+  const firstArg = mockDecode.mock.calls[0][0]
+  expect(firstArg).toBeInstanceOf(Float32Array)
+})
+
+test('returns null when model detects nothing (decode returns null)', async () => {
+  const fakeArrayBuffer = new Float32Array(17 * 8400).buffer
+  const mockModel = { runSync: jest.fn().mockReturnValue([fakeArrayBuffer]) }
+  mockLoad.mockResolvedValue(mockModel)
+  mockToTensor.mockResolvedValue(FAKE_TENSOR_WITH_PADDING)
   mockDecode.mockReturnValue(null)
 
   const result = await detectDocument('file://photo.jpg', 1200, 900)
@@ -66,7 +114,7 @@ test('returns null when model detects nothing (decode returns null)', async () =
 
 test('returns null when model loading fails', async () => {
   mockLoad.mockRejectedValue(new Error('model not found'))
-  mockToTensor.mockResolvedValue(new Float32Array(640 * 640 * 3))
+  mockToTensor.mockResolvedValue(FAKE_TENSOR_WITH_PADDING)
 
   const result = await detectDocument('file://photo.jpg', 1200, 900)
 
