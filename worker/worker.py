@@ -52,6 +52,7 @@ from processors.quality import assess_quality, check_quality_warning, QUALITY_WA
 from processors.document_ai import extract_text_safe as docai_extract_text
 from processors.enhancement import enhance_image, EnhancementOptions, READABLE_QUALITY_THRESHOLD
 from processors.schema import adapt_to_schema, adapt_master_document
+from processors.dataset_logger import log_detection_sample
 from crypto import encrypt_file as crypto_encrypt, decrypt_file as crypto_decrypt, sek_from_base64, nonce_to_base64, NONCE_SIZE
 
 
@@ -275,6 +276,15 @@ def process_job(payload: JobPayload) -> SuccessResult:
         binarise_output=_is_binary_schema,
         confirmed_crop_quad=payload.confirmed_crop_quad,
     )
+    # Log confirmed quad to GCS for training dataset (fire-and-forget)
+    if payload.confirmed_crop_quad:
+        log_detection_sample(
+            image_bytes=raw_data,
+            quad=payload.confirmed_crop_quad,
+            document_type=payload.document_type or "document",
+            job_id=payload.job_id or "unknown",
+        )
+
     enhanced = enhance_image(raw_data, enhancement_options)
 
     # Stage 4: DOCUMENT AI OCR (replaces PaddleOCR — runs on enhanced image)
