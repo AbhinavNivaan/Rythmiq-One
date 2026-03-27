@@ -1535,6 +1535,101 @@ def _find_filled_document_blob(
     return img, False
 
 
+def _find_blob_corners(
+    img: NDArray[np.uint8],
+    min_area: float,
+    max_area: float,
+) -> Optional[NDArray[np.float32]]:
+    """
+    Stage 2 blob corner detector for the /detect endpoint.
+
+    Applies the same binary threshold strategies as _find_filled_document_blob
+    but returns 4 corner points in pixel coordinates (shape: (4,2) float32)
+    instead of a perspective-warped image. Used when Stage 1 edge-based quad
+    detection returns nothing.
+
+    Returns None if no valid document blob is found.
+    """
+    h, w = img.shape[:2]
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (9, 9), 0)
+
+    # Strategy A: High-brightness mask — white paper (V > 180) on any background
+    hsv_a = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    val = hsv_a[:, :, 2]
+    _, bright_mask = cv2.threshold(val, 180, 255, cv2.THRESH_BINARY)
+    bright_blur = cv2.GaussianBlur(bright_mask, (9, 9), 0)
+    _, bright_clean = cv2.threshold(bright_blur, 127, 255, cv2.THRESH_BINARY)
+
+    _, otsu_thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    _, inv_thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+    binary_candidates = [bright_clean, otsu_thresh, inv_thresh]
+    for _tval in [40, 60, 90, 120, 150, 180]:
+        _, _t = cv2.threshold(blur, _tval, 255, cv2.THRESH_BINARY)
+        binary_candidates.append(_t)
+
+    # Strategy E: Saturation-based — colorful cards (PAN, Aadhaar) on neutral bg
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    sat = hsv[:, :, 1]
+    sat_blur = cv2.GaussianBlur(sat, (9, 9), 0)
+    _, sat_otsu = cv2.threshold(sat_blur, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    binary_candidates.append(sat_otsu)
+    # Strategy F: Inverted saturation — white/grey paper on coloured background
+    _, sat_inv_otsu = cv2.threshold(sat_blur, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+    binary_candidates.append(sat_inv_otsu)
+
+    fill_size = max(15, min(w, h) // 20)
+    fill_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (fill_size, fill_size))
+    open_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+
+    best_corners: Optional[NDArray[np.float32]] = None
+    best_area: float = 0.0
+    frame_area = float(w * h)
+    # Guard against full-frame Otsu false-positives on uniform images.
+    # Use 0.995 (just below _DOC_DETECT_MAX_AREA_FRACTION=0.999) so that
+    # real documents filling most of the frame are not rejected.
+    frame_reject_threshold = 0.995 * frame_area
+
+    for binary in binary_candidates:
+        closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, fill_kernel)
+        cleaned = cv2.morphologyEx(closed, cv2.MORPH_OPEN, open_kernel)
+        contours, _ = cv2.findContours(
+            cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE,
+        )
+        contours = sorted(contours, key=cv2.contourArea, reverse=True)
+
+        for cnt in contours[:5]:
+            raw_area = cv2.contourArea(cnt)
+            if raw_area < min_area * 0.5:
+                continue
+            hull = cv2.convexHull(cnt)
+            area = cv2.contourArea(hull)
+            if area < min_area or area > max_area:
+                continue
+            # Reject frame-spanning blobs (uniform-image artefacts)
+            if area >= frame_reject_threshold:
+                continue
+            rect = cv2.minAreaRect(hull)
+            (_cx, _cy), (rw, rh), _angle = rect
+            rect_area = rw * rh
+            if rect_area <= 0:
+                continue
+            if area / rect_area < 0.50:
+                continue
+            long_side = max(rw, rh)
+            short_side = min(rw, rh)
+            if short_side < 1:
+                continue
+            aspect = long_side / short_side
+            if aspect < _DOC_DETECT_MIN_ASPECT_RATIO or aspect > _DOC_DETECT_MAX_ASPECT_RATIO:
+                continue
+            if area > best_area:
+                best_area = area
+                best_corners = cv2.boxPoints(rect).astype(np.float32)
+
+    return best_corners
+
+
 def _preprocess_for_edges(
     gray: NDArray[np.uint8],
     bgr: Optional[NDArray[np.uint8]] = None,
@@ -2436,4 +2531,5 @@ __all__ = [
     '_fallback_perspective_crop',
     '_hough_fine_tune_rotation',
     '_trim_white_border',
+    '_find_blob_corners',
 ]
