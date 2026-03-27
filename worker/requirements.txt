@@ -25,6 +25,7 @@ google-cloud-documentai>=2.20.0,<3.0.0
 # Image pre-processing - Google Cloud Vision (crop hints for perspective correction)
 # Used as Stage 0 in detect_and_crop_document before the OpenCV fallback cascade.
 google-cloud-vision>=3.0.0,<4.0.0
+google-cloud-storage>=2.0.0,<3.0.0
 
 # PDF assembly for MRC masters
 # MIT license. Wraps QPDF for low-level PDF construction.
