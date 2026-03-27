@@ -1,24 +1,25 @@
 /**
- * DocumentDetector — adapter for server-side document corner detection.
+ * DocumentDetector — on-device document corner detection via TFLite.
  *
- * Returns a quad in normalised 0.0–1.0 space relative to the original image
- * dimensions. Order: TL, TR, BR, BL.
+ * Uses a YOLOv8n-pose model trained to detect 4 document corners (TL, TR, BR, BL).
+ * Returns a normalised quad [0,1] or null if confidence < 0.5.
  *
- * When detection fails or the server is unreachable, returns null.
- * The caller (crop-preview.tsx) falls back to a full-image default quad.
+ * The model is loaded once and cached for the lifetime of the app.
+ * Falls back to null on any error — caller shows defaultQuad() and lets user adjust.
  */
-
-import * as FileSystem from 'expo-file-system'
-import type { NormalisedPoint, NormalisedQuad } from '../stores/captureSession'
+import { loadTensorflowModel } from 'react-native-fast-tflite'
+import type { TensorflowModel } from 'react-native-fast-tflite'
+import type { NormalisedQuad } from '../stores/captureSession'
+import { imageUriToTensor } from './imageToTensor'
+import { decodeYoloPoseOutput } from './yoloPostProcess'
 
 export interface DetectionResult {
   quad: NormalisedQuad
-  croppedUri?: string
 }
 
 /**
- * Full-image default quad. Used when detection fails so the user still
- * sees the image with adjustable corners at the four edges.
+ * Full-image default quad — shown when detection returns null.
+ * Corners at 2% inset from each edge.
  */
 export function defaultQuad(): NormalisedQuad {
   return [
@@ -29,38 +30,52 @@ export function defaultQuad(): NormalisedQuad {
   ]
 }
 
+// Module-level model cache — loaded once, reused across screens.
+let _model: TensorflowModel | null = null
+let _loading: Promise<TensorflowModel | null> | null = null
+
+async function getModel(): Promise<TensorflowModel | null> {
+  if (_model) return _model
+  if (_loading) return _loading
+
+  _loading = (async () => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const modelAsset = require('../assets/models/doc_corners.tflite')
+      const m = await loadTensorflowModel(modelAsset)
+      _model = m
+      return m
+    } catch (e) {
+      console.warn('[DocumentDetector] Failed to load model:', e)
+      _loading = null
+      return null
+    }
+  })()
+
+  return _loading
+}
+
 /**
- * Detect document corners in a static image URI via the worker /detect endpoint.
- * Returns DetectionResult or null on failure/no detection.
+ * Detect document corners in a static image URI.
+ * Returns DetectionResult or null on failure/low confidence.
  */
 export async function detectDocument(
   imageUri: string,
-  imageWidth: number,
-  imageHeight: number,
+  _imageWidth: number,
+  _imageHeight: number,
 ): Promise<DetectionResult | null> {
   try {
-    const API_BASE_URL =
-      process.env.EXPO_PUBLIC_WORKER_URL ||
-      'https://rythmiq-worker-1048753379343.asia-south1.run.app'
+    const model = await getModel()
+    if (!model) return null
 
-    const b64 = await FileSystem.readAsStringAsync(imageUri, {
-      encoding: 'base64',
-    })
+    const tensor = await imageUriToTensor(imageUri)
+    const [output] = model.runSync([tensor])
+    const corners = decodeYoloPoseOutput(output as Float32Array)
 
-    const resp = await fetch(`${API_BASE_URL}/detect`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image_b64: b64 }),
-    })
-
-    if (!resp.ok) return null
-
-    const data = await resp.json()
-    if (!data.quad || data.quad.length !== 4) return null
-
-    return { quad: data.quad as NormalisedQuad }
+    if (!corners) return null
+    return { quad: corners }
   } catch (e) {
-    console.warn('[DocumentDetector] detection failed:', e)
+    console.warn('[DocumentDetector] Detection failed:', e)
     return null
   }
 }

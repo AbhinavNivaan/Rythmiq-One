@@ -55,5 +55,10 @@
     "babel-preset-expo": "^54.0.10",
     "typescript": "~5.9.2"
   },
-  "private": true
+  "private": true,
+  "jest": {
+    "moduleNameMapper": {
+      "\\.tflite$": "<rootDir>/__mocks__/fileMock.js"
+    }
+  }
 }
