@@ -44,6 +44,8 @@
       "expo-router",
       "expo-font",
       "expo-secure-store",
+      "expo-dev-client",
+      "react-native-fast-tflite",
       [
         "expo-camera",
         {
