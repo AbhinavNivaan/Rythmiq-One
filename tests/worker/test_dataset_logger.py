@@ -13,6 +13,8 @@ def _make_quad():
 
 def test_log_detection_sample_writes_image_and_quad():
     """Happy path: writes image.jpg and quad.json to correct GCS paths."""
+    import processors.dataset_logger as dl
+    dl._gcs_client = None
     from processors.dataset_logger import log_detection_sample
 
     mock_bucket = MagicMock()
@@ -44,6 +46,8 @@ def test_log_detection_sample_writes_image_and_quad():
 
 def test_log_detection_sample_uses_correct_bucket_and_path():
     """Writes to gs://rythmiq-one-dataset/detection/{job_id}/."""
+    import processors.dataset_logger as dl
+    dl._gcs_client = None
     from processors.dataset_logger import log_detection_sample
 
     with patch("processors.dataset_logger.storage.Client") as mock_client_cls:
@@ -67,6 +71,8 @@ def test_log_detection_sample_uses_correct_bucket_and_path():
 
 def test_log_detection_sample_never_raises():
     """GCS failure must not propagate — job processing must continue."""
+    import processors.dataset_logger as dl
+    dl._gcs_client = None  # reset cache so patch fires
     from processors.dataset_logger import log_detection_sample
 
     with patch("processors.dataset_logger.storage.Client", side_effect=Exception("GCS down")):

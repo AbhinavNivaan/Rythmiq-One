@@ -17,6 +17,15 @@ logger = logging.getLogger(__name__)
 _DATASET_BUCKET = "rythmiq-one-dataset"
 _PREFIX = "detection"
 
+_gcs_client: storage.Client | None = None
+
+
+def _get_client() -> storage.Client:
+    global _gcs_client
+    if _gcs_client is None:
+        _gcs_client = storage.Client()
+    return _gcs_client
+
 
 def log_detection_sample(
     image_bytes: bytes,
@@ -45,7 +54,7 @@ def _write(
     document_type: str,
     job_id: str,
 ) -> None:
-    client = storage.Client()
+    client = _get_client()
     bucket = client.bucket(_DATASET_BUCKET)
     prefix = f"{_PREFIX}/{job_id}"
 
@@ -60,6 +69,6 @@ def _write(
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     bucket.blob(f"{prefix}/quad.json").upload_from_string(
-        json.dumps(meta, indent=2), content_type="application/json"
+        json.dumps(meta), content_type="application/json"
     )
     logger.info("[DATASET] Logged sample %s (%s)", job_id, document_type)
