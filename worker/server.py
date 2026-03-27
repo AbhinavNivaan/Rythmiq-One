@@ -357,7 +357,8 @@ class DetectResponse(BaseModel):
 @app.post("/detect")
 async def detect_document(request: DetectRequest) -> DetectResponse:
     """
-    Fast document corner detection. Runs Stage 1 (OpenCV contour) only.
+    Fast document corner detection. Runs Stage 1 (OpenCV contour, best-match)
+    then Stage 2 (blob corners) if Stage 1 finds nothing.
     No Vision API, no full pipeline. Returns normalised quad or null.
 
     Body field: image_b64 — base64-encoded JPEG/PNG bytes of the image.
@@ -366,6 +367,7 @@ async def detect_document(request: DetectRequest) -> DetectResponse:
         _find_quad_contour,
         _preprocess_for_edges,
         _order_corners,
+        _find_blob_corners,
         _DOC_DETECT_MIN_AREA_FRACTION,
         _DOC_DETECT_MAX_AREA_FRACTION,
         _apply_exif_transpose,
@@ -378,10 +380,6 @@ async def detect_document(request: DetectRequest) -> DetectResponse:
             return DetectResponse(quad=None)
 
         img_bytes = base64.b64decode(image_b64)
-        # Apply EXIF transpose before detection — must match enhance_image() which
-        # does the same at its entry point. Without this, detection runs on raw
-        # landscape pixels while the full pipeline processes EXIF-corrected portrait
-        # pixels, producing quad coordinates in the wrong orientation.
         img_bytes = _apply_exif_transpose(img_bytes)
         nparr = np.frombuffer(img_bytes, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -395,14 +393,36 @@ async def detect_document(request: DetectRequest) -> DetectResponse:
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         edge_maps = _preprocess_for_edges(gray, bgr=img)
 
+        # -- Stage 1: best quad across ALL edge maps ---------------------------
+        # Pick the LARGEST valid quad, not the first. This prevents small
+        # internal elements (QR codes, stamps) from being returned when a
+        # larger outer boundary is found by a later edge map.
+        best_corners = None
+        best_quad_area: float = 0.0
+
         for edge_img in edge_maps:
             result = _find_quad_contour(edge_img, min_area, max_area)
             if result is not None:
-                corners, _ = result
-                ordered = _order_corners(corners)
-                quad = [[float(x) / w, float(y) / h] for x, y in ordered]
-                logger.info("[DETECT] Quad found")
-                return DetectResponse(quad=quad)
+                corners, quad_area = result
+                if quad_area > best_quad_area:
+                    best_corners = corners
+                    best_quad_area = quad_area
+
+        if best_corners is not None:
+            ordered = _order_corners(best_corners)
+            quad = [[float(x) / w, float(y) / h] for x, y in ordered]
+            logger.info("[DETECT] Stage 1 quad found (area=%.1f%%)", best_quad_area / (w * h) * 100)
+            return DetectResponse(quad=quad)
+
+        # -- Stage 2: blob corner detection ------------------------------------
+        # Treats the document as a filled bright region rather than an edge
+        # ring. Handles white paper on wood, documents filling most of frame.
+        blob_corners = _find_blob_corners(img, min_area, max_area)
+        if blob_corners is not None:
+            ordered = _order_corners(blob_corners)
+            quad = [[float(x) / w, float(y) / h] for x, y in ordered]
+            logger.info("[DETECT] Stage 2 blob corners found")
+            return DetectResponse(quad=quad)
 
     except Exception as e:
         logger.warning(f"[DETECT] failed: {e}")
