@@ -42,7 +42,6 @@ export default function CropPreviewScreen() {
 
   const [isDetecting, setIsDetecting] = useState(true)
   const [isConfirming, setIsConfirming] = useState(false)
-  const [detectionFailed, setDetectionFailed] = useState(false)
   const [currentQuad, setCurrentQuad] = useState<NormalisedQuad>(defaultQuad())
   const [hintVisible, setHintVisible] = useState(true)
   const hasInteracted = useRef(false)
@@ -52,23 +51,15 @@ export default function CropPreviewScreen() {
   useEffect(() => {
     if (!currentImage) return
     setIsDetecting(true)
-    setDetectionFailed(false)
     setHintVisible(true)
     hasInteracted.current = false
 
     detectDocument(currentImage.uri, currentImage.width, currentImage.height)
       .then(result => {
-        if (result) {
-          setCurrentQuad(result.quad)
-          setDetectionFailed(false)
-        } else {
-          setCurrentQuad(defaultQuad())
-          setDetectionFailed(true)
-        }
+        setCurrentQuad(result ? result.quad : defaultQuad())
       })
       .catch(() => {
         setCurrentQuad(defaultQuad())
-        setDetectionFailed(true)
       })
       .finally(() => setIsDetecting(false))
   }, [currentImage?.uri])
@@ -184,9 +175,7 @@ export default function CropPreviewScreen() {
       <View style={styles.hintContainer}>
         {hintVisible && (
           <Text style={styles.hintText}>
-            {detectionFailed
-              ? 'No document detected — adjust corners manually'
-              : 'Drag the corners to adjust the crop'}
+            Drag the corners to adjust the crop
           </Text>
         )}
       </View>
