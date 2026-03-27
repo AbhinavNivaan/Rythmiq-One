@@ -29,6 +29,9 @@ google-cloud-documentai==2.29.0
 # OCR - Google Cloud Vision (optional, legacy)
 google-cloud-vision==3.7.2
 
+# Dataset logging — upload confirmed detection quads to GCS for TFLite training
+google-cloud-storage==2.19.0
+
 # OCR - Tesseract (post-adaptation quality gate via tesseract_adapter.py)
 # Requires system tesseract: apt-get install tesseract-ocr tesseract-ocr-eng
 pytesseract==0.3.10
