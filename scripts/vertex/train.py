@@ -49,7 +49,7 @@ VAL_SPLIT = 0.15
 def download_midv500() -> Path:
     """Download MIDV-500 using the midv500 package. Returns raw root path."""
     try:
-        from midv500 import download_midv500 as _dl
+        from midv500 import download_dataset as _dl
     except ImportError:
         raise SystemExit("midv500 not installed. Dockerfile must include: pip install midv500")
 

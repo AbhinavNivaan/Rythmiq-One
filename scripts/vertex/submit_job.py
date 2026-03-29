@@ -22,7 +22,7 @@ from __future__ import annotations
 import argparse
 
 PROJECT  = "rythmiq-one"
-REGION   = "us-central1"   # best T4 GPU availability; GCS transfer for 5MB model is negligible
+REGION   = "asia-south1"   # matches rythmiq-one-dataset GCS bucket location
 IMAGE    = "asia-south1-docker.pkg.dev/rythmiq-one/rythmiq-images/doc-corners-trainer:latest"
 GCS_OUT  = "gs://rythmiq-one-dataset/models/doc_corners.tflite"
 
@@ -39,7 +39,7 @@ def main() -> None:
         raise SystemExit("google-cloud-aiplatform not installed. Run: pip install google-cloud-aiplatform")
 
     print(f"Initialising Vertex AI — project={PROJECT}, region={REGION}")
-    aiplatform.init(project=PROJECT, location=REGION)
+    aiplatform.init(project=PROJECT, location=REGION, staging_bucket="gs://rythmiq-one-dataset")
 
     job = aiplatform.CustomContainerTrainingJob(
         display_name="doc-corners-yolov8n-pose",
@@ -54,8 +54,6 @@ def main() -> None:
             "--batch",      str(args.batch),
         ],
         machine_type="n1-standard-8",
-        accelerator_type="NVIDIA_TESLA_T4",
-        accelerator_count=1,
         replica_count=1,
         timeout=21600,  # 6 hours — training + MIDV-500 download
         sync=False,

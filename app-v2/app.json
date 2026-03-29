@@ -7,7 +7,7 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "scheme": "rythmiq",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -57,7 +57,8 @@
         {
           "photosPermission": "Allow Rythmiq to access your photos to upload documents"
         }
-      ]
+      ],
+      "expo-asset"
     ],
     "extra": {
       "environment": "development",
