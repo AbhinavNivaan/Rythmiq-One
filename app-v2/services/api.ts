@@ -704,12 +704,18 @@ export const documentsApi = {
     jobId: string,
     outputFormat: string = 'jpeg',
     confirmedCropQuad?: [[number,number],[number,number],[number,number],[number,number]],
+    documentCategory?: string,
+    documentSubtype?: string,
+    quadSource?: 'model' | 'manual',
   ): Promise<{ job_id: string; status: string }> {
     return apiRequest<{ job_id: string; status: string }>(`/jobs/${jobId}/submit`, {
       method: 'POST',
       body: JSON.stringify({
         output_format: outputFormat,
         ...(confirmedCropQuad ? { confirmed_crop_quad: confirmedCropQuad } : {}),
+        ...(documentCategory ? { document_category: documentCategory } : {}),
+        ...(documentSubtype ? { document_subtype: documentSubtype } : {}),
+        ...(quadSource ? { quad_source: quadSource } : {}),
       }),
     });
   },

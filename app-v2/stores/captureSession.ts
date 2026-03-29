@@ -13,6 +13,7 @@ export interface ConfirmedCrop {
   originalUri: string
   croppedUri?: string   // perspective-corrected preview if library provides it
   quad: NormalisedQuad  // normalised 0.0–1.0 relative to original image dimensions
+  quadSource: 'model' | 'manual'  // 'model' = on-device TFLite detected; 'manual' = user positioned corners
 }
 
 interface CaptureSessionState {

@@ -32,6 +32,9 @@ def log_detection_sample(
     quad: list[list[float]],
     document_type: str,
     job_id: str,
+    document_category: str | None = None,
+    document_subtype: str | None = None,
+    quad_source: str | None = None,
 ) -> None:
     """
     Write image + confirmed quad to GCS.
@@ -43,7 +46,7 @@ def log_detection_sample(
     Errors are swallowed — never call this in a way that depends on success.
     """
     try:
-        _write(image_bytes, quad, document_type, job_id)
+        _write(image_bytes, quad, document_type, job_id, document_category, document_subtype, quad_source)
     except Exception as exc:  # noqa: BLE001
         logger.warning("[DATASET] Failed to log sample %s: %s", job_id, exc)
 
@@ -53,6 +56,9 @@ def _write(
     quad: list[list[float]],
     document_type: str,
     job_id: str,
+    document_category: str | None,
+    document_subtype: str | None,
+    quad_source: str | None,
 ) -> None:
     client = _get_client()
     bucket = client.bucket(_DATASET_BUCKET)
@@ -65,10 +71,13 @@ def _write(
     meta = {
         "corners": quad,
         "document_type": document_type,
+        "document_category": document_category,
+        "document_subtype": document_subtype,
+        "quad_source": quad_source,
         "job_id": job_id,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     bucket.blob(f"{prefix}/quad.json").upload_from_string(
         json.dumps(meta), content_type="application/json"
     )
-    logger.info("[DATASET] Logged sample %s (%s)", job_id, document_type)
+    logger.info("[DATASET] Logged sample %s (%s / %s, source=%s)", job_id, document_category, document_subtype, quad_source)

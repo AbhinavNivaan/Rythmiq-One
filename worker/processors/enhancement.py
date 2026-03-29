@@ -1890,7 +1890,7 @@ def detect_and_crop_document(
     # perspective warp. _order_corners() ensures correct TL/TR/BR/BL order
     # even if the user dragged corners in an unexpected sequence.
     if confirmed_crop_quad is not None:
-        logger.info("[ENHANCEMENT] fast-path triggered, quad=%s, img=%dx%d", confirmed_crop_quad, w, h)
+        logger.debug("[ENHANCEMENT] fast-path triggered, quad=%s, img=%dx%d", confirmed_crop_quad, w, h)
         try:
             pixel_pts = np.array(
                 [[x * w, y * h] for x, y in confirmed_crop_quad],

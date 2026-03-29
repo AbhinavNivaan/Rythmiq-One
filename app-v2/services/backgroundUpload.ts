@@ -71,6 +71,9 @@ export function startBackgroundUpload(
           job_id,
           outputFormat,
           crop.quad as [[number,number],[number,number],[number,number],[number,number]],
+          selectedCategory,
+          selectedType,
+          crop.quadSource,
         );
 
         notify({ current: i + 1 });

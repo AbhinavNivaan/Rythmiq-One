@@ -253,7 +253,7 @@ async def process_document(request: ProcessRequest) -> ProcessResponse:
         # Parse and validate payload
         try:
             has_quad = "confirmed_crop_quad" in payload_dict and payload_dict["confirmed_crop_quad"] is not None
-            logger.info(
+            logger.debug(
                 "[PROCESS] confirmed_crop_quad present in payload: %s",
                 has_quad,
                 extra={"job_id": payload_dict.get("job_id", "unknown")},

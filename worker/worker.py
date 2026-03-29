@@ -282,6 +282,9 @@ def process_job(payload: JobPayload) -> SuccessResult:
             image_bytes=raw_data,
             quad=payload.confirmed_crop_quad,
             document_type=payload.document_type or "document",
+            document_category=payload.document_category,
+            document_subtype=payload.document_subtype,
+            quad_source=payload.quad_source,
             job_id=payload.job_id or "unknown",
         )
 

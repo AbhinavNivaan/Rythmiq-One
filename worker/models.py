@@ -260,6 +260,10 @@ class JobPayload:
     # When present, the enhancement pipeline skips its own document detection
     # and goes straight to perspective warp using these corners.
     confirmed_crop_quad: Optional[tuple] = None
+    # Source of the confirmed quad — 'model' = on-device TFLite detected,
+    # 'manual' = model returned null and user positioned corners manually.
+    # Used to label training samples in the retraining dataset.
+    quad_source: Optional[str] = None
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> JobPayload:
@@ -317,6 +321,7 @@ class JobPayload:
             storage=StorageSpec.from_dict(data.get("storage", {})),
             encrypted_input=bool(data.get("encrypted_input", False)),
             confirmed_crop_quad=_parse_quad(data.get("confirmed_crop_quad")),
+            quad_source=data.get("quad_source") or None,
         )
 
 

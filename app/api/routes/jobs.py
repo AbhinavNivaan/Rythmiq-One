@@ -64,6 +64,7 @@ async def _submit_job_to_processing(
     encrypted_input: bool = False,
     output_format: str = "jpeg",
     confirmed_crop_quad: list[list[float]] | None = None,
+    quad_source: str | None = None,
 ) -> None:
     settings = get_settings()
 
@@ -94,6 +95,8 @@ async def _submit_job_to_processing(
 
         if confirmed_crop_quad is not None:
             camber_payload["confirmed_crop_quad"] = confirmed_crop_quad
+        if quad_source is not None:
+            camber_payload["quad_source"] = quad_source
 
         # Forward SEK when provided (zero-knowledge: key transits in-memory only,
         # never stored server-side). Required for encrypt-on-output and
@@ -778,6 +781,7 @@ async def submit_job(
         camber=camber,
         output_format=body.output_format,
         confirmed_crop_quad=body.confirmed_crop_quad,
+        quad_source=body.quad_source,
     )
 
     return SubmitJobResponse(job_id=job_id, status="processing")

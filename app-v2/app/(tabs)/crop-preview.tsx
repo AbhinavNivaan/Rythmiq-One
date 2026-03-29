@@ -43,6 +43,7 @@ export default function CropPreviewScreen() {
   const [isDetecting, setIsDetecting] = useState(true)
   const [isConfirming, setIsConfirming] = useState(false)
   const [currentQuad, setCurrentQuad] = useState<NormalisedQuad>(defaultQuad())
+  const [quadSource, setQuadSource] = useState<'model' | 'manual'>('manual')
   const [hintVisible, setHintVisible] = useState(true)
   const hasInteracted = useRef(false)
 
@@ -56,10 +57,17 @@ export default function CropPreviewScreen() {
 
     detectDocument(currentImage.uri, currentImage.width, currentImage.height)
       .then(result => {
-        setCurrentQuad(result ? result.quad : defaultQuad())
+        if (result) {
+          setCurrentQuad(result.quad)
+          setQuadSource('model')
+        } else {
+          setCurrentQuad(defaultQuad())
+          setQuadSource('manual')
+        }
       })
       .catch(() => {
         setCurrentQuad(defaultQuad())
+        setQuadSource('manual')
       })
       .finally(() => setIsDetecting(false))
   }, [currentImage?.uri])
@@ -100,6 +108,7 @@ export default function CropPreviewScreen() {
       originalUri: currentImage.uri,
       croppedUri: previewUri,
       quad: currentQuad,
+      quadSource,
     })
 
     const nextIndex = index + 1
