@@ -3,6 +3,8 @@ node_modules/
 
 # Brainstorming session files
 .superpowers/
+.claire/
+docs/superpowers/
 
 # Environment variables
 .env
@@ -39,6 +41,14 @@ web-build/
 
 # Test artifacts
 test_results/
+
+# ML training artifacts
+runs/
+*.pt
+*.npy
+
+# Device screenshots
+Screenshot_*.jpg
 
 # Build artifacts
 *.tar.gz
