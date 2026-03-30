@@ -155,7 +155,7 @@ Single-page, 7 sections, linear scroll. Sticky nav throughout.
 - Message (textarea)
 - Submit button: "Send message"
 
-**Also display:** Direct email address (abhinav@rythmiq.in)
+**Also display:** Direct email address (founder@rythmiq.in)
 
 ---
 
@@ -185,7 +185,7 @@ Single-page, 7 sections, linear scroll. Sticky nav throughout.
 
 ## Open Questions
 
-- What email address should form submissions go to?
-- Is `abhinav@rythmiq.in` the correct contact email to display publicly?
-- Does Abhinav have a photo for the Founder section, or should it use initials (AP)?
-- Calendly link for the "Book a call" nav CTA, or does it scroll to the contact form?
+- Form submissions go to: `founder@rythmiq.in` ✅
+- Public contact email: `founder@rythmiq.in` ✅
+- Founder photo: placeholder initials (AP) for now, real photo to be provided later ✅
+- "Book a call" nav CTA scrolls to the contact form (Section 07) ✅
