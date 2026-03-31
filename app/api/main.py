@@ -15,6 +15,7 @@ from app.api.routes import (
     auth_router,
     form_schemas_router,
     health_router,
+    internal_router,
     jobs_router,
     portals_router,
     webhooks_router,
@@ -78,6 +79,7 @@ def create_app() -> FastAPI:
     app.include_router(webhooks_router)
     app.include_router(form_schemas_router)
     app.include_router(portals_router)
+    app.include_router(internal_router, prefix="/internal")
 
     return app
 

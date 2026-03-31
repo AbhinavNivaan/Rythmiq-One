@@ -4,5 +4,14 @@ from .health import router as health_router
 from .auth import router as auth_router
 from .form_schemas import router as form_schemas_router
 from .portals import router as portals_router
+from .internal import router as internal_router
 
-__all__ = ["jobs_router", "webhooks_router", "health_router", "auth_router", "form_schemas_router", "portals_router"]
+__all__ = [
+    "jobs_router",
+    "webhooks_router",
+    "health_router",
+    "auth_router",
+    "form_schemas_router",
+    "portals_router",
+    "internal_router",
+]
