@@ -984,7 +984,7 @@ async def delete_job(
 
     result = (
         db.table("jobs")
-        .select("id, user_id, input_metadata")
+        .select("id, user_id, input_metadata, master_path")
         .eq("id", str(job_id))
         .eq("user_id", str(user.id))
         .limit(1)
@@ -1017,6 +1017,13 @@ async def delete_job(
         storage.delete_objects_by_prefix(f"output/{user.id}/{job_id}/")
     except Exception:
         pass
+
+    # Best-effort: remove master file
+    if job.get("master_path"):
+        try:
+            storage.delete_object(job["master_path"])
+        except Exception:
+            pass
 
 
 @router.get("/{job_id}/output", response_model=JobOutputResponse)

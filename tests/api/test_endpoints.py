@@ -9,9 +9,12 @@ import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock
 import json
+import uuid
 
 # Import the app
 from app.api.main import app
+from app.api.auth import get_current_user
+from app.api.services.storage import get_storage_service
 
 
 @pytest.fixture
@@ -203,3 +206,64 @@ class TestCORS:
         )
         # CORS preflight may return 200 or 405 depending on config
         assert response.status_code in [200, 204, 405]
+
+
+class TestJobDeleteMasterPath:
+    """Verify master_path is deleted when a job is deleted."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, client):
+        """Override FastAPI dependencies for auth and storage."""
+        mock_user = MagicMock()
+        mock_user.id = uuid.UUID("00000000-0000-0000-0000-000000000001")
+        self.mock_user = mock_user
+
+        self.mock_storage = MagicMock()
+
+        app.dependency_overrides[get_current_user] = lambda: mock_user
+        app.dependency_overrides[get_storage_service] = lambda: self.mock_storage
+        yield
+        app.dependency_overrides.clear()
+
+    def test_delete_job_also_deletes_master_path(self, client):
+        """master_path must be deleted alongside input file and output directory."""
+        with patch("app.api.routes.jobs.get_db_client") as mock_db_fn:
+            mock_db = MagicMock()
+            mock_db_fn.return_value = mock_db
+            mock_db.table.return_value.select.return_value \
+                .eq.return_value.eq.return_value \
+                .limit.return_value.execute.return_value.data = [{
+                    "id": "00000000-0000-0000-0000-000000000001",
+                    "user_id": "00000000-0000-0000-0000-000000000001",
+                    "input_metadata": {},
+                    "master_path": "master/user-1/job-1/job-1.enc",
+                }]
+            mock_db.table.return_value.delete.return_value \
+                .eq.return_value.eq.return_value.execute.return_value = None
+
+            client.delete("/jobs/00000000-0000-0000-0000-000000000001")
+
+        deleted_paths = [c.args[0] for c in self.mock_storage.delete_object.call_args_list]
+        assert "master/user-1/job-1/job-1.enc" in deleted_paths
+
+    def test_delete_job_no_master_path_does_not_error(self, client):
+        """If master_path is null, deletion must complete without error."""
+        with patch("app.api.routes.jobs.get_db_client") as mock_db_fn:
+            mock_db = MagicMock()
+            mock_db_fn.return_value = mock_db
+            mock_db.table.return_value.select.return_value \
+                .eq.return_value.eq.return_value \
+                .limit.return_value.execute.return_value.data = [{
+                    "id": "00000000-0000-0000-0000-000000000001",
+                    "user_id": "00000000-0000-0000-0000-000000000001",
+                    "input_metadata": {},
+                    "master_path": None,
+                }]
+            mock_db.table.return_value.delete.return_value \
+                .eq.return_value.eq.return_value.execute.return_value = None
+
+            response = client.delete("/jobs/00000000-0000-0000-0000-000000000001")
+
+        # delete_object must not have been called with a master path
+        for c in self.mock_storage.delete_object.call_args_list:
+            assert not str(c.args[0]).startswith("master/")
