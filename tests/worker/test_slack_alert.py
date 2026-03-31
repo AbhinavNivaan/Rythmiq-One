@@ -23,15 +23,16 @@ def test_post_slack_alert_posts_correct_payload():
 
 
 def test_post_slack_alert_excludes_user_id_and_full_path():
-    """user_id and full storage path must not appear in the Slack message."""
+    """Full storage path must be stripped — only the filename should appear in the message."""
     with patch("slack.requests.post") as mock_post:
         mock_post.return_value.raise_for_status = MagicMock()
         import slack
         with patch.dict(os.environ, {"SLACK_WEBHOOK_URL": "https://hooks.slack.com/test"}):
-            slack.post_slack_alert("job-abc", "document.jpg", "err")
+            slack.post_slack_alert("job-abc", "uploads/user-uuid-here/job-abc/document.jpg", "err")
         text = mock_post.call_args[1]["json"]["text"]
         assert "uploads/" not in text
         assert "user-uuid-here" not in text
+        assert "document.jpg" in text  # filename should still appear
 
 
 def test_post_slack_alert_no_webhook_url_does_not_raise():

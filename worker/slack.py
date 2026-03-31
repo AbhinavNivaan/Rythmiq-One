@@ -27,13 +27,16 @@ def post_slack_alert(job_id: str, filename: str, error: str) -> None:
         logger.warning("SLACK_WEBHOOK_URL not set — Slack alert suppressed")
         return
 
+    # Defensive: ensure only the filename is included, never a full path
+    safe_filename = filename.split("/")[-1] if filename else "unknown"
+
     env = os.environ.get("SERVICE_ENV", "unknown")
     message = (
         f"\U0001f6a8 *Raw upload deletion failed*\n"
         f"\u2022 Job: `{job_id}`\n"
         f"\u2022 Env: {env}\n"
-        f"\u2022 File: `{filename}`\n"
-        f"\u2022 Error: {error}\n"
+        f"\u2022 File: `{safe_filename}`\n"
+        f"\u2022 Error: {str(error)[:200]}\n"
         f"\u2022 Action: Will be cleaned up on next scheduled run"
     )
 
