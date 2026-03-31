@@ -54,6 +54,7 @@ from processors.enhancement import enhance_image, EnhancementOptions, READABLE_Q
 from processors.schema import adapt_to_schema, adapt_master_document
 from processors.dataset_logger import log_detection_sample
 from crypto import encrypt_file as crypto_encrypt, decrypt_file as crypto_decrypt, sek_from_base64, nonce_to_base64, NONCE_SIZE
+from slack import post_slack_alert
 
 
 logger = logging.getLogger(__name__)
@@ -398,7 +399,12 @@ def process_job(payload: JobPayload) -> SuccessResult:
                     "raw_path": payload.input.raw_path,
                 }
             )
-            # TODO: Trigger alert for manual cleanup
+            raw_filename = payload.input.raw_path.split("/")[-1] if payload.input.raw_path else "unknown"
+            post_slack_alert(
+                job_id=payload.job_id,
+                filename=raw_filename,
+                error=str(cleanup_error),
+            )
     # ============================================
     
     # Stage 8: POST-QUALITY — assess the final (enhanced or rolled-back) image
