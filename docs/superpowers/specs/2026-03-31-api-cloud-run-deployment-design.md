@@ -34,11 +34,12 @@ Multi-stage build mirroring `worker/Dockerfile.production`:
 
 ### `cloudbuild-api.yaml`
 
-Three steps (separate from `cloudbuild.yaml` to allow independent triggering — worker builds take ~20 min, API builds ~2 min):
+Four steps (separate from `cloudbuild.yaml` to allow independent triggering — worker builds take ~20 min, API builds ~2 min):
 
 1. **Build** — `docker build --platform linux/amd64 -f app/api/Dockerfile -t asia-south1-docker.pkg.dev/rythmiq-one/rythmiq-images/api:latest .`
-2. **Push** — push to Artifact Registry
-3. **Deploy** — `gcloud run deploy rythmiq-api`:
+2. **Smoke test** — run the built image, call `/health`, assert HTTP 200 before pushing. Catches import errors and startup failures before they go live.
+3. **Push** — push to Artifact Registry
+4. **Deploy** — `gcloud run deploy rythmiq-api`:
    - `--region=asia-south1`
    - `--allow-unauthenticated` (app-layer auth is Supabase JWT; Cloud Run does not add auth)
    - `--cpu=1 --memory=1Gi --max-instances=10 --timeout=60`
@@ -79,7 +80,7 @@ All 10 created manually by Abhinav using `read -s` pattern (same as session 12 S
 
 ### IAM
 
-The existing worker service account (`rythmiq-worker@rythmiq-one.iam.gserviceaccount.com`) is reused for the API Cloud Run service. It needs `roles/secretmanager.secretAccessor` granted on all 11 secrets above.
+A dedicated service account `rythmiq-api@rythmiq-one.iam.gserviceaccount.com` is created for the API Cloud Run service (least privilege — separate blast radius from the worker SA). It needs `roles/secretmanager.secretAccessor` granted on all 11 secrets above.
 
 ---
 
@@ -101,22 +102,28 @@ Secret value fetched at job-creation time via:
 gcloud secrets versions access latest --secret=rythmiq-api-internal-cleanup-secret
 ```
 
+**Secret rotation note:** Cloud Scheduler hardcodes the `X-Internal-Secret` header value at job creation time. If `rythmiq-api-internal-cleanup-secret` is rotated in Secret Manager, the scheduler job must be manually updated:
+```bash
+gcloud scheduler jobs update http rythmiq-cleanup-raw-uploads \
+  --update-headers "X-Internal-Secret=$(gcloud secrets versions access latest --secret=rythmiq-api-internal-cleanup-secret)"
+```
+
 ---
 
 ## Deployment Steps (In Order)
 
 1. Write `app/api/Dockerfile` and `cloudbuild-api.yaml`
-2. Create 10 secrets in Secret Manager (Abhinav runs `read -s` → pipe to `gcloud secrets create`)
-3. Grant service account `secretAccessor` on all 11 secrets
-4. Trigger first build: `gcloud builds submit --config cloudbuild-api.yaml .`
-5. Verify API is live: `curl https://<url>/health`
-6. Create Cloud Scheduler job
-7. Verify scheduler: manually trigger job and check API logs
+2. Create `rythmiq-api` service account
+3. Create 10 secrets in Secret Manager (Abhinav runs `read -s` → pipe to `gcloud secrets create`)
+4. Grant `rythmiq-api` SA `secretAccessor` on all 11 secrets
+5. Trigger first build: `gcloud builds submit --config cloudbuild-api.yaml .`
+6. Verify API is live: `curl https://<url>/health`
+7. Create Cloud Scheduler job
+8. Verify scheduler: manually trigger job and check API logs
 
 ---
 
 ## Non-Goals
 
 - No changes to `cloudbuild.yaml` (worker pipeline untouched)
-- No new service account (reuse worker SA)
 - Cloud Scheduler job is created manually once, not managed by Cloud Build
