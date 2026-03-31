@@ -69,6 +69,11 @@ class Settings(BaseSettings):
         description="Base URL for webhook callbacks (e.g., https://api.rythmiq.app). "
                     "If empty, Camber must be configured with the correct callback URL.",
     )
+    internal_cleanup_secret: str = Field(
+        default="",
+        alias="INTERNAL_CLEANUP_SECRET",
+        description="Shared secret for internal maintenance endpoints. Must be non-empty in production.",
+    )
     api_port: int = Field(
         default=8000,
         alias="API_PORT",
