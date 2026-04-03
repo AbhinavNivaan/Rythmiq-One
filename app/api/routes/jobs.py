@@ -147,6 +147,25 @@ async def _submit_job_to_processing(
             "correlation_id": correlation_id,
         }
 
+    # Transition to processing BEFORE submitting to the worker.
+    # The Cloud Run client is synchronous — submit_job() blocks until the worker
+    # completes and the worker writes completed/failed directly to the DB.
+    # Transitioning after submit_job() returns means the job is already in a
+    # terminal state and the pending→processing transition is rejected.
+    try:
+        transition_job_state(
+            job_id=job_id,
+            new_state="processing",
+        )
+    except Exception as e:
+        logger.error(
+            "Failed to transition job to processing",
+            extra={
+                "job_id": str(job_id),
+                "error": str(e),
+            },
+        )
+
     try:
         worker_job_id = await camber.submit_job(job_id=job_id, payload=camber_payload)
     except CamberException as e:
@@ -176,20 +195,6 @@ async def _submit_job_to_processing(
         raise InternalException(
             "Failed to submit job for processing",
             details={"job_id": str(job_id)},
-        )
-
-    try:
-        transition_job_state(
-            job_id=job_id,
-            new_state="processing",
-        )
-    except Exception as e:
-        logger.error(
-            "Failed to transition job to processing",
-            extra={
-                "job_id": str(job_id),
-                "error": str(e),
-            },
         )
 
     logger.info(
