@@ -314,7 +314,7 @@ function JobRow({ job }: { job: JobStatus }) {
         <TouchableOpacity
             style={jobStyles.row}
             activeOpacity={0.75}
-            onPress={() => router.push('/(tabs)/job-detail' as any)}
+            onPress={() => router.push({ pathname: '/(tabs)/job-detail', params: { jobId: job.job_id } } as any)}
         >
             <View style={jobStyles.iconWrap}>
                 {isProcessing ? (

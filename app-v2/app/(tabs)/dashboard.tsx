@@ -1,7 +1,8 @@
 import React from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, Image, Animated, Keyboard } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, Animated, Keyboard, ScrollView, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Bell, Search, Mic, User } from 'lucide-react-native';
+import { Bell, Search, Mic, User, CheckCircle, Clock, XCircle, FileText } from 'lucide-react-native';
+import { useQuery } from '@tanstack/react-query';
 import Colors from '../../constants/Colors';
 import ActionCard from '../../components/ui/ActionCard';
 import ScanIcon from '../../components/ui/icons/ScanIcon';
@@ -9,17 +10,83 @@ import CustomExportIcon from '../../components/ui/icons/CustomExportIcon';
 import ExportIcon from '../../components/ui/icons/ExportIcon';
 import RythmiqLogoIcon from '../../components/ui/icons/RythmiqLogoIcon';
 import NotificationsPanel from '../../components/ui/NotificationsPanel';
+import DocumentViewerModal from '../../components/ui/DocumentViewerModal';
 import { router } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
-import { isDevSandboxMode } from '../../services/api';
+import { isDevSandboxMode, documentsApi, JobStatus } from '../../services/api';
+
+type JobStatusType = 'pending' | 'processing' | 'completed' | 'failed';
+
+const STATUS_CONFIG: Record<JobStatusType, { color: string; label: string }> = {
+    pending:    { color: Colors.palette.amber, label: 'Pending' },
+    processing: { color: '#89C7FE',            label: 'Processing' },
+    completed:  { color: Colors.palette.green, label: 'Completed' },
+    failed:     { color: Colors.palette.red,   label: 'Failed' },
+};
+
+function matchesQuery(job: JobStatus, q: string): boolean {
+    const lower = q.toLowerCase();
+    return (
+        (job.document_type ?? '').toLowerCase().includes(lower) ||
+        (job.document_category ?? '').toLowerCase().includes(lower) ||
+        (job.document_subtype ?? '').toLowerCase().includes(lower) ||
+        (job.document_name ?? '').toLowerCase().includes(lower) ||
+        job.job_id.toLowerCase().includes(lower)
+    );
+}
+
+function SearchResultCard({ job, onPress }: { job: JobStatus; onPress: () => void }) {
+    const cfg = STATUS_CONFIG[job.status as JobStatusType] || STATUS_CONFIG.pending;
+    const isActive = job.status === 'processing' || job.status === 'pending';
+    const title = job.document_subtype || job.document_category || job.document_type || 'Document';
+    const subtitle = job.document_type
+        ? job.document_type.charAt(0).toUpperCase() + job.document_type.slice(1)
+        : null;
+
+    return (
+        <TouchableOpacity style={searchStyles.card} onPress={onPress} activeOpacity={0.75}>
+            <View style={[searchStyles.iconWrap, { backgroundColor: cfg.color + '18' }]}>
+                {isActive
+                    ? <ActivityIndicator size="small" color={cfg.color} />
+                    : job.status === 'completed'
+                        ? <CheckCircle size={20} color={cfg.color} />
+                        : job.status === 'failed'
+                            ? <XCircle size={20} color={cfg.color} />
+                            : <Clock size={20} color={cfg.color} />
+                }
+            </View>
+            <View style={searchStyles.cardInfo}>
+                <Text style={searchStyles.cardTitle} numberOfLines={1}>{title}</Text>
+                {subtitle && <Text style={searchStyles.cardSubtitle}>{subtitle}</Text>}
+            </View>
+            <View style={[searchStyles.statusPill, { backgroundColor: cfg.color + '18' }]}>
+                <Text style={[searchStyles.statusText, { color: cfg.color }]}>{cfg.label}</Text>
+            </View>
+        </TouchableOpacity>
+    );
+}
 
 export default function Dashboard() {
     const { user } = useAuth();
     const [notificationsPanelVisible, setNotificationsPanelVisible] = React.useState(false);
     const [unreadCount, setUnreadCount] = React.useState(0);
     const [isSearchFocused, setIsSearchFocused] = React.useState(false);
+    const [searchQuery, setSearchQuery] = React.useState('');
+    const [viewerJob, setViewerJob] = React.useState<JobStatus | null>(null);
     const overlayAnim = React.useRef(new Animated.Value(0)).current;
     const searchInputRef = React.useRef<TextInput>(null);
+
+    const { data: jobsData } = useQuery({
+        queryKey: ['jobs'],
+        queryFn: documentsApi.listJobs,
+        enabled: isSearchFocused,
+        staleTime: 30000,
+    });
+
+    const searchResults = React.useMemo(() => {
+        if (!searchQuery.trim() || !jobsData?.jobs) return [];
+        return jobsData.jobs.filter(j => matchesQuery(j, searchQuery.trim()));
+    }, [searchQuery, jobsData]);
 
     const greetingName = React.useMemo(() => {
         if (isDevSandboxMode()) {
@@ -59,7 +126,10 @@ export default function Dashboard() {
             toValue: 0,
             duration: 180,
             useNativeDriver: true,
-        }).start(() => setIsSearchFocused(false));
+        }).start(() => {
+            setIsSearchFocused(false);
+            setSearchQuery('');
+        });
     };
 
     const searchBarTranslateY = overlayAnim.interpolate({
@@ -150,24 +220,53 @@ export default function Dashboard() {
                         onPress={closeSearch}
                         activeOpacity={1}
                     />
-                    {/* Animated search bar at top */}
+                    {/* Animated search bar + results */}
                     <Animated.View
                         style={[
-                            styles.searchOverlayBar,
+                            styles.searchOverlayContainer,
                             { opacity: overlayAnim, transform: [{ translateY: searchBarTranslateY }] },
                         ]}
                         onStartShouldSetResponder={() => true}
                     >
-                        <Search size={20} color="#999" />
-                        <TextInput
-                            ref={searchInputRef}
-                            style={styles.searchInput}
-                            placeholder="Search"
-                            placeholderTextColor="#999"
-                        />
-                        <TouchableOpacity onPress={closeSearch}>
-                            <Text style={styles.cancelText}>Cancel</Text>
-                        </TouchableOpacity>
+                        <View style={styles.searchOverlayBar}>
+                            <Search size={20} color="#999" />
+                            <TextInput
+                                ref={searchInputRef}
+                                style={styles.searchInput}
+                                placeholder="Search documents…"
+                                placeholderTextColor="#999"
+                                value={searchQuery}
+                                onChangeText={setSearchQuery}
+                                autoCorrect={false}
+                                autoCapitalize="none"
+                            />
+                            <TouchableOpacity onPress={closeSearch}>
+                                <Text style={styles.cancelText}>Cancel</Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        {searchQuery.trim().length > 0 && (
+                            <ScrollView
+                                style={styles.resultsScroll}
+                                keyboardShouldPersistTaps="handled"
+                                showsVerticalScrollIndicator={false}
+                            >
+                                {searchResults.length === 0 ? (
+                                    <View style={searchStyles.emptyRow}>
+                                        <FileText size={20} color="#444" />
+                                        <Text style={searchStyles.emptyText}>No documents found</Text>
+                                    </View>
+                                ) : (
+                                    searchResults.map(job => (
+                                        <SearchResultCard
+                                            key={job.job_id}
+                                            job={job}
+                                            onPress={() => setViewerJob(job)}
+                                        />
+                                    ))
+                                )}
+                            </ScrollView>
+                        )}
                     </Animated.View>
                 </View>
             )}
@@ -176,6 +275,11 @@ export default function Dashboard() {
                 visible={notificationsPanelVisible}
                 onClose={() => setNotificationsPanelVisible(false)}
                 onUnreadCountChange={setUnreadCount}
+            />
+
+            <DocumentViewerModal
+                job={viewerJob}
+                onClose={() => setViewerJob(null)}
             />
         </SafeAreaView>
     );
@@ -277,11 +381,14 @@ const styles = StyleSheet.create({
     searchBackdrop: {
         backgroundColor: 'rgba(0, 0, 0, 0.75)',
     },
-    searchOverlayBar: {
+    searchOverlayContainer: {
         position: 'absolute',
         top: 60,
         left: 24,
         right: 24,
+        maxHeight: '80%',
+    },
+    searchOverlayBar: {
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: Colors.palette.shadowGrey,
@@ -292,8 +399,69 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: 'rgba(255, 255, 255, 0.1)',
     },
+    resultsScroll: {
+        marginTop: 10,
+        backgroundColor: Colors.palette.shadowGrey,
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.07)',
+        maxHeight: 420,
+    },
     cancelText: {
         color: '#999',
+        fontSize: 14,
+    },
+});
+
+const searchStyles = StyleSheet.create({
+    card: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+        gap: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(255,255,255,0.05)',
+    },
+    iconWrap: {
+        width: 40,
+        height: 40,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    cardInfo: {
+        flex: 1,
+    },
+    cardTitle: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: Colors.palette.white,
+        marginBottom: 2,
+    },
+    cardSubtitle: {
+        fontSize: 12,
+        color: '#666',
+        textTransform: 'capitalize',
+    },
+    statusPill: {
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 10,
+    },
+    statusText: {
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    emptyRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        padding: 20,
+        justifyContent: 'center',
+    },
+    emptyText: {
+        color: '#555',
         fontSize: 14,
     },
 });

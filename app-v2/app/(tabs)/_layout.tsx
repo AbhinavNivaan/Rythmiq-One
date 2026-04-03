@@ -15,6 +15,7 @@ export default function TabLayout() {
             <Stack.Screen name="portal-selector" />
             <Stack.Screen name="adapt-status" />
             <Stack.Screen name="error-report" />
+            <Stack.Screen name="document-viewer" />
         </Stack>
     );
 }
