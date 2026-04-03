@@ -31,7 +31,7 @@ class StorageService:
             region_name=self._settings.spaces_region,
             aws_access_key_id=self._settings.spaces_access_key,
             aws_secret_access_key=self._settings.spaces_secret_key,
-            config=Config(signature_version="s3v4"),
+            config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
         )
 
     def generate_upload_url(
