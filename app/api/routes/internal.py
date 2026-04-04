@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["internal"])
 
 _BATCH_SIZE = 200
-_ELIGIBILITY_DELAY_HOURS = 1
+_FAILED_ELIGIBILITY_DELAY_HOURS = 1    # Failed jobs: 1h floor (no feedback window)
+_COMPLETED_ELIGIBILITY_DELAY_HOURS = 24  # Completed jobs: 24h feedback window
 
 
 def _verify_secret(provided: str | None) -> None:
@@ -81,25 +82,37 @@ async def cleanup_raw_uploads(
     if not job_key_map:
         return JSONResponse({"scanned": scanned, "eligible": 0, "deleted": 0, "errors": []})
 
-    # Step 3: Batch-query DB for terminal jobs older than 1h
-    cutoff = (
-        datetime.now(timezone.utc) - timedelta(hours=_ELIGIBILITY_DELAY_HOURS)
-    ).isoformat()
+    # Step 3: Batch-query DB for terminal jobs — separate cutoffs per status
+    now = datetime.now(timezone.utc)
+    completed_cutoff = (now - timedelta(hours=_COMPLETED_ELIGIBILITY_DELAY_HOURS)).isoformat()
+    failed_cutoff = (now - timedelta(hours=_FAILED_ELIGIBILITY_DELAY_HOURS)).isoformat()
+
     job_ids = list(job_key_map.keys())
     eligible_jobs: list[dict] = []
 
     try:
         for i in range(0, len(job_ids), _BATCH_SIZE):
             batch = job_ids[i : i + _BATCH_SIZE]
-            result = (
+
+            completed = (
                 db.table("jobs")
                 .select("id, input_metadata")
                 .in_("id", batch)
-                .in_("status", ["completed", "failed"])
-                .lt("updated_at", cutoff)
+                .eq("status", "completed")
+                .lt("updated_at", completed_cutoff)
                 .execute()
             )
-            eligible_jobs.extend(result.data)
+            eligible_jobs.extend(completed.data)
+
+            failed = (
+                db.table("jobs")
+                .select("id, input_metadata")
+                .in_("id", batch)
+                .eq("status", "failed")
+                .lt("updated_at", failed_cutoff)
+                .execute()
+            )
+            eligible_jobs.extend(failed.data)
     except Exception as exc:
         logger.error("Cleanup: DB query failed", extra={"error": str(exc)})
         raise HTTPException(status_code=500, detail="Database query failed")

@@ -14,6 +14,18 @@ def client():
     return TestClient(app)
 
 
+@pytest.fixture
+def mock_spaces_objects():
+    """No-op fixture; constant-check tests don't need storage."""
+    return None
+
+
+@pytest.fixture
+def mock_db():
+    """No-op fixture; constant-check tests don't need a DB mock."""
+    return None
+
+
 @pytest.fixture(autouse=True)
 def mock_settings():
     """Patch settings to inject the test secret."""
@@ -81,7 +93,7 @@ class TestCleanupLogic:
                 {"Key": "other-prefix/user/job/file.jpg"},
             ])
             mock_db.return_value.table.return_value.select.return_value \
-                .in_.return_value.in_.return_value.lt.return_value \
+                .in_.return_value.eq.return_value.lt.return_value \
                 .execute.return_value = self._make_db_result([])
             response = client.post(
                 "/internal/cleanup/raw-uploads",
@@ -99,7 +111,7 @@ class TestCleanupLogic:
                 {"Key": "uploads/user-1/job-1/file.jpg"},
             ])
             mock_db.return_value.table.return_value.select.return_value \
-                .in_.return_value.in_.return_value.lt.return_value \
+                .in_.return_value.eq.return_value.lt.return_value \
                 .execute.return_value = self._make_db_result([{
                     "id": "job-1",
                     "input_metadata": {"storage_path": "uploads/user-1/job-1/DIFFERENT.jpg"},
@@ -117,12 +129,13 @@ class TestCleanupLogic:
              patch("app.api.routes.internal.get_service_db_client") as mock_db:
             key = "uploads/user-1/job-1/file.jpg"
             mock_storage.return_value.list_objects.return_value = iter([{"Key": key}])
-            mock_db.return_value.table.return_value.select.return_value \
-                .in_.return_value.in_.return_value.lt.return_value \
-                .execute.return_value = self._make_db_result([{
-                    "id": "job-1",
-                    "input_metadata": {"storage_path": key},
-                }])
+            # Two queries per batch: completed (returns job) + failed (returns empty)
+            execute_mock = mock_db.return_value.table.return_value.select.return_value \
+                .in_.return_value.eq.return_value.lt.return_value.execute
+            execute_mock.side_effect = [
+                self._make_db_result([{"id": "job-1", "input_metadata": {"storage_path": key}}]),
+                self._make_db_result([]),
+            ]
             response = client.post(
                 "/internal/cleanup/raw-uploads",
                 headers={"X-Internal-Secret": VALID_SECRET},
@@ -139,7 +152,7 @@ class TestCleanupLogic:
             ]
             mock_storage.return_value.list_objects.return_value = iter(objects)
             mock_db.return_value.table.return_value.select.return_value \
-                .in_.return_value.in_.return_value.lt.return_value \
+                .in_.return_value.eq.return_value.lt.return_value \
                 .execute.return_value = self._make_db_result([])
             response = client.post(
                 "/internal/cleanup/raw-uploads",
@@ -168,12 +181,13 @@ class TestCleanupLogic:
             key = "uploads/user-1/job-1/file.jpg"
             mock_storage.return_value.list_objects.return_value = iter([{"Key": key}])
             mock_storage.return_value.delete_object.side_effect = StorageException("S3 error")
-            mock_db.return_value.table.return_value.select.return_value \
-                .in_.return_value.in_.return_value.lt.return_value \
-                .execute.return_value = self._make_db_result([{
-                    "id": "job-1",
-                    "input_metadata": {"storage_path": key},
-                }])
+            # Two queries per batch: completed (returns job) + failed (returns empty)
+            execute_mock = mock_db.return_value.table.return_value.select.return_value \
+                .in_.return_value.eq.return_value.lt.return_value.execute
+            execute_mock.side_effect = [
+                self._make_db_result([{"id": "job-1", "input_metadata": {"storage_path": key}}]),
+                self._make_db_result([]),
+            ]
             response = client.post(
                 "/internal/cleanup/raw-uploads",
                 headers={"X-Internal-Secret": VALID_SECRET},
@@ -182,3 +196,27 @@ class TestCleanupLogic:
         assert data["deleted"] == 0
         assert len(data["errors"]) == 1
         assert data["errors"][0]["key"] == key
+
+
+def test_cleanup_respects_24h_window_for_completed_jobs(client, mock_spaces_objects, mock_db):
+    """Completed jobs within 24h must NOT be deleted (they're in the feedback window)."""
+    # This test verifies the 24h cutoff is used for completed jobs
+    # (implementation detail: completed jobs should use _COMPLETED_ELIGIBILITY_DELAY_HOURS = 24)
+    # Verify by checking the constants or the query logic
+    from app.api.routes import internal as internal_module
+    assert hasattr(internal_module, '_COMPLETED_ELIGIBILITY_DELAY_HOURS') or \
+           hasattr(internal_module, 'COMPLETED_ELIGIBILITY_DELAY_HOURS'), \
+           "Must define a 24h constant for completed jobs"
+    # Get the value
+    delay = getattr(internal_module, '_COMPLETED_ELIGIBILITY_DELAY_HOURS',
+                    getattr(internal_module, 'COMPLETED_ELIGIBILITY_DELAY_HOURS', None))
+    assert delay == 24, f"Completed jobs must have 24h feedback window, got {delay}"
+
+
+def test_cleanup_failed_jobs_use_short_floor(client, mock_spaces_objects, mock_db):
+    """Failed jobs must use a short floor (not 24h) — they have no feedback window."""
+    from app.api.routes import internal as internal_module
+    failed_delay = getattr(internal_module, '_FAILED_ELIGIBILITY_DELAY_HOURS',
+                           getattr(internal_module, 'FAILED_ELIGIBILITY_DELAY_HOURS', None))
+    assert failed_delay is not None, "Must define a separate constant for failed jobs"
+    assert failed_delay < 24, f"Failed jobs floor must be < 24h, got {failed_delay}"
