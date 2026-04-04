@@ -8,6 +8,7 @@
  */
 
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import ReportFeedbackModal from '../../components/ui/ReportFeedbackModal';
 import {
   View,
   Text,
@@ -80,6 +81,7 @@ export default function AdaptStatusScreen() {
   }, [jobIdsParam]);
 
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [reportJobId, setReportJobId] = useState<string | null>(null);
 
   // Animated spinner rotation
   const spinValue = React.useRef(new Animated.Value(0)).current;
@@ -318,6 +320,16 @@ export default function AdaptStatusScreen() {
           </TouchableOpacity>
         )}
 
+        {allComplete && statuses[0] && (
+          <TouchableOpacity
+            style={adaptReportStyles.link}
+            onPress={() => setReportJobId(statuses[0].job_id)}
+            activeOpacity={0.7}
+          >
+            <Text style={adaptReportStyles.linkText}>Something looks wrong?</Text>
+          </TouchableOpacity>
+        )}
+
         <TouchableOpacity
           style={styles.linkButton}
           onPress={() => router.replace('/(tabs)/jobs')}
@@ -325,6 +337,14 @@ export default function AdaptStatusScreen() {
           <Text style={styles.linkButtonText}>View All Jobs</Text>
         </TouchableOpacity>
       </View>
+
+      <ReportFeedbackModal
+        visible={reportJobId !== null}
+        jobId={reportJobId ?? ''}
+        reportType="output_only"
+        onClose={() => setReportJobId(null)}
+        onReported={() => setReportJobId(null)}
+      />
     </SafeAreaView>
   );
 }
@@ -483,5 +503,17 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: Colors.palette.white,
+  },
+});
+
+const adaptReportStyles = StyleSheet.create({
+  link: {
+    alignItems: 'center',
+    paddingVertical: 14,
+  },
+  linkText: {
+    fontSize: 14,
+    color: '#555',
+    textDecorationLine: 'underline',
   },
 });
