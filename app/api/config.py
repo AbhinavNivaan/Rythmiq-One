@@ -74,6 +74,19 @@ class Settings(BaseSettings):
         alias="INTERNAL_CLEANUP_SECRET",
         description="Shared secret for internal maintenance endpoints. Must be non-empty in production.",
     )
+
+    # ======================
+    # Feedback
+    # ======================
+    gcs_feedback_bucket: str = Field(
+        default="rythmiq-one-feedback",
+        alias="GCS_FEEDBACK_BUCKET",
+    )
+    slack_webhook_url: str = Field(
+        default="",
+        alias="SLACK_WEBHOOK_URL",
+        description="Slack incoming webhook URL for alerts and feedback reports.",
+    )
     api_port: int = Field(
         default=8000,
         alias="API_PORT",
