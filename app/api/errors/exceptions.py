@@ -119,3 +119,10 @@ class WebhookAuthException(AppException):
     error_code = "WEBHOOK_AUTH_FAILED"
     status_code = 401
     retryable = False
+
+
+class ConflictException(AppException):
+    """Raised when a resource already exists or a conflicting operation is attempted."""
+    error_code = "CONFLICT"
+    status_code = 409
+    retryable = False

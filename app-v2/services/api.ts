@@ -817,6 +817,37 @@ export const documentsApi = {
   async deleteJob(jobId: string): Promise<void> {
     await apiRequest<void>(`/jobs/${jobId}`, { method: 'DELETE' });
   },
+
+  /**
+   * Dismiss the one-time Document Preview and signal the API to delete the raw upload.
+   * Fire-and-forget: errors are swallowed — the cleanup scheduler handles missed deletions.
+   */
+  async dismissJob(jobId: string): Promise<void> {
+    try {
+      await apiRequest<void>(`/jobs/${jobId}/dismiss`, { method: 'POST' });
+    } catch (err) {
+      // Intentionally swallowed — raw upload will be cleaned up within 24h by scheduler
+      console.warn('[dismissJob] failed silently', err);
+    }
+  },
+
+  /**
+   * Submit a bad-output report for a job.
+   */
+  async reportFeedback(
+    jobId: string,
+    body: {
+      category: 'wrong_crop' | 'poor_quality' | 'wrong_orientation' | 'wrong_document_type' | 'other';
+      note?: string;
+      consent_granted: boolean;
+      report_type?: 'full' | 'output_only';
+    }
+  ): Promise<{ status: string; feedback_id: string }> {
+    return apiRequest<{ status: string; feedback_id: string }>(
+      `/jobs/${jobId}/feedback`,
+      { method: 'POST', body: JSON.stringify({ report_type: 'full', ...body }) }
+    );
+  },
 };
 
 // =============================================================================

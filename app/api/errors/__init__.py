@@ -15,6 +15,7 @@ from .exceptions import (
     PackagingException,
     IdempotencyConflictException,
     WebhookAuthException,
+    ConflictException,
 )
 from .handlers import register_exception_handlers
 
@@ -35,5 +36,6 @@ __all__ = [
     "PackagingException",
     "IdempotencyConflictException",
     "WebhookAuthException",
+    "ConflictException",
     "register_exception_handlers",
 ]
