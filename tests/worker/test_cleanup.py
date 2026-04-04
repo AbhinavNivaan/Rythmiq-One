@@ -13,47 +13,43 @@ import sys
 
 
 class TestRawUploadCleanupCodePresence:
-    """Verify cleanup code is present in worker files."""
-    
-    def test_cleanup_code_exists_in_worker(self):
-        """Verify cleanup code exists in worker.py."""
+    """Verify raw upload deletion is deferred to the API layer (not done in worker)."""
+
+    def test_worker_does_not_call_storage_delete(self):
+        """Verify worker.py does NOT call storage.delete — deletion is API-layer responsibility."""
         worker_path = os.path.join(
             os.path.dirname(__file__), '..', '..', 'worker', 'worker.py'
         )
-        
+
         with open(worker_path) as f:
             worker_code = f.read()
-        
-        # Check for cleanup code markers
-        assert 'storage.delete(payload.input.raw_path)' in worker_code, \
-            "Raw upload cleanup code not found"
-        assert 'raw_upload_deleted' in worker_code, \
-            "Cleanup tracking variable not found"
-        assert "SECURITY" in worker_code and "Delete raw upload" in worker_code, \
-            "Security fix comment not found"
-    
-    def test_cleanup_error_handling(self):
-        """Verify cleanup has proper error handling."""
+
+        assert 'storage.delete(payload.input.raw_path)' not in worker_code, \
+            "Worker must NOT delete the raw upload — deferred to API dismiss/feedback endpoints"
+
+    def test_raw_upload_deleted_flag_kept_for_compatibility(self):
+        """Verify raw_upload_deleted variable is still present (SuccessResult compatibility)."""
         worker_path = os.path.join(
             os.path.dirname(__file__), '..', '..', 'worker', 'worker.py'
         )
-        
+
         with open(worker_path) as f:
             worker_code = f.read()
-        
-        # Find the cleanup section
-        cleanup_start = worker_code.find('Delete raw upload')
-        assert cleanup_start != -1, "Cleanup code not found"
-        
-        cleanup_section = worker_code[cleanup_start:cleanup_start+800]
-        
-        # Verify error handling
-        assert 'except Exception' in cleanup_section, \
-            "Error handling not found"
-        assert 'cleanup_error' in cleanup_section, \
-            "Error variable not managed"
-        assert 'logger' in cleanup_section, \
-            "Error logging not present"
+
+        assert 'raw_upload_deleted = False' in worker_code, \
+            "raw_upload_deleted = False must remain for SuccessResult compatibility"
+
+    def test_deferral_comment_present(self):
+        """Verify the deferral comment is present to explain why deletion was removed."""
+        worker_path = os.path.join(
+            os.path.dirname(__file__), '..', '..', 'worker', 'worker.py'
+        )
+
+        with open(worker_path) as f:
+            worker_code = f.read()
+
+        assert 'deferred to the API layer' in worker_code, \
+            "Comment explaining API-layer deferral not found in worker.py"
     
     def test_delete_method_in_spaces_client(self):
         """Verify delete() method exists in WorkerSpacesClient."""

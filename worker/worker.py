@@ -375,37 +375,11 @@ def process_job(payload: JobPayload) -> SuccessResult:
         job_id=payload.job_id,
     )
     
-    # ============================================
-    # CRITICAL SECURITY FIX: Delete raw upload
-    # ============================================
-    # After successful encryption and upload, delete the raw plaintext upload
-    # to prevent plaintext files from persisting in storage indefinitely
-    raw_upload_deleted = False
-    if payload.input.raw_path:
-        try:
-            logger.info(f"Deleting raw upload: {payload.input.raw_path}")
-            storage.delete(payload.input.raw_path)
-            logger.info(f"Successfully deleted raw upload: {payload.input.raw_path}")
-            raw_upload_deleted = True
-        except Exception as cleanup_error:
-            # Log but don't fail the job if deletion fails
-            # The encrypted master was already created successfully
-            logger.error(
-                "SECURITY WARNING: Failed to delete raw upload",
-                extra={
-                    "error": str(cleanup_error),
-                    "job_id": payload.job_id,
-                    "user_id": payload.user_id,
-                    "raw_path": payload.input.raw_path,
-                }
-            )
-            raw_filename = payload.input.raw_path.split("/")[-1] if payload.input.raw_path else "unknown"
-            post_slack_alert(
-                job_id=payload.job_id,
-                filename=raw_filename,
-                error=str(cleanup_error),
-            )
-    # ============================================
+    # Raw upload deletion is now deferred to the API layer.
+    # The user's "Got it" tap calls POST /jobs/{id}/dismiss (deletes immediately).
+    # Reporting bad output calls POST /jobs/{id}/feedback (archives then deletes).
+    # The cleanup scheduler at POST /internal/cleanup/raw-uploads acts as a 24h safety net.
+    raw_upload_deleted = False  # kept for SuccessResult compatibility
     
     # Stage 8: POST-QUALITY — assess the final (enhanced or rolled-back) image
     # Done before the del so we still have final_image_data in memory.
