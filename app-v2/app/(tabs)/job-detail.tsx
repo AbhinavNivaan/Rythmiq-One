@@ -37,6 +37,7 @@ import { useQuery } from '@tanstack/react-query';
 import Colors from '../../constants/Colors';
 import { documentsApi } from '../../services/api';
 import { downloadJobOutput, shareFile, formatFileSize, outputFormatToMime } from '../../services/download';
+import ReportFeedbackModal from '../../components/ui/ReportFeedbackModal';
 
 type JobStatusType = 'pending' | 'processing' | 'completed' | 'failed';
 
@@ -86,6 +87,7 @@ export default function JobDetailScreen() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
   const [hasViewedPreview, setHasViewedPreview] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewLoadError, setPreviewLoadError] = useState(false);
@@ -138,6 +140,8 @@ export default function JobDetailScreen() {
       } catch (error) {
         console.error('Failed to persist preview seen state:', error);
       }
+      // Fire-and-forget: dismiss signals API to delete raw upload
+      documentsApi.dismissJob(jobId);
     }
     setHasViewedPreview(true);
     setShowPreviewModal(false);
@@ -552,9 +556,28 @@ export default function JobDetailScreen() {
             <TouchableOpacity style={[styles.pillButton, styles.pillPrimary, styles.modalConfirm]} onPress={handleClosePreview}>
               <Text style={[styles.pillButtonText, styles.pillPrimaryText]}>Got it</Text>
             </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.reportLink}
+              onPress={() => setShowReportModal(true)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.reportLinkText}>Something looks wrong?</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
+
+      <ReportFeedbackModal
+        visible={showReportModal}
+        jobId={jobId ?? ''}
+        reportType="full"
+        onClose={() => setShowReportModal(false)}
+        onReported={() => {
+          setShowReportModal(false);
+          setHasViewedPreview(true);
+          setShowPreviewModal(false);
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -930,5 +953,14 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 20,
     lineHeight: 16,
+  },
+  reportLink: {
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  reportLinkText: {
+    fontSize: 14,
+    color: '#555',
+    textDecorationLine: 'underline',
   },
 });
