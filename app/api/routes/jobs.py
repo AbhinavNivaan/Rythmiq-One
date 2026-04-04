@@ -20,6 +20,7 @@ from app.api.auth import AuthenticatedUser, get_current_user
 from app.api.db import get_db_client, get_service_db_client, transition_job_state, TERMINAL_STATES
 from app.api.errors import (
     CamberException,
+    ConflictException,
     InternalException,
     InvalidInputException,
     JobNotCompleteException,
@@ -31,9 +32,12 @@ from app.api.services.camber import CamberService, get_camber_service
 from app.api.services.packaging import PackagingService, get_packaging_service
 from app.api.config import get_settings
 from app.api.routes.webhooks import _persist_worker_output
+from app.api.services import feedback_gcs
+from app.api import slack
 from .models import (
     CreateJobRequest,
     CreateJobResponse,
+    FeedbackRequest,
     JobOutputResponse,
     SubmitJobRequest,
     SubmitJobResponse,
@@ -1107,3 +1111,158 @@ async def get_job_output(
         portal_output=portal_output,
         download_url=download_url,
     )
+
+
+@router.post("/{job_id}/dismiss", status_code=200)
+async def dismiss_job(
+    job_id: UUID,
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    storage: Annotated[StorageService, Depends(get_storage_service)],
+) -> dict:
+    """
+    Dismiss the one-time Document Preview and delete the raw upload.
+    Idempotent — returns 200 if raw upload was already deleted.
+    """
+    db = get_db_client()
+    result = (
+        db.table("jobs")
+        .select("id, user_id, input_metadata")
+        .eq("id", str(job_id))
+        .eq("user_id", str(user.id))
+        .limit(1)
+        .execute()
+    )
+    if not result.data:
+        raise NotFoundException(f"Job {job_id} not found")
+
+    raw_path = (result.data[0].get("input_metadata") or {}).get("storage_path")
+    if raw_path:
+        try:
+            storage.delete_object(raw_path)
+            logger.info("Dismissed: raw upload deleted", extra={"job_id": str(job_id)})
+        except Exception as exc:
+            logger.warning(
+                "Dismiss: delete failed — cleanup scheduler will retry within 24h",
+                extra={"job_id": str(job_id), "error": str(exc)},
+            )
+    return {"status": "ok"}
+
+
+@router.post("/{job_id}/feedback", status_code=201)
+async def submit_feedback(
+    job_id: UUID,
+    body: FeedbackRequest,
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    storage: Annotated[StorageService, Depends(get_storage_service)],
+) -> dict:
+    """
+    Submit a bad-output report for a completed job.
+    Full report: archives raw upload to GCS, sends Slack with both signed URLs.
+    Output-only report (adapt jobs): sends Slack with output preview URL only.
+    Returns 409 if a report already exists for this job.
+    Returns 500 if GCS archive fails — raw upload is NOT deleted, user can retry.
+    """
+    if not body.consent_granted:
+        raise InvalidInputException("consent_granted must be true")
+
+    settings = get_settings()
+    db = get_db_client()
+
+    result = (
+        db.table("jobs")
+        .select("id, user_id, input_metadata, master_path")
+        .eq("id", str(job_id))
+        .eq("user_id", str(user.id))
+        .limit(1)
+        .execute()
+    )
+    if not result.data:
+        raise NotFoundException(f"Job {job_id} not found")
+
+    job = result.data[0]
+    meta = job.get("input_metadata") or {}
+    raw_path = meta.get("storage_path")
+    master_path = job.get("master_path")
+    user_id_str = str(user.id)
+    job_id_str = str(job_id)
+
+    pipeline_snapshot = {
+        "quality_score": meta.get("input_quality_score"),
+        "stages_used": meta.get("stages_used"),
+        "quad_source": meta.get("quad_source"),
+        "tflite_confidence": meta.get("tflite_confidence"),
+        "guard_001_triggered": meta.get("guard_001_triggered"),
+        "document_type": meta.get("document_type"),
+        "document_subtype": meta.get("document_subtype"),
+        "document_category": meta.get("document_category"),
+        "output_format": meta.get("output_format"),
+    }
+
+    raw_signed_url: str | None = None
+    raw_feedback_path: str | None = None
+
+    if body.report_type == "full" and raw_path:
+        raw_bytes = storage.fetch_object(raw_path)
+        # If GCS archive fails: propagate exception → 500, do not delete raw upload
+        raw_feedback_path = feedback_gcs.archive_raw_upload(
+            raw_bytes, job_id_str, settings.gcs_feedback_bucket
+        )
+        feedback_gcs.write_metadata(job_id_str, pipeline_snapshot, settings.gcs_feedback_bucket)
+        raw_signed_url = feedback_gcs.generate_signed_url(raw_feedback_path, settings.gcs_feedback_bucket)
+
+    output_preview_url: str | None = None
+    preview_path = f"output/{user_id_str}/{job_id_str}/preview.jpg"
+    try:
+        output_preview_url, _ = storage.generate_download_url(
+            preview_path, expiry_seconds=4 * 3600
+        )
+    except Exception:
+        pass
+
+    try:
+        insert_result = (
+            db.table("feedback_reports")
+            .insert({
+                "job_id": job_id_str,
+                "user_id": user_id_str,
+                "report_type": body.report_type,
+                "category": body.category,
+                "note": body.note,
+                "consent_granted": True,
+                "raw_feedback_path": raw_feedback_path,
+                "master_path": master_path,
+                "pipeline_snapshot": pipeline_snapshot,
+                "status": "pending",
+            })
+            .execute()
+        )
+    except Exception as exc:
+        if "unique" in str(exc).lower() or "duplicate" in str(exc).lower():
+            raise ConflictException(f"Feedback already submitted for job {job_id}")
+        raise
+
+    feedback_id = insert_result.data[0]["id"] if insert_result.data else "unknown"
+
+    slack.post_feedback_report_alert(
+        job_id=job_id_str,
+        document_type=meta.get("document_type"),
+        document_subtype=meta.get("document_subtype"),
+        category=body.category,
+        note=body.note,
+        quality_score=meta.get("input_quality_score"),
+        quad_source=meta.get("quad_source"),
+        tflite_confidence=meta.get("tflite_confidence"),
+        raw_input_url=raw_signed_url,
+        output_preview_url=output_preview_url,
+    )
+
+    if raw_path and body.report_type == "full":
+        try:
+            storage.delete_object(raw_path)
+        except Exception as exc:
+            logger.warning(
+                "Feedback: failed to delete raw upload after archiving",
+                extra={"job_id": job_id_str, "error": str(exc)},
+            )
+
+    return {"status": "received", "feedback_id": feedback_id}

@@ -155,3 +155,19 @@ class WebhookResponse(BaseModel):
     acknowledged: bool = True
 
 
+# =============================================================================
+# Feedback Models
+# =============================================================================
+
+class FeedbackRequest(BaseModel):
+    report_type: Literal["full", "output_only"] = Field(default="full")
+    category: Literal[
+        "wrong_crop",
+        "poor_quality",
+        "wrong_orientation",
+        "wrong_document_type",
+        "other",
+    ]
+    note: str | None = Field(default=None, max_length=500)
+    consent_granted: bool = Field(...)
+
