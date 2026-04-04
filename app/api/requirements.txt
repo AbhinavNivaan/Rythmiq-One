@@ -10,3 +10,5 @@ PyJWT>=2.8.0,<3.0.0
 supabase>=2.3.0,<3.0.0
 boto3>=1.34.0,<2.0.0
 httpx>=0.26.0,<0.28.0
+google-cloud-storage>=2.14.0,<3.0.0
+requests>=2.31.0,<3.0.0
