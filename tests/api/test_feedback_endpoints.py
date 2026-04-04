@@ -33,7 +33,7 @@ def test_dismiss_deletes_raw_upload():
         with patch("app.api.routes.jobs.get_db_client") as mock_db:
             db = MagicMock()
             db.table.return_value.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
-                {"id": JOB_ID, "user_id": USER_ID, "input_metadata": {"storage_path": f"uploads/{USER_ID}/{JOB_ID}/file.jpg"}}
+                {"id": JOB_ID, "user_id": USER_ID, "status": "completed", "input_metadata": {"storage_path": f"uploads/{USER_ID}/{JOB_ID}/file.jpg"}}
             ]
             mock_db.return_value = db
 
@@ -57,7 +57,7 @@ def test_dismiss_idempotent_when_no_raw_path():
         with patch("app.api.routes.jobs.get_db_client") as mock_db:
             db = MagicMock()
             db.table.return_value.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
-                {"id": JOB_ID, "user_id": USER_ID, "input_metadata": {}}
+                {"id": JOB_ID, "user_id": USER_ID, "status": "completed", "input_metadata": {}}
             ]
             mock_db.return_value = db
 
@@ -94,6 +94,7 @@ def test_feedback_full_report_returns_201():
             db.table.return_value.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
                 {
                     "id": JOB_ID, "user_id": USER_ID,
+                    "status": "completed",
                     "master_path": f"master/{USER_ID}/{JOB_ID}/{JOB_ID}.enc",
                     "input_metadata": {
                         "storage_path": f"uploads/{USER_ID}/{JOB_ID}/file.jpg",
@@ -166,7 +167,7 @@ def test_feedback_returns_500_when_gcs_archive_fails():
 
             db = MagicMock()
             db.table.return_value.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
-                {"id": JOB_ID, "user_id": USER_ID, "master_path": "master/x.enc",
+                {"id": JOB_ID, "user_id": USER_ID, "status": "completed", "master_path": "master/x.enc",
                  "input_metadata": {"storage_path": "uploads/x.jpg"}}
             ]
             mock_db.return_value = db

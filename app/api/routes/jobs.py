@@ -1126,7 +1126,7 @@ async def dismiss_job(
     db = get_db_client()
     result = (
         db.table("jobs")
-        .select("id, user_id, input_metadata")
+        .select("id, user_id, status, input_metadata")
         .eq("id", str(job_id))
         .eq("user_id", str(user.id))
         .limit(1)
@@ -1135,8 +1135,9 @@ async def dismiss_job(
     if not result.data:
         raise NotFoundException(f"Job {job_id} not found")
 
+    job_status = result.data[0].get("status")
     raw_path = (result.data[0].get("input_metadata") or {}).get("storage_path")
-    if raw_path:
+    if raw_path and job_status in ("completed", "failed"):
         try:
             storage.delete_object(raw_path)
             logger.info("Dismissed: raw upload deleted", extra={"job_id": str(job_id)})
@@ -1170,7 +1171,7 @@ async def submit_feedback(
 
     result = (
         db.table("jobs")
-        .select("id, user_id, input_metadata, master_path")
+        .select("id, user_id, status, input_metadata, master_path")
         .eq("id", str(job_id))
         .eq("user_id", str(user.id))
         .limit(1)
@@ -1180,6 +1181,9 @@ async def submit_feedback(
         raise NotFoundException(f"Job {job_id} not found")
 
     job = result.data[0]
+    job_status = job.get("status")
+    if job_status not in ("completed", "failed"):
+        raise InvalidInputException(f"Cannot report feedback on a job with status '{job_status}'")
     meta = job.get("input_metadata") or {}
     raw_path = meta.get("storage_path")
     master_path = job.get("master_path")
