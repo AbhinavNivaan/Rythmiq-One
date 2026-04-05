@@ -308,6 +308,10 @@ async function apiRequest<T>(
     );
   }
 
+  if (response.status === 204 || response.headers.get('content-length') === '0') {
+    return undefined as T;
+  }
+
   let data: Record<string, any> = {};
   try {
     data = await response.json();
@@ -563,7 +567,15 @@ export const authApi = {
       await clearAuthTokens();
     }
   },
-  
+
+  /**
+   * Permanently delete the authenticated user's account and all associated data.
+   * Returns void on success (204). Throws ApiError on failure.
+   */
+  async deleteAccount(): Promise<void> {
+    await apiRequest<void>('/account', { method: 'DELETE' });
+  },
+
   /**
    * Get current session
    */

@@ -33,10 +33,11 @@ import {
     Download,
     Share2,
     X,
+    Trash2,
 } from 'lucide-react-native';
 import Colors from '../../constants/Colors';
 import { useAuth } from '../../contexts/AuthContext';
-import { documentsApi } from '../../services/api';
+import { documentsApi, authApi, ApiError } from '../../services/api';
 import type { JobStatus } from '../../services/api';
 import { downloadJobOutput, shareFile, outputFormatToMime } from '../../services/download';
 import NotificationsPanel from '../../components/ui/NotificationsPanel';
@@ -84,16 +85,22 @@ function SectionHeader({ title }: { title: string }) {
 }
 
 function SettingsRow({
-    Icon, label, onPress, destructive,
+    Icon, label, onPress, destructive, disabled,
 }: {
     Icon: React.ComponentType<{ size: number; color: string }>;
     label: string;
     onPress: () => void;
     destructive?: boolean;
+    disabled?: boolean;
 }) {
     const color = destructive ? Colors.palette.red : Colors.palette.white;
     return (
-        <TouchableOpacity style={styles.settingsRow} onPress={onPress} activeOpacity={0.7}>
+        <TouchableOpacity
+            style={[styles.settingsRow, disabled && { opacity: 0.5 }]}
+            onPress={onPress}
+            activeOpacity={0.7}
+            disabled={disabled}
+        >
             <View style={styles.settingsRowLeft}>
                 <View style={[styles.settingsIcon, destructive && styles.settingsIconDestructive]}>
                     <Icon size={18} color={color} />
@@ -410,6 +417,41 @@ export default function ProfileScreen() {
         ]);
     };
 
+    const [deletingAccount, setDeletingAccount] = useState(false);
+
+    const handleDeleteAccount = () => {
+        Alert.alert(
+            'Delete Account',
+            "Your account, documents, and processing history will be permanently deleted. Feedback reports you've submitted may be retained for quality improvement.",
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete Account',
+                    style: 'destructive',
+                    onPress: async () => {
+                        setDeletingAccount(true);
+                        try {
+                            await authApi.deleteAccount();
+                            try { await logout(); } catch (_) { /* session cleanup is best-effort */ }
+                            router.replace('/');
+                        } catch (err) {
+                            setDeletingAccount(false);
+                            if (err instanceof ApiError && err.status === 409) {
+                                Alert.alert(
+                                    'Please Wait',
+                                    'Your documents are still being processed. Please wait a moment and try again.'
+                                );
+                            } else {
+                                const message = err instanceof Error ? err.message : 'An unexpected error occurred.';
+                                Alert.alert('Deletion Failed', message);
+                            }
+                        }
+                    },
+                },
+            ]
+        );
+    };
+
     return (
         <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
             {/* Header */}
@@ -484,7 +526,17 @@ export default function ProfileScreen() {
                     <SettingsRow Icon={HelpCircle} label="Help & Support"   onPress={() => {}} />
                 </View>
                 <View style={styles.settingsGroup}>
-                    <SettingsRow Icon={LogOut} label="Log Out" onPress={handleLogout} destructive />
+                    <SettingsRow Icon={LogOut} label="Log Out" onPress={handleLogout} destructive disabled={deletingAccount} />
+                    <View style={styles.rowDivider} />
+                    <SettingsRow
+                        Icon={deletingAccount
+                            ? () => <ActivityIndicator size="small" color={Colors.palette.red} />
+                            : Trash2}
+                        label={deletingAccount ? 'Deleting…' : 'Delete Account'}
+                        onPress={handleDeleteAccount}
+                        destructive
+                        disabled={deletingAccount}
+                    />
                 </View>
 
                 {/* My Documents */}

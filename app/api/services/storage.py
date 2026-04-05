@@ -266,12 +266,15 @@ class StorageService:
 
     def delete_objects_by_prefix(self, prefix: str, user_id: str) -> tuple[int, int]:
         """
-        Delete all objects under prefix, skipping any key that does not contain user_id.
+        Delete all objects under prefix, skipping any key that does not start with prefix.
 
         Args:
-            prefix: S3 key prefix to enumerate (e.g. 'uploads/{user_id}/')
-            user_id: Owner user ID — any key not containing this string is skipped
-                     and logged as a warning.
+            prefix: S3 key prefix to enumerate (e.g. 'uploads/{user_id}/'). Acts as
+                    the scope guard — any enumerated key that does not start with this
+                    prefix is skipped and logged as a warning.
+            user_id: Owner user ID — passed for audit/logging purposes; the prefix
+                     already encodes the user scope so startswith(prefix) is the
+                     effective guard.
 
         Returns:
             (deleted_count, failed_count)
