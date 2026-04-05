@@ -12,6 +12,7 @@ from app.api.config import get_settings
 from app.api.errors import register_exception_handlers
 from app.api.middleware import CorrelationMiddleware, LoggingMiddleware
 from app.api.routes import (
+    account_router,
     auth_router,
     form_schemas_router,
     health_router,
@@ -75,6 +76,7 @@ def create_app() -> FastAPI:
     # Routers
     app.include_router(health_router)
     app.include_router(auth_router)
+    app.include_router(account_router)
     app.include_router(jobs_router)
     app.include_router(webhooks_router)
     app.include_router(form_schemas_router)

@@ -1,7 +1,7 @@
 from .jobs import router as jobs_router
 from .webhooks import router as webhooks_router
 from .health import router as health_router
-from .auth import router as auth_router
+from .auth import router as auth_router, account_router
 from .form_schemas import router as form_schemas_router
 from .portals import router as portals_router
 from .internal import router as internal_router
@@ -11,6 +11,7 @@ __all__ = [
     "webhooks_router",
     "health_router",
     "auth_router",
+    "account_router",
     "form_schemas_router",
     "portals_router",
     "internal_router",

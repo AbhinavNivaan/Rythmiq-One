@@ -13,10 +13,14 @@ from supabase import create_client, Client
 from app.api.config import Settings, get_settings
 from app.api.auth.dependencies import get_current_user
 from app.api.auth.models import AuthenticatedUser
+from app.api.db import get_service_db_client
+from app.api.services.storage import StorageService, get_storage_service
+from app.api.errors import StorageException
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+account_router = APIRouter(tags=["account"])
 
 
 # Request/Response Models
@@ -270,5 +274,142 @@ async def logout(
         logger.info(f"User logged out: {user.id}")
     except Exception as e:
         logger.warning(f"Logout warning (session may already be invalid): {str(e)}")
-    
+
+    return None
+
+
+@account_router.delete("/account", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_account(
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    storage: Annotated[StorageService, Depends(get_storage_service)],
+    db: Annotated[Client, Depends(get_service_db_client)],
+) -> None:
+    """
+    Permanently delete the authenticated user's account and all associated data.
+
+    Deletion sequence:
+    1. Guard: return 409 if any jobs are pending/processing
+    2. Delete all Spaces objects under uploads/{user_id}/ and output/{user_id}/
+    3. Delete documents rows linked to user's jobs
+    4. Delete feedback_reports rows for this user
+    5. Delete all jobs rows for this user
+    6. Delete Supabase auth user (invalidates all sessions immediately)
+    """
+    user_id = str(user.id)
+
+    # Step 1: Guard — reject if any jobs are in-flight
+    in_flight = (
+        db.table("jobs")
+        .select("id")
+        .eq("user_id", user_id)
+        .in_("status", ["pending", "processing"])
+        .limit(1)
+        .execute()
+    )
+    if in_flight.data:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error_code": "JOBS_IN_PROGRESS",
+                "message": "Documents are still being processed — please wait and try again.",
+            },
+        )
+
+    # Step 2: Storage cleanup — enumerate and delete by user prefix (best-effort)
+    try:
+        uploads_deleted, uploads_failed = storage.delete_objects_by_prefix(f"uploads/{user_id}/", user_id)
+        output_deleted, output_failed = storage.delete_objects_by_prefix(f"output/{user_id}/", user_id)
+        total_failed = uploads_failed + output_failed
+        if total_failed > 0:
+            logger.warning(
+                "delete_account: some storage objects could not be deleted",
+                extra={"user_id": user_id, "failed_count": total_failed},
+            )
+    except StorageException:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error_code": "STORAGE_CLEANUP_FAILED",
+                "message": "Failed to enumerate storage for deletion. Please try again.",
+            },
+        )
+
+    # Step 3: Delete documents rows (must precede jobs deletion — FK dependency)
+    try:
+        job_ids_result = (
+            db.table("jobs")
+            .select("id")
+            .eq("user_id", user_id)
+            .execute()
+        )
+        job_ids = [row["id"] for row in (job_ids_result.data or [])]
+        if job_ids:
+            db.table("documents").delete().in_("job_id", job_ids).execute()
+    except Exception as e:
+        logger.error(
+            "delete_account: failed to delete documents rows",
+            extra={"user_id": user_id, "error_type": type(e).__name__},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error_code": "DB_DELETION_FAILED",
+                "message": "Failed to delete account data. Please try again.",
+            },
+        )
+
+    # Step 4: Delete feedback_reports rows
+    try:
+        db.table("feedback_reports").delete().eq("user_id", user_id).execute()
+    except Exception as e:
+        logger.error(
+            "delete_account: failed to delete feedback_reports rows",
+            extra={"user_id": user_id, "error_type": type(e).__name__},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error_code": "DB_DELETION_FAILED",
+                "message": "Failed to delete account data. Please try again.",
+            },
+        )
+
+    # Step 5: Delete jobs rows
+    try:
+        db.table("jobs").delete().eq("user_id", user_id).execute()
+    except Exception as e:
+        logger.error(
+            "delete_account: failed to delete jobs rows",
+            extra={"user_id": user_id, "error_type": type(e).__name__},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error_code": "DB_DELETION_FAILED",
+                "message": "Failed to delete account data. Please try again.",
+            },
+        )
+
+    # Step 6: Delete Supabase auth user (invalidates all sessions immediately)
+    try:
+        db.auth.admin.delete_user(user_id)
+        logger.info("delete_account: auth user deleted", extra={"user_id": user_id})
+    except Exception as e:
+        err_msg = str(e).lower()
+        if "not found" in err_msg or "user not found" in err_msg:
+            # Already deleted — treat as success (idempotent)
+            logger.info("delete_account: auth user already deleted", extra={"user_id": user_id})
+        else:
+            logger.error(
+                "delete_account: failed to delete auth user",
+                extra={"user_id": user_id, "error_type": type(e).__name__},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "error_code": "AUTH_DELETION_FAILED",
+                    "message": "Account data deleted but auth user removal failed. Please try again.",
+                },
+            )
+
     return None
