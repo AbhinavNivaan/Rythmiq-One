@@ -264,21 +264,72 @@ class StorageService:
             logger.error("Failed to delete object", extra={"storage_path": storage_path, "error": str(e)})
             raise StorageException("Failed to delete object")
 
-    def delete_objects_by_prefix(self, prefix: str) -> None:
-        """Delete all objects under a given prefix."""
+    def delete_objects_by_prefix(self, prefix: str, user_id: str) -> tuple[int, int]:
+        """
+        Delete all objects under prefix, skipping any key that does not contain user_id.
+
+        Args:
+            prefix: S3 key prefix to enumerate (e.g. 'uploads/{user_id}/')
+            user_id: Owner user ID — any key not containing this string is skipped
+                     and logged as a warning.
+
+        Returns:
+            (deleted_count, failed_count)
+
+        Raises:
+            StorageException: If prefix enumeration (list/paginate) fails.
+                              Individual object delete failures are counted but
+                              do not raise.
+        """
+        deleted = 0
+        failed = 0
         try:
             paginator = self._client.get_paginator("list_objects_v2")
-            for page in paginator.paginate(Bucket=self._settings.spaces_bucket, Prefix=prefix):
-                keys = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
-                if keys:
-                    self._client.delete_objects(
-                        Bucket=self._settings.spaces_bucket,
-                        Delete={"Objects": keys},
-                    )
-            logger.info("Objects deleted by prefix", extra={"prefix": prefix})
+            pages = list(paginator.paginate(Bucket=self._settings.spaces_bucket, Prefix=prefix))
         except (BotoCoreError, ClientError) as e:
-            logger.error("Failed to delete objects by prefix", extra={"prefix": prefix, "error": str(e)})
-            raise StorageException("Failed to delete objects by prefix")
+            logger.error(
+                "Failed to enumerate objects by prefix",
+                extra={"prefix": prefix, "error": str(e)},
+            )
+            raise StorageException("Failed to enumerate objects by prefix")
+
+        for page in pages:
+            batch = []
+            for obj in page.get("Contents", []):
+                key = obj["Key"]
+                if not key.startswith(prefix):
+                    logger.warning(
+                        "delete_objects_by_prefix: key outside prefix scope — skipping",
+                        extra={"error_type": "prefix_mismatch"},
+                    )
+                    continue
+                batch.append({"Key": key})
+
+            if not batch:
+                continue
+
+            try:
+                response = self._client.delete_objects(
+                    Bucket=self._settings.spaces_bucket,
+                    Delete={"Objects": batch},
+                )
+            except (BotoCoreError, ClientError) as e:
+                failed += len(batch)
+                logger.error(
+                    "delete_objects_by_prefix: batch delete call failed",
+                    extra={"error_type": type(e).__name__},
+                )
+                continue
+
+            deleted += len(response.get("Deleted", []))
+            for err in response.get("Errors", []):
+                failed += 1
+                logger.warning(
+                    "delete_objects_by_prefix: object delete failed",
+                    extra={"error_type": err.get("Code", "unknown")},
+                )
+
+        return deleted, failed
 
 
 _storage_service: StorageService | None = None

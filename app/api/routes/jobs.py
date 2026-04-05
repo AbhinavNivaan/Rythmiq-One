@@ -1023,7 +1023,7 @@ async def delete_job(
 
     # Best-effort: remove output directory
     try:
-        storage.delete_objects_by_prefix(f"output/{user.id}/{job_id}/")
+        storage.delete_objects_by_prefix(f"output/{user.id}/{job_id}/", str(user.id))
     except Exception:
         pass
 
