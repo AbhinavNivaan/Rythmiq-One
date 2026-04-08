@@ -1,0 +1,129 @@
+{
+  "schema_id": "upsc_cse_prelims_2026_registration",
+  "schema_type": "exam_form",
+  "schema_version": "1.0.0",
+  "status": "active",
+  "metadata": {
+    "display_name": "UPSC Civil Services Examination (Prelims) 2026 Registration Form",
+    "short_name": "UPSC CSE Prelims 2026",
+    "conducting_body": "Union Public Service Commission",
+    "official_website": "https://upsc.gov.in",
+    "category": "civil_services",
+    "applicable_year": 2026,
+    "country": "IN",
+    "language": "en"
+  },
+  "key_dates": {
+    "registration_opens": "2026-02-10",
+    "registration_closes": "2026-03-04",
+    "correction_window_start": "2026-03-06",
+    "correction_window_end": "2026-03-08",
+    "exam_date": "2026-05-24"
+  },
+  "form_sections": [
+    {
+      "section_id": "applicant_profile",
+      "title": "Applicant Profile",
+      "order": 1,
+      "fields": [
+        { "field_id": "full_name", "label": "Full Name", "type": "string", "required": true },
+        { "field_id": "date_of_birth", "label": "Date of Birth", "type": "date", "required": true, "validation": { "format": "DD/MM/YYYY" } },
+        { "field_id": "gender", "label": "Gender", "type": "enum", "required": true, "enum_values": ["Male", "Female", "Transgender"] },
+        { "field_id": "category", "label": "Category", "type": "enum", "required": true, "enum_values": ["General", "EWS", "OBC", "SC", "ST"] },
+        { "field_id": "pwd_status", "label": "PwBD Status", "type": "boolean", "required": true }
+      ]
+    },
+    {
+      "section_id": "communication",
+      "title": "Communication Details",
+      "order": 2,
+      "fields": [
+        { "field_id": "mobile_number", "label": "Mobile Number", "type": "string", "required": true, "verification": "OTP", "validation": { "pattern": "^[6-9][0-9]{9}$" } },
+        { "field_id": "email_id", "label": "Email ID", "type": "string", "required": true, "verification": "OTP", "validation": { "format": "email" } },
+        { "field_id": "address", "label": "Address", "type": "string", "required": true }
+      ]
+    },
+    {
+      "section_id": "exam_choices",
+      "title": "Exam Choices",
+      "order": 3,
+      "fields": [
+        { "field_id": "optional_language", "label": "Indian Language", "type": "enum", "required": true, "enum_values": ["Hindi", "English", "Assamese", "Bengali", "Gujarati", "Kannada", "Malayalam", "Marathi", "Odia", "Punjabi", "Tamil", "Telugu", "Urdu"] },
+        { "field_id": "exam_centre_city_1", "label": "Exam Centre City 1", "type": "string", "required": true },
+        { "field_id": "exam_centre_city_2", "label": "Exam Centre City 2", "type": "string", "required": false },
+        { "field_id": "scribe_opted", "label": "Scribe Required", "type": "boolean", "required": true }
+      ]
+    }
+  ],
+  "document_uploads": [
+    {
+      "doc_id": "photograph_passport",
+      "label": "Photograph",
+      "allowed_formats": ["JPG", "JPEG"],
+      "size_min_kb": 20,
+      "size_max_kb": 300,
+      "required": true,
+      "required_if": null,
+      "document_category": "photograph",
+      "document_subtype": "Passport Photo"
+    },
+    {
+      "doc_id": "signature",
+      "label": "Signature",
+      "allowed_formats": ["JPG", "JPEG"],
+      "size_min_kb": 10,
+      "size_max_kb": 200,
+      "required": true,
+      "required_if": null,
+      "document_category": "signature",
+      "document_subtype": "Personal Signature"
+    },
+    {
+      "doc_id": "photo_id_proof",
+      "label": "Government Photo ID",
+      "allowed_formats": ["PDF", "JPG", "JPEG"],
+      "size_min_kb": 50,
+      "size_max_kb": 500,
+      "required": true,
+      "required_if": null,
+      "document_category": "identity",
+      "document_subtype": "Aadhaar Card"
+    },
+    {
+      "doc_id": "pwd_certificate",
+      "label": "PwBD Certificate",
+      "allowed_formats": ["PDF"],
+      "size_min_kb": 50,
+      "size_max_kb": 500,
+      "required": false,
+      "required_if": "pwd_status == true",
+      "document_category": "certificate",
+      "document_subtype": "PwBD Certificate",
+      "seeds_document_subtypes": ["PwBD Certificate"]
+    },
+    {
+      "doc_id": "scribe_documents",
+      "label": "Scribe Undertaking",
+      "allowed_formats": ["PDF"],
+      "size_min_kb": 50,
+      "size_max_kb": 500,
+      "required": false,
+      "required_if": "scribe_opted == true",
+      "document_category": "other",
+      "document_subtype": "Scribe Undertaking",
+      "seeds_document_subtypes": ["Scribe Undertaking"]
+    }
+  ],
+  "fee_structure": {
+    "currency": "INR",
+    "payment_modes": ["UPI", "Net Banking", "Credit Card", "Debit Card"],
+    "tiers": [
+      { "category": "General", "amount": 100 },
+      { "category": "EWS", "amount": 100 },
+      { "category": "OBC", "amount": 100 },
+      { "category": "SC", "amount": 0 },
+      { "category": "ST", "amount": 0 },
+      { "category": "PwBD", "amount": 0 }
+    ]
+  }
+}

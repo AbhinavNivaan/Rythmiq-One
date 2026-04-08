@@ -1,0 +1,116 @@
+{
+  "schema_id": "cuet_ug_2026_registration",
+  "schema_type": "exam_form",
+  "schema_version": "1.0.0",
+  "status": "active",
+  "metadata": {
+    "display_name": "CUET UG 2026 Registration Form",
+    "short_name": "CUET UG 2026",
+    "conducting_body": "National Testing Agency (NTA)",
+    "official_website": "https://cuet.nta.nic.in",
+    "category": "other_exam",
+    "applicable_year": 2026,
+    "country": "IN",
+    "language": "en"
+  },
+  "key_dates": {
+    "registration_opens": "2026-02-20",
+    "registration_closes": "2026-03-22",
+    "correction_window_start": "2026-03-24",
+    "correction_window_end": "2026-03-26",
+    "exam_date": "2026-05-18"
+  },
+  "form_sections": [
+    {
+      "section_id": "candidate_details",
+      "title": "Candidate Details",
+      "order": 1,
+      "fields": [
+        { "field_id": "full_name", "label": "Full Name", "type": "string", "required": true },
+        { "field_id": "date_of_birth", "label": "Date of Birth", "type": "date", "required": true, "validation": { "format": "DD/MM/YYYY" } },
+        { "field_id": "gender", "label": "Gender", "type": "enum", "required": true, "enum_values": ["Male", "Female", "Third Gender"] },
+        { "field_id": "category", "label": "Category", "type": "enum", "required": true, "enum_values": ["General", "OBC-NCL", "SC", "ST", "EWS"] },
+        { "field_id": "pwd_status", "label": "PwD Status", "type": "boolean", "required": true }
+      ]
+    },
+    {
+      "section_id": "communication",
+      "title": "Communication",
+      "order": 2,
+      "fields": [
+        { "field_id": "mobile_number", "label": "Mobile Number", "type": "string", "required": true, "verification": "OTP", "validation": { "pattern": "^[6-9][0-9]{9}$" } },
+        { "field_id": "email_id", "label": "Email ID", "type": "string", "required": true, "verification": "OTP", "validation": { "format": "email" } },
+        { "field_id": "state", "label": "State", "type": "string", "required": true }
+      ]
+    },
+    {
+      "section_id": "subject_preferences",
+      "title": "Subject and University Preferences",
+      "order": 3,
+      "fields": [
+        { "field_id": "domain_subjects", "label": "Domain Subjects", "type": "array", "required": true },
+        { "field_id": "language_test", "label": "Language Test", "type": "enum", "required": true, "enum_values": ["English", "Hindi", "Assamese", "Bengali", "Gujarati", "Kannada", "Malayalam", "Marathi", "Odia", "Punjabi", "Tamil", "Telugu", "Urdu"] },
+        { "field_id": "general_test_opted", "label": "General Test Opted", "type": "boolean", "required": true }
+      ]
+    }
+  ],
+  "document_uploads": [
+    {
+      "doc_id": "photograph_passport",
+      "label": "Photograph",
+      "allowed_formats": ["JPG", "JPEG"],
+      "size_min_kb": 10,
+      "size_max_kb": 200,
+      "required": true,
+      "required_if": null,
+      "document_category": "photograph",
+      "document_subtype": "Passport Photo"
+    },
+    {
+      "doc_id": "signature",
+      "label": "Signature",
+      "allowed_formats": ["JPG", "JPEG"],
+      "size_min_kb": 4,
+      "size_max_kb": 30,
+      "required": true,
+      "required_if": null,
+      "document_category": "signature",
+      "document_subtype": "Personal Signature"
+    },
+    {
+      "doc_id": "class_10_marksheet",
+      "label": "Class 10 Marksheet",
+      "allowed_formats": ["PDF"],
+      "size_min_kb": 50,
+      "size_max_kb": 500,
+      "required": true,
+      "required_if": null,
+      "document_category": "academic",
+      "document_subtype": "Class 10 Marksheet",
+      "seeds_document_subtypes": ["Class 10 Marksheet"]
+    },
+    {
+      "doc_id": "class_12_marksheet",
+      "label": "Class 12 Marksheet",
+      "allowed_formats": ["PDF"],
+      "size_min_kb": 50,
+      "size_max_kb": 500,
+      "required": true,
+      "required_if": null,
+      "document_category": "academic",
+      "document_subtype": "Class 12 Marksheet",
+      "seeds_document_subtypes": ["Class 12 Marksheet"]
+    }
+  ],
+  "fee_structure": {
+    "currency": "INR",
+    "payment_modes": ["UPI", "Net Banking", "Credit Card", "Debit Card"],
+    "tiers": [
+      { "category": "General", "amount": 1000 },
+      { "category": "OBC-NCL", "amount": 900 },
+      { "category": "SC", "amount": 800 },
+      { "category": "ST", "amount": 800 },
+      { "category": "PwBD", "amount": 800 }
+    ]
+  }
+}

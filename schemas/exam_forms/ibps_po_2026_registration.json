@@ -1,0 +1,117 @@
+{
+  "schema_id": "ibps_po_2026_registration",
+  "schema_type": "exam_form",
+  "schema_version": "1.0.0",
+  "status": "active",
+  "metadata": {
+    "display_name": "IBPS PO 2026 Registration Form",
+    "short_name": "IBPS PO 2026",
+    "conducting_body": "Institute of Banking Personnel Selection",
+    "official_website": "https://www.ibps.in",
+    "category": "other_exam",
+    "applicable_year": 2026,
+    "country": "IN",
+    "language": "en"
+  },
+  "key_dates": {
+    "registration_opens": "2026-07-25",
+    "registration_closes": "2026-08-18",
+    "correction_window_start": "2026-08-20",
+    "correction_window_end": "2026-08-22",
+    "exam_date": "2026-10-12"
+  },
+  "form_sections": [
+    {
+      "section_id": "candidate_profile",
+      "title": "Candidate Profile",
+      "order": 1,
+      "fields": [
+        { "field_id": "full_name", "label": "Full Name", "type": "string", "required": true },
+        { "field_id": "date_of_birth", "label": "Date of Birth", "type": "date", "required": true, "validation": { "format": "DD/MM/YYYY" } },
+        { "field_id": "gender", "label": "Gender", "type": "enum", "required": true, "enum_values": ["Male", "Female", "Other"] },
+        { "field_id": "category", "label": "Category", "type": "enum", "required": true, "enum_values": ["General", "OBC", "SC", "ST", "EWS"] },
+        { "field_id": "pwd_status", "label": "PwBD Status", "type": "boolean", "required": true }
+      ]
+    },
+    {
+      "section_id": "communication",
+      "title": "Communication",
+      "order": 2,
+      "fields": [
+        { "field_id": "mobile_number", "label": "Mobile Number", "type": "string", "required": true, "verification": "OTP", "validation": { "pattern": "^[6-9][0-9]{9}$" } },
+        { "field_id": "email_id", "label": "Email ID", "type": "string", "required": true, "verification": "OTP", "validation": { "format": "email" } },
+        { "field_id": "address_state", "label": "State", "type": "string", "required": true }
+      ]
+    },
+    {
+      "section_id": "education_and_language",
+      "title": "Education and Language",
+      "order": 3,
+      "fields": [
+        { "field_id": "graduation_percentage", "label": "Graduation Percentage", "type": "integer", "required": true, "validation": { "minimum": 0, "maximum": 100 } },
+        { "field_id": "computer_literacy", "label": "Computer Literacy", "type": "boolean", "required": true },
+        { "field_id": "exam_language", "label": "Exam Language", "type": "enum", "required": true, "enum_values": ["English", "Hindi"] },
+        { "field_id": "exam_centre_preference_1", "label": "Exam Centre Preference 1", "type": "string", "required": true }
+      ]
+    }
+  ],
+  "document_uploads": [
+    {
+      "doc_id": "photograph_passport",
+      "label": "Photograph",
+      "allowed_formats": ["JPG", "JPEG"],
+      "size_min_kb": 20,
+      "size_max_kb": 200,
+      "required": true,
+      "required_if": null,
+      "document_category": "photograph",
+      "document_subtype": "Passport Photo"
+    },
+    {
+      "doc_id": "signature",
+      "label": "Signature",
+      "allowed_formats": ["JPG", "JPEG"],
+      "size_min_kb": 10,
+      "size_max_kb": 50,
+      "required": true,
+      "required_if": null,
+      "document_category": "signature",
+      "document_subtype": "Personal Signature"
+    },
+    {
+      "doc_id": "left_thumb_impression",
+      "label": "Left Thumb Impression",
+      "allowed_formats": ["JPG", "JPEG"],
+      "size_min_kb": 20,
+      "size_max_kb": 100,
+      "required": true,
+      "required_if": null,
+      "document_category": "other",
+      "document_subtype": "Thumb Impression",
+      "seeds_document_subtypes": ["Thumb Impression"]
+    },
+    {
+      "doc_id": "handwritten_declaration",
+      "label": "Handwritten Declaration",
+      "allowed_formats": ["JPG", "JPEG", "PDF"],
+      "size_min_kb": 20,
+      "size_max_kb": 200,
+      "required": true,
+      "required_if": null,
+      "document_category": "other",
+      "document_subtype": "Handwritten Declaration",
+      "seeds_document_subtypes": ["Handwritten Declaration"]
+    }
+  ],
+  "fee_structure": {
+    "currency": "INR",
+    "payment_modes": ["UPI", "Net Banking", "Credit Card", "Debit Card"],
+    "tiers": [
+      { "category": "General", "amount": 850 },
+      { "category": "OBC", "amount": 850 },
+      { "category": "SC", "amount": 175 },
+      { "category": "ST", "amount": 175 },
+      { "category": "PwBD", "amount": 175 }
+    ]
+  }
+}

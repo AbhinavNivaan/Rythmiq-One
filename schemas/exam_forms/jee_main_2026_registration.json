@@ -1,0 +1,135 @@
+{
+  "schema_id": "jee_main_2026_registration",
+  "schema_type": "exam_form",
+  "schema_version": "1.0.0",
+  "status": "active",
+  "metadata": {
+    "display_name": "JEE Main 2026 Registration Form",
+    "short_name": "JEE Main 2026",
+    "conducting_body": "National Testing Agency (NTA)",
+    "official_website": "https://jeemain.nta.nic.in",
+    "category": "engineering_entrance",
+    "applicable_year": 2026,
+    "country": "IN",
+    "language": "en"
+  },
+  "key_dates": {
+    "registration_opens": "2025-11-01",
+    "registration_closes": "2025-12-02",
+    "correction_window_start": "2025-12-04",
+    "correction_window_end": "2025-12-06",
+    "exam_date": "2026-01-22"
+  },
+  "form_sections": [
+    {
+      "section_id": "personal_details",
+      "title": "Personal Details",
+      "order": 1,
+      "fields": [
+        { "field_id": "full_name", "label": "Full Name", "type": "string", "required": true },
+        { "field_id": "date_of_birth", "label": "Date of Birth", "type": "date", "required": true, "validation": { "format": "DD/MM/YYYY" } },
+        { "field_id": "gender", "label": "Gender", "type": "enum", "required": true, "enum_values": ["Male", "Female", "Third Gender"] },
+        { "field_id": "category", "label": "Category", "type": "enum", "required": true, "enum_values": ["General", "OBC-NCL", "SC", "ST", "EWS"] },
+        { "field_id": "pwd_status", "label": "Person with Disability (PwD)", "type": "boolean", "required": true }
+      ]
+    },
+    {
+      "section_id": "contact_details",
+      "title": "Contact Details",
+      "order": 2,
+      "fields": [
+        { "field_id": "mobile_number", "label": "Mobile Number", "type": "string", "required": true, "verification": "OTP", "validation": { "pattern": "^[6-9][0-9]{9}$" } },
+        { "field_id": "email_id", "label": "Email ID", "type": "string", "required": true, "verification": "OTP", "validation": { "format": "email" } },
+        { "field_id": "state_of_eligibility", "label": "State of Eligibility", "type": "string", "required": true }
+      ]
+    },
+    {
+      "section_id": "academic_and_exam",
+      "title": "Academic and Exam Preferences",
+      "order": 3,
+      "fields": [
+        { "field_id": "qualification_status", "label": "Qualification Status", "type": "enum", "required": true, "enum_values": ["Appearing in Class 12", "Passed Class 12"] },
+        { "field_id": "class_12", "label": "Class 12 Details", "type": "object", "required": true, "fields": [
+          { "field_id": "board", "label": "Board", "type": "string", "required": true },
+          { "field_id": "year_of_passing", "label": "Year of Passing", "type": "integer", "required": true },
+          { "field_id": "roll_number", "label": "Roll Number", "type": "string", "required": true }
+        ] },
+        { "field_id": "paper", "label": "Paper", "type": "enum", "required": true, "enum_values": ["Paper 1 (B.E./B.Tech)", "Paper 2A (B.Arch)", "Paper 2B (B.Planning)"] },
+        { "field_id": "exam_centre_city_1", "label": "Exam Centre City 1", "type": "string", "required": true },
+        { "field_id": "exam_centre_city_2", "label": "Exam Centre City 2", "type": "string", "required": false }
+      ]
+    }
+  ],
+  "document_uploads": [
+    {
+      "doc_id": "photograph_passport",
+      "label": "Passport-size Photograph",
+      "allowed_formats": ["JPG", "JPEG"],
+      "size_min_kb": 10,
+      "size_max_kb": 200,
+      "required": true,
+      "required_if": null,
+      "document_category": "photograph",
+      "document_subtype": "Passport Photo"
+    },
+    {
+      "doc_id": "signature",
+      "label": "Signature",
+      "allowed_formats": ["JPG", "JPEG"],
+      "size_min_kb": 4,
+      "size_max_kb": 30,
+      "required": true,
+      "required_if": null,
+      "document_category": "signature",
+      "document_subtype": "Personal Signature"
+    },
+    {
+      "doc_id": "class_10_marksheet",
+      "label": "Class 10 Marksheet",
+      "allowed_formats": ["PDF"],
+      "size_min_kb": 50,
+      "size_max_kb": 300,
+      "required": true,
+      "required_if": null,
+      "document_category": "academic",
+      "document_subtype": "Class 10 Marksheet",
+      "seeds_document_subtypes": ["Class 10 Marksheet"]
+    },
+    {
+      "doc_id": "class_12_marksheet",
+      "label": "Class 12 Marksheet",
+      "allowed_formats": ["PDF"],
+      "size_min_kb": 50,
+      "size_max_kb": 500,
+      "required": false,
+      "required_if": "qualification_status == Passed Class 12",
+      "document_category": "academic",
+      "document_subtype": "Class 12 Marksheet",
+      "seeds_document_subtypes": ["Class 12 Marksheet"]
+    },
+    {
+      "doc_id": "category_certificate",
+      "label": "Category Certificate",
+      "allowed_formats": ["PDF"],
+      "size_min_kb": 50,
+      "size_max_kb": 300,
+      "required": false,
+      "required_if": "pwd_status == true",
+      "document_category": "certificate",
+      "document_subtype": "PwD Certificate",
+      "seeds_document_subtypes": ["PwD Certificate"]
+    }
+  ],
+  "fee_structure": {
+    "currency": "INR",
+    "payment_modes": ["UPI", "Net Banking", "Credit Card", "Debit Card"],
+    "tiers": [
+      { "category": "General", "amount": 1000 },
+      { "category": "OBC-NCL", "amount": 900 },
+      { "category": "SC", "amount": 500 },
+      { "category": "ST", "amount": 500 },
+      { "category": "PwBD", "amount": 0 },
+      { "category": "Third Gender", "amount": 0 }
+    ]
+  }
+}
