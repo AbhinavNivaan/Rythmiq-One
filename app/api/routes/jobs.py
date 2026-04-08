@@ -1191,7 +1191,8 @@ async def submit_feedback(
     job_id_str = str(job_id)
 
     pipeline_snapshot = {
-        "quality_score": meta.get("input_quality_score"),
+        "input_quality_score": meta.get("input_quality_score"),
+        "output_quality_score": meta.get("output_quality_score"),
         "stages_used": meta.get("stages_used"),
         "quad_source": meta.get("quad_source"),
         "tflite_confidence": meta.get("tflite_confidence"),
@@ -1253,7 +1254,8 @@ async def submit_feedback(
         document_subtype=meta.get("document_subtype"),
         category=body.category,
         note=body.note,
-        quality_score=meta.get("input_quality_score"),
+        input_quality_score=meta.get("input_quality_score"),
+        output_quality_score=meta.get("output_quality_score"),
         quad_source=meta.get("quad_source"),
         tflite_confidence=meta.get("tflite_confidence"),
         raw_input_url=raw_signed_url,

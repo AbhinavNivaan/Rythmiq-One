@@ -10,6 +10,8 @@ import json
 import logging
 from datetime import timedelta
 
+import google.auth
+import google.auth.transport.requests
 from google.cloud import storage
 
 logger = logging.getLogger(__name__)
@@ -56,10 +58,19 @@ def generate_signed_url(gcs_uri: str, bucket_name: str) -> str:
     """
     Generate a v4 signed URL for a GCS object. Valid for 4 hours.
 
+    On Cloud Run, Compute Engine credentials carry only a token — no private key —
+    so blob.generate_signed_url() raises AttributeError if called without explicit
+    credentials. We pass service_account_email + access_token so the library uses
+    the IAM signBlob API instead of local key signing.
+
     Args:
         gcs_uri: Full GCS URI (gs://bucket/path) or just the object path.
         bucket_name: The GCS bucket name.
     """
+    credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    auth_request = google.auth.transport.requests.Request()
+    credentials.refresh(auth_request)
+
     client = _get_client()
     blob_name = gcs_uri.removeprefix(f"gs://{bucket_name}/")
     blob = client.bucket(bucket_name).blob(blob_name)
@@ -67,4 +78,6 @@ def generate_signed_url(gcs_uri: str, bucket_name: str) -> str:
         expiration=timedelta(hours=_SIGNED_URL_EXPIRY_HOURS),
         method="GET",
         version="v4",
+        service_account_email=credentials.service_account_email,
+        access_token=credentials.token,
     )

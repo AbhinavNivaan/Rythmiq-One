@@ -20,7 +20,8 @@ def post_feedback_report_alert(
     document_subtype: str | None,
     category: str,
     note: str | None,
-    quality_score: float | None,
+    input_quality_score: float | None,
+    output_quality_score: float | None,
     quad_source: str | None,
     tflite_confidence: float | None,
     raw_input_url: str | None,
@@ -46,8 +47,10 @@ def post_feedback_report_alert(
 
     lines.append("")
     lines.append("*Pipeline:*")
-    if quality_score is not None:
-        lines.append(f"• Quality score: {quality_score:.2f}")
+    if input_quality_score is not None:
+        lines.append(f"• Quality (before): {input_quality_score:.2f}")
+    if output_quality_score is not None:
+        lines.append(f"• Quality (after):  {output_quality_score:.2f}")
     if quad_source:
         lines.append(f"• Quad source: {quad_source}")
     if tflite_confidence is not None:
@@ -62,7 +65,7 @@ def post_feedback_report_alert(
     try:
         response = requests.post(
             webhook_url,
-            json={"text": "\n".join(lines)},
+            json={"text": "\n".join(lines), "unfurl_links": False, "unfurl_media": False},
             timeout=5,
         )
         response.raise_for_status()
