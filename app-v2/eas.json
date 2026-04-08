@@ -1,6 +1,7 @@
 {
   "cli": {
-    "version": ">= 5.0.0"
+    "version": ">= 5.0.0",
+    "appVersionSource": "remote"
   },
   "build": {
     "development": {
@@ -8,7 +9,9 @@
       "distribution": "internal",
       "env": {
         "ENVIRONMENT": "development",
-        "API_BASE_URL": "http://localhost:8000"
+        "EXPO_PUBLIC_API_URL": "http://localhost:8000",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://qpixafvazayfjamgywbb.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFwaXhhZnZhemF5ZmphbWd5d2JiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwMTU3MzQsImV4cCI6MjA4NDU5MTczNH0.XfDnpaH2UwtAmDNcSByjaA3mMsmxOMLO_soRKxC7GEI"
       }
     },
     "preview": {
@@ -16,7 +19,9 @@
       "channel": "preview",
       "env": {
         "ENVIRONMENT": "staging",
-        "API_BASE_URL": "https://staging-api.rythmiq.app"
+        "EXPO_PUBLIC_API_URL": "https://rythmiq-api-7m5pvfko3q-el.a.run.app",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://qpixafvazayfjamgywbb.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFwaXhhZnZhemF5ZmphbWd5d2JiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwMTU3MzQsImV4cCI6MjA4NDU5MTczNH0.XfDnpaH2UwtAmDNcSByjaA3mMsmxOMLO_soRKxC7GEI"
       }
     },
     "production": {
@@ -24,7 +29,9 @@
       "autoIncrement": true,
       "env": {
         "ENVIRONMENT": "production",
-        "API_BASE_URL": "https://api.rythmiq.app"
+        "EXPO_PUBLIC_API_URL": "https://rythmiq-api-7m5pvfko3q-el.a.run.app",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://qpixafvazayfjamgywbb.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFwaXhhZnZhemF5ZmphbWd5d2JiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwMTU3MzQsImV4cCI6MjA4NDU5MTczNH0.XfDnpaH2UwtAmDNcSByjaA3mMsmxOMLO_soRKxC7GEI"
       }
     }
   },

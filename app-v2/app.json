@@ -34,7 +34,8 @@
         "android.permission.CAMERA",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.USE_BIOMETRIC",
-        "android.permission.USE_FINGERPRINT"
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {
@@ -66,14 +67,16 @@
       "enableBiometric": true,
       "enableOffline": false,
       "eas": {
-        "projectId": "your-eas-project-id"
-      }
+        "projectId": "301becf5-f140-4a36-aabb-1895ac081d76"
+      },
+      "router": {}
     },
     "updates": {
-      "url": "https://u.expo.dev/your-project-id"
+      "url": "https://u.expo.dev/301becf5-f140-4a36-aabb-1895ac081d76"
     },
     "runtimeVersion": {
       "policy": "appVersion"
-    }
+    },
+    "owner": "abhinav-nivaan"
   }
 }

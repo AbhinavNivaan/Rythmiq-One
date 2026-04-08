@@ -76,11 +76,9 @@ const config: AppConfig = {
   buildNumber: extra.buildNumber || '1',
 };
 
-// Environment-specific overrides
-if (environment === 'production') {
-  config.apiBaseUrl = 'https://api.rythmiq.app';
-} else if (environment === 'staging') {
-  config.apiBaseUrl = 'https://staging-api.rythmiq.app';
+// Environment-specific overrides — prefer EXPO_PUBLIC_API_URL baked in at build time
+if (process.env.EXPO_PUBLIC_API_URL) {
+  config.apiBaseUrl = process.env.EXPO_PUBLIC_API_URL;
 }
 
 // Validate required config
