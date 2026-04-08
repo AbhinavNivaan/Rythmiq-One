@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, Animated, Keyboard, ScrollView, ActivityIndicator } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, Animated, Keyboard, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Bell, Search, Mic, User, CheckCircle, Clock, XCircle, FileText } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
@@ -179,7 +179,8 @@ export default function Dashboard() {
                         title="Custom Export"
                         description="Define your rules"
                         icon={CustomExportIcon}
-                        onPress={() => console.log('Custom Export')}
+                        disabled
+                        onPress={() => Alert.alert('Coming Soon', 'Custom Export is currently being worked on and will be available in a future update.')}
                     />
                 </View>
                 <View style={styles.row}>
@@ -193,7 +194,8 @@ export default function Dashboard() {
                         title="Concierge"
                         description="We apply for you"
                         icon={RythmiqLogoIcon}
-                        onPress={() => console.log('Concierge')}
+                        disabled
+                        onPress={() => Alert.alert('Coming Soon', 'Concierge is currently being worked on and will be available in a future update.')}
                     />
                 </View>
             </View>
