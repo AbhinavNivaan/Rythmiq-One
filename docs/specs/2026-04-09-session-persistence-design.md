@@ -63,6 +63,10 @@ createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
 - `getAuthToken()` → `(await supabase.auth.getSession()).data.session?.access_token ?? null`
 - `clearAuthTokens()` → `supabase.auth.signOut({ scope: 'local' })` — clears local session only, no network call; global invalidation is handled by `authApi.logout()` calling the backend
 
+#### 401 retry in `apiRequest()`
+
+`apiRequest()` currently calls `tryRefreshToken()` on 401 to retry once with a fresh token. `tryRefreshToken()` is being removed. The 401 retry path is updated to call `supabase.auth.refreshSession()` directly instead. With `autoRefreshToken: true` on the Supabase client, proactive refreshes happen before expiry — the 401 retry becomes a last-resort safety net only.
+
 The web platform path (localStorage / in-memory fallback) is preserved as-is — the adapter only applies on native.
 
 #### Session hydration after email/password login
@@ -84,6 +88,8 @@ This stores the tokens via the SecureStore adapter and sets the in-memory sessio
 
 **Action:** Remove the auth-related functions from `security.ts` (`storeAuthTokens`, `getAuthToken`, `getRefreshToken`, `clearAuthTokens`, `isSessionValid`, `updateLastActivity`, `getSessionTimeRemaining`, `SESSION_EXPIRY` key, `SESSION_TIMEOUT_MS`). Retain everything else in `security.ts`: `secureStore`, `secureRetrieve`, `secureDelete`, the crypto utilities, and `BIOMETRIC_ENABLED` storage (needed for future biometric feature).
 
+`app-v2/hooks/useSessionTimeout.ts` imports `isSessionValid`, `updateLastActivity`, `getSessionTimeRemaining`, `clearAuthTokens`, and `SESSION_TIMEOUT_MS` from `security.ts`. Nothing in the codebase imports `useSessionTimeout` — it is dead code. Remove it entirely alongside the `security.ts` auth functions to avoid a build break.
+
 ---
 
 ### Layer 2 — AuthContext (reactive, event-driven)
@@ -98,7 +104,7 @@ Replace the `useEffect` + `refreshSession()` mount pattern with a `supabase.auth
 3. Subsequent events (`SIGNED_IN`, `SIGNED_OUT`, `TOKEN_REFRESHED`, etc.) update state automatically.
 4. On unmount: unsubscribe.
 
-**Auth methods** (`login`, `signup`, `loginWithGoogle`, `loginWithApple`, `logout`) trigger Supabase operations and call `supabase.auth.setSession()` where needed (email/password path — see Layer 1). Manual `setUser` / `setIsAuthenticated` calls after each operation are removed — `onAuthStateChange` handles state propagation automatically.
+**Auth methods** (`login`, `signup`, `loginWithGoogle`, `loginWithApple`, `logout`) trigger Supabase operations. Manual `setUser` / `setIsAuthenticated` calls after each operation are removed — `onAuthStateChange` handles state propagation automatically. `setSession()` is NOT called from `AuthContext` — it is called inside `api.ts`'s `authApi.login/signup` (Layer 1 only). Single authority.
 
 **`refreshSession()`** is kept on the public interface but its body becomes `supabase.auth.getSession()` — a no-op since Supabase auto-refreshes.
 
@@ -174,9 +180,10 @@ The `(tabs)/_layout.tsx` guard does not change. Only `useSessionGate` changes in
 
 | File | Change |
 |---|---|
-| `app-v2/services/api.ts` | Add `ExpoSecureStoreAdapter`; replace manual token functions; update Supabase client init; add `setSession()` call after email/password login |
+| `app-v2/services/api.ts` | Add `ExpoSecureStoreAdapter`; replace manual token functions; update Supabase client init; add `setSession()` after email/password login; update 401 retry to use `supabase.auth.refreshSession()` |
 | `app-v2/services/security.ts` | Remove auth-related functions (see Layer 1); retain crypto utilities and biometric flag storage |
-| `app-v2/contexts/AuthContext.tsx` | Replace mount logic with `onAuthStateChange` subscription; add `setSession()` call in login/signup; simplify auth methods |
+| `app-v2/hooks/useSessionTimeout.ts` | **Delete** — dead code; imports the security.ts auth functions being removed |
+| `app-v2/contexts/AuthContext.tsx` | Replace mount logic with `onAuthStateChange` subscription; simplify auth methods; remove manual setUser/setIsAuthenticated calls |
 | `app-v2/app/_layout.tsx` | Tie `SplashScreen.hideAsync()` to both fonts loaded AND auth resolved |
 | `app-v2/app/index.tsx` | Replace `<Redirect>` with session gate logic + onboarding migration |
 | `app-v2/app/onboarding.tsx` | Write `onboarding_seen` flag to SecureStore on "Get Started" |
@@ -189,7 +196,8 @@ The `(tabs)/_layout.tsx` guard does not change. Only `useSessionGate` changes in
 ## Error Handling
 
 - If SecureStore read fails inside the adapter, return `null` (treats as no session → login).
-- `INITIAL_SESSION` fires from local storage synchronously in milliseconds — a timeout fallback is not needed. If for any reason `INITIAL_SESSION` never fires, `isLoading` stays true permanently and the splash never hides. This is the correct fail-safe: a stuck splash is recoverable (user can force-quit), while a forced login destroys a valid session.
+- `INITIAL_SESSION` fires from local SecureStore in milliseconds — it does not wait for a network round-trip. In practice, auth resolves before the splash would be visible.
+- If `INITIAL_SESSION` never fires (pathological SDK or storage failure): after 10 seconds, `isLoading` is forced false and a graceful error view is rendered ("Something went wrong — tap to restart") instead of routing to login. This preserves session integrity (no forced sign-out), gives the user a recovery action, and is operationally visible. It does NOT route to login — that would destroy a potentially valid session.
 - Session expiry with no refresh token: Supabase fires `SIGNED_OUT`, `isAuthenticated` becomes false, layout guard catches it and redirects to login.
 - `clearAuthTokens()` uses `{ scope: 'local' }` — guaranteed to clear local session even if offline or if the backend call in `authApi.logout()` fails.
 
@@ -197,7 +205,7 @@ The `(tabs)/_layout.tsx` guard does not change. Only `useSessionGate` changes in
 
 ## What Is Not Changed
 
-- All API request logic in `apiRequest()` — only `getAuthToken()` changes internally.
+- `apiRequest()` structure is unchanged except the 401 retry: `tryRefreshToken()` call is replaced with `supabase.auth.refreshSession()`. All other request logic is untouched.
 - The `authApi` object and all its methods — same signatures, same call sites.
 - OAuth flow (`loginWithGoogle`, `loginWithApple`) — same WebBrowser flow, same callback handling.
 - Web platform storage fallback (localStorage / in-memory).
