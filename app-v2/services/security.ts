@@ -36,16 +36,9 @@ const SECURE_STORE_OPTIONS = {
 };
 
 const STORAGE_KEYS = {
-  AUTH_TOKEN: 'rythmiq_auth_token',
-  REFRESH_TOKEN: 'rythmiq_refresh_token',
   MASTER_KEY_HASH: 'rythmiq_master_key_hash',
-  SESSION_EXPIRY: 'rythmiq_session_expiry',
   BIOMETRIC_ENABLED: 'rythmiq_biometric_enabled',
-  LAST_ACTIVITY: 'rythmiq_last_activity',
 } as const;
-
-// Session timeout in milliseconds (30 minutes)
-const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 
 /**
  * Securely store a value
@@ -83,93 +76,6 @@ export async function secureDelete(key: string): Promise<boolean> {
     console.error('SecureStore delete error:', error);
     return false;
   }
-}
-
-/**
- * Store auth tokens securely
- */
-export async function storeAuthTokens(
-  accessToken: string,
-  refreshToken?: string
-): Promise<boolean> {
-  const accessStored = await secureStore(STORAGE_KEYS.AUTH_TOKEN, accessToken);
-  
-  if (refreshToken) {
-    await secureStore(STORAGE_KEYS.REFRESH_TOKEN, refreshToken);
-  }
-  
-  // Set session expiry
-  const expiry = Date.now() + SESSION_TIMEOUT_MS;
-  await secureStore(STORAGE_KEYS.SESSION_EXPIRY, expiry.toString());
-  
-  // Update last activity
-  await updateLastActivity();
-  
-  return accessStored;
-}
-
-/**
- * Get stored auth token
- */
-export async function getAuthToken(): Promise<string | null> {
-  // Check if session expired
-  const isValid = await isSessionValid();
-  if (!isValid) {
-    await clearAuthTokens();
-    return null;
-  }
-  
-  return await secureRetrieve(STORAGE_KEYS.AUTH_TOKEN);
-}
-
-/**
- * Get stored refresh token
- */
-export async function getRefreshToken(): Promise<string | null> {
-  return await secureRetrieve(STORAGE_KEYS.REFRESH_TOKEN);
-}
-
-/**
- * Clear all auth tokens
- */
-export async function clearAuthTokens(): Promise<void> {
-  await Promise.all([
-    secureDelete(STORAGE_KEYS.AUTH_TOKEN),
-    secureDelete(STORAGE_KEYS.REFRESH_TOKEN),
-    secureDelete(STORAGE_KEYS.SESSION_EXPIRY),
-  ]);
-}
-
-/**
- * Check if session is still valid
- */
-export async function isSessionValid(): Promise<boolean> {
-  const expiryStr = await secureRetrieve(STORAGE_KEYS.SESSION_EXPIRY);
-  if (!expiryStr) return false;
-  
-  const expiry = parseInt(expiryStr, 10);
-  return Date.now() < expiry;
-}
-
-/**
- * Update last activity timestamp (extends session)
- */
-export async function updateLastActivity(): Promise<void> {
-  const newExpiry = Date.now() + SESSION_TIMEOUT_MS;
-  await secureStore(STORAGE_KEYS.SESSION_EXPIRY, newExpiry.toString());
-  await secureStore(STORAGE_KEYS.LAST_ACTIVITY, Date.now().toString());
-}
-
-/**
- * Get time until session expires (in seconds)
- */
-export async function getSessionTimeRemaining(): Promise<number> {
-  const expiryStr = await secureRetrieve(STORAGE_KEYS.SESSION_EXPIRY);
-  if (!expiryStr) return 0;
-  
-  const expiry = parseInt(expiryStr, 10);
-  const remaining = Math.max(0, expiry - Date.now());
-  return Math.floor(remaining / 1000);
 }
 
 /**
@@ -269,4 +175,4 @@ export async function verifyFileIntegrity(
 }
 
 // Export storage keys for external use
-export { STORAGE_KEYS, SESSION_TIMEOUT_MS };
+export { STORAGE_KEYS };
