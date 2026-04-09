@@ -251,8 +251,10 @@ export class ApiError extends Error {
  * Get stored auth token
  */
 export async function getAuthToken(): Promise<string | null> {
+  if (!supabase) return null;
   try {
-    return await getStoredValue(AUTH_TOKEN_KEY);
+    const { data } = await supabase.auth.getSession();
+    return data.session?.access_token ?? null;
   } catch {
     return null;
   }

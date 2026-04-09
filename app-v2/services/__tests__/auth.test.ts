@@ -4,7 +4,7 @@ import * as SecureStore from 'expo-secure-store';
 const { __mockAuth } = require('@supabase/supabase-js');
 
 // Import after mocks are set up
-import { ExpoSecureStoreAdapter } from '../api';
+import { ExpoSecureStoreAdapter, getAuthToken } from '../api';
 
 beforeEach(() => jest.clearAllMocks());
 
@@ -34,5 +34,29 @@ describe('ExpoSecureStoreAdapter', () => {
     (SecureStore.deleteItemAsync as jest.Mock).mockResolvedValueOnce(undefined);
     await ExpoSecureStoreAdapter.removeItem('my-key');
     expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('my-key');
+  });
+});
+
+// ─── getAuthToken ─────────────────────────────────────────────────────────────
+
+describe('getAuthToken', () => {
+  it('returns access_token from active session', async () => {
+    __mockAuth.getSession.mockResolvedValueOnce({
+      data: { session: { access_token: 'access-abc' } },
+    });
+    const token = await getAuthToken();
+    expect(token).toBe('access-abc');
+  });
+
+  it('returns null when session is null', async () => {
+    __mockAuth.getSession.mockResolvedValueOnce({ data: { session: null } });
+    const token = await getAuthToken();
+    expect(token).toBeNull();
+  });
+
+  it('returns null when getSession throws', async () => {
+    __mockAuth.getSession.mockRejectedValueOnce(new Error('storage error'));
+    const token = await getAuthToken();
+    expect(token).toBeNull();
   });
 });
