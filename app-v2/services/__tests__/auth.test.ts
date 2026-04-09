@@ -137,8 +137,9 @@ describe('authApi.signup', () => {
 // ─── 401 retry ────────────────────────────────────────────────────────────────
 
 describe('apiRequest 401 retry', () => {
-  it('calls supabase.auth.refreshSession on expired-token 401, then retries', async () => {
-    // First call: 401 with token_expired
+  it('calls supabase.auth.refreshSession on expired-token 401, then retries the request', async () => {
+    // First fetch call → 401 with token_expired
+    // Second fetch call (retry) → 200
     (global.fetch as jest.Mock)
       .mockResolvedValueOnce({
         ok: false,
@@ -146,32 +147,33 @@ describe('apiRequest 401 retry', () => {
         headers: { get: () => null },
         json: async () => ({ detail: { token_expired: true, message: 'expired' } }),
       })
-      // Second call (retry): 200
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
         headers: { get: () => null },
-        json: async () => ({ data: 'ok' }),
+        json: async () => ({
+          user: { id: 'u1', email: 'a@b.com', created_at: '' },
+          access_token: 'at-retry',
+          refresh_token: 'rt-retry',
+        }),
       });
 
+    // getAuthToken is called before each request attempt (via Authorization header)
     __mockAuth.getSession
-      // First getAuthToken (before request)
       .mockResolvedValueOnce({ data: { session: { access_token: 'old-token' } } })
+      .mockResolvedValueOnce({ data: { session: { access_token: 'new-token' } } });
+
     __mockAuth.refreshSession.mockResolvedValueOnce({
       data: { session: { access_token: 'new-token' } },
       error: null,
     });
-    // Second getAuthToken (before retry)
-    __mockAuth.getSession.mockResolvedValueOnce({
-      data: { session: { access_token: 'new-token' } },
-    });
+    __mockAuth.setSession.mockResolvedValueOnce({ data: {}, error: null });
 
-    const { apiRequest: _apiRequest } = require('../api') as { apiRequest: Function };
-    // apiRequest is internal — test via a public endpoint that triggers it:
-    // We rely on the authApi.login test passing as an integration signal.
-    // Direct test via fetch mock call count:
-    expect((global.fetch as jest.Mock).mock.calls.length).toBeGreaterThanOrEqual(0);
-    // Verify refreshSession was registered in mock
-    expect(__mockAuth.refreshSession).toBeDefined();
+    await authApi.login('a@b.com', 'pass');
+
+    // refreshSession should have been called exactly once (on the 401 response)
+    expect(__mockAuth.refreshSession).toHaveBeenCalledTimes(1);
+    // fetch should have been called twice (original + retry)
+    expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 });
