@@ -45,65 +45,7 @@ const DEV_SANDBOX_MODE = process.env.EXPO_PUBLIC_DEV_SANDBOX === 'true';
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
-// Token storage keys
-const AUTH_TOKEN_KEY = 'rythmiq_auth_token';
-const REFRESH_TOKEN_KEY = 'rythmiq_refresh_token';
 const OAUTH_TIMEOUT_MS = 120000;
-const webMemoryStorage = new Map<string, string>();
-
-function isWebStorageAvailable(): boolean {
-  return Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
-}
-
-async function setStoredValue(key: string, value: string): Promise<void> {
-  if (Platform.OS === 'web') {
-    try {
-      if (isWebStorageAvailable()) {
-        window.localStorage.setItem(key, value);
-      } else {
-        webMemoryStorage.set(key, value);
-      }
-    } catch {
-      webMemoryStorage.set(key, value);
-    }
-    return;
-  }
-
-  await SecureStore.setItemAsync(key, value);
-}
-
-async function getStoredValue(key: string): Promise<string | null> {
-  if (Platform.OS === 'web') {
-    try {
-      if (isWebStorageAvailable()) {
-        return window.localStorage.getItem(key);
-      }
-    } catch {
-      return webMemoryStorage.get(key) ?? null;
-    }
-
-    return webMemoryStorage.get(key) ?? null;
-  }
-
-  return SecureStore.getItemAsync(key);
-}
-
-async function deleteStoredValue(key: string): Promise<void> {
-  if (Platform.OS === 'web') {
-    try {
-      if (isWebStorageAvailable()) {
-        window.localStorage.removeItem(key);
-      }
-    } catch {
-      webMemoryStorage.delete(key);
-    }
-
-    webMemoryStorage.delete(key);
-    return;
-  }
-
-  await SecureStore.deleteItemAsync(key);
-}
 
 function getOAuthRedirectUri(): string {
   return makeRedirectUri({
@@ -215,16 +157,6 @@ function ensureSupabaseClient() {
   return supabase;
 }
 
-async function storeAuthTokens(accessToken: string, refreshToken?: string | null): Promise<void> {
-  if (accessToken) {
-    await setAuthToken(accessToken);
-  }
-
-  if (refreshToken) {
-    await setStoredValue(REFRESH_TOKEN_KEY, refreshToken);
-  }
-}
-
 /**
  * Check if running in dev sandbox mode
  */
@@ -261,13 +193,6 @@ export async function getAuthToken(): Promise<string | null> {
 }
 
 /**
- * Store auth token securely
- */
-export async function setAuthToken(token: string): Promise<void> {
-  await setStoredValue(AUTH_TOKEN_KEY, token);
-}
-
-/**
  * Clear auth tokens (logout)
  */
 export async function clearAuthTokens(): Promise<void> {
@@ -275,28 +200,6 @@ export async function clearAuthTokens(): Promise<void> {
   // scope: 'local' — clears local session without a network call.
   // Works offline and does not invalidate other devices.
   await supabase.auth.signOut({ scope: 'local' });
-}
-
-/**
- * Attempt to refresh the Supabase session using the stored refresh token.
- * Returns the new access token, or null if refresh failed.
- */
-async function tryRefreshToken(): Promise<string | null> {
-  const client = supabase;
-  if (!client) return null;
-
-  const refreshToken = await getStoredValue(REFRESH_TOKEN_KEY);
-  if (!refreshToken) return null;
-
-  try {
-    const { data, error } = await client.auth.refreshSession({ refresh_token: refreshToken });
-    if (error || !data.session) return null;
-
-    await storeAuthTokens(data.session.access_token, data.session.refresh_token);
-    return data.session.access_token;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -352,15 +255,15 @@ async function apiRequest<T>(
   }
 
   // Auto-refresh on 401 (expired token) — retry once
-  if (response.status === 401 && !_isRetry && !DEV_SANDBOX_MODE) {
+  if (response.status === 401 && !_isRetry && !DEV_SANDBOX_MODE && supabase) {
     const detail = (data.detail && typeof data.detail === 'object') ? data.detail : data;
     const isExpired = detail.token_expired === true
       || (detail.message || '').toLowerCase().includes('expired')
       || (detail.message || '').toLowerCase().includes('invalid token');
 
     if (isExpired) {
-      const newToken = await tryRefreshToken();
-      if (newToken) {
+      const { data: refreshData, error } = await supabase.auth.refreshSession();
+      if (!error && refreshData.session) {
         return apiRequest<T>(endpoint, options, true);
       }
     }
@@ -461,10 +364,10 @@ export const authApi = {
           const sessionUser = existingSessionData.session.user;
 
           if (sessionUser) {
-            await storeAuthTokens(
-              existingSessionData.session.access_token,
-              existingSessionData.session.refresh_token
-            );
+            await client.auth.setSession({
+              access_token: existingSessionData.session.access_token,
+              refresh_token: existingSessionData.session.refresh_token,
+            });
             return toAuthResponse(existingSessionData.session, sessionUser);
           }
 
@@ -473,10 +376,10 @@ export const authApi = {
           );
 
           if (!existingUserError && existingUserData.user) {
-            await storeAuthTokens(
-              existingSessionData.session.access_token,
-              existingSessionData.session.refresh_token
-            );
+            await client.auth.setSession({
+              access_token: existingSessionData.session.access_token,
+              refresh_token: existingSessionData.session.refresh_token,
+            });
             return toAuthResponse(existingSessionData.session, existingUserData.user);
           }
         }
@@ -569,7 +472,10 @@ export const authApi = {
         throw new ApiError(401, 'OAUTH_EXCHANGE_FAILED', exchangeError?.message || 'Could not complete social sign-in.');
       }
 
-      await storeAuthTokens(sessionData.session.access_token, sessionData.session.refresh_token);
+      await client.auth.setSession({
+        access_token: sessionData.session.access_token,
+        refresh_token: sessionData.session.refresh_token,
+      });
       return toAuthResponse(sessionData.session, sessionData.user);
     }
 
@@ -583,7 +489,10 @@ export const authApi = {
         throw new ApiError(401, 'OAUTH_SET_SESSION_FAILED', setSessionError?.message || 'Could not establish social sign-in session.');
       }
 
-      await storeAuthTokens(sessionData.session.access_token, sessionData.session.refresh_token);
+      await client.auth.setSession({
+        access_token: sessionData.session.access_token,
+        refresh_token: sessionData.session.refresh_token,
+      });
       return toAuthResponse(sessionData.session, sessionData.user);
     }
 
