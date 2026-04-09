@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -14,7 +14,7 @@ import Svg, { Circle, Rect, Line, Path } from 'react-native-svg';
 
 const { width, height } = Dimensions.get('window');
 const CARD_W = width - 48;
-const CARD_H = Math.min(height * 0.58, 490);
+const CARD_H = Math.min(height * 0.48, 400);
 const CARD_BG = '#0E1020';
 const MAYA_BLUE = '#89C7FE';
 const INK_BLACK = '#070712';
@@ -238,7 +238,17 @@ const slides: Slide[] = [
 
 export default function OnboardingScreen() {
   const router = useRouter();
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const flatListRef = useRef<any>(null);
   const scrollX = useRef(new Animated.Value(0)).current;
+
+  const handleButton = () => {
+    if (currentIndex < slides.length - 1) {
+      flatListRef.current?.scrollToIndex({ index: currentIndex + 1, animated: true });
+    } else {
+      router.replace('/(auth)/login');
+    }
+  };
 
   const renderSlide = ({ item }: { item: Slide }) => (
     <View style={styles.slide}>
@@ -277,6 +287,7 @@ export default function OnboardingScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <Animated.FlatList
+        ref={flatListRef}
         data={slides}
         renderItem={renderSlide}
         keyExtractor={(item) => item.id}
@@ -288,6 +299,9 @@ export default function OnboardingScreen() {
           [{ nativeEvent: { contentOffset: { x: scrollX } } }],
           { useNativeDriver: false }
         )}
+        onMomentumScrollEnd={(e) => {
+          setCurrentIndex(Math.round(e.nativeEvent.contentOffset.x / width));
+        }}
         scrollEventThrottle={16}
         style={styles.flatList}
       />
@@ -295,10 +309,12 @@ export default function OnboardingScreen() {
       <View style={styles.buttonContainer}>
         <TouchableOpacity
           style={styles.button}
-          onPress={() => router.replace('/(auth)/login')}
+          onPress={handleButton}
           activeOpacity={0.8}
         >
-          <Text style={styles.buttonText}>Get Started</Text>
+          <Text style={styles.buttonText}>
+            {currentIndex === slides.length - 1 ? 'Get Started' : 'Next'}
+          </Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
