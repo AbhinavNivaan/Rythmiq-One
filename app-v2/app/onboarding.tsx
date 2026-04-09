@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import * as SecureStore from 'expo-secure-store';
 import Svg, { Circle, Rect, Line, Path } from 'react-native-svg';
 
 const { width, height } = Dimensions.get('window');
@@ -370,10 +371,11 @@ export default function OnboardingScreen() {
   const flatListRef = useRef<any>(null);
   const scrollX = useRef(new Animated.Value(0)).current;
 
-  const handleButton = () => {
+  const handleButton = async () => {
     if (currentIndex < slides.length - 1) {
       flatListRef.current?.scrollToIndex({ index: currentIndex + 1, animated: true });
     } else {
+      await SecureStore.setItemAsync('rythmiq_onboarding_seen', 'true');
       router.replace('/(auth)/login');
     }
   };
