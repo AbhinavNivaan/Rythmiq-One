@@ -81,3 +81,55 @@ describe('clearAuthTokens', () => {
     await expect(clearAuthTokens()).resolves.not.toThrow();
   });
 });
+
+// ─── authApi session hydration ────────────────────────────────────────────────
+
+import { authApi } from '../api';
+
+global.fetch = jest.fn();
+
+describe('authApi.login', () => {
+  it('calls supabase.auth.setSession with tokens from backend response', async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => ({
+        user: { id: 'u1', email: 'a@b.com', created_at: '' },
+        access_token: 'at1',
+        refresh_token: 'rt1',
+      }),
+    });
+    __mockAuth.setSession.mockResolvedValueOnce({ data: {}, error: null });
+
+    await authApi.login('a@b.com', 'pass');
+
+    expect(__mockAuth.setSession).toHaveBeenCalledWith({
+      access_token: 'at1',
+      refresh_token: 'rt1',
+    });
+  });
+});
+
+describe('authApi.signup', () => {
+  it('calls supabase.auth.setSession with tokens from backend response', async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => ({
+        user: { id: 'u2', email: 'c@d.com', created_at: '' },
+        access_token: 'at2',
+        refresh_token: 'rt2',
+      }),
+    });
+    __mockAuth.setSession.mockResolvedValueOnce({ data: {}, error: null });
+
+    await authApi.signup('c@d.com', 'pass');
+
+    expect(__mockAuth.setSession).toHaveBeenCalledWith({
+      access_token: 'at2',
+      refresh_token: 'rt2',
+    });
+  });
+});

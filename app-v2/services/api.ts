@@ -415,11 +415,16 @@ export const authApi = {
       body: JSON.stringify({ email, password, name }),
     });
 
-    await storeAuthTokens(response.access_token, response.refresh_token);
-    
+    if (supabase && response.access_token) {
+      await supabase.auth.setSession({
+        access_token: response.access_token,
+        refresh_token: response.refresh_token,
+      });
+    }
+
     return response;
   },
-  
+
   /**
    * Login with email and password
    */
@@ -429,8 +434,13 @@ export const authApi = {
       body: JSON.stringify({ email, password }),
     });
 
-    await storeAuthTokens(response.access_token, response.refresh_token);
-    
+    if (supabase) {
+      await supabase.auth.setSession({
+        access_token: response.access_token,
+        refresh_token: response.refresh_token,
+      });
+    }
+
     return response;
   },
 
