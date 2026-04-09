@@ -1,3 +1,7 @@
+// Set env vars before module load so supabase client is not null in tests
+process.env.EXPO_PUBLIC_SUPABASE_URL = 'https://test.supabase.co';
+process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = 'test-anon-key';
+
 import * as SecureStore from 'expo-secure-store';
 
 // __mockAuth is used by getAuthToken, clearAuthTokens, authApi, and 401 retry tests below.
