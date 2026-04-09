@@ -14,13 +14,14 @@ import * as SecureStore from 'expo-secure-store';
 import * as WebBrowser from 'expo-web-browser';
 import { makeRedirectUri } from 'expo-auth-session';
 import { createClient } from '@supabase/supabase-js';
+import type { SupportedStorage } from '@supabase/auth-js';
 import { Platform } from 'react-native';
 
 WebBrowser.maybeCompleteAuthSession();
 
 // SecureStore-backed adapter for Supabase native session storage.
 // Errors in getItem return null (treated as no session → login).
-export const ExpoSecureStoreAdapter = {
+export const ExpoSecureStoreAdapter: SupportedStorage = {
   async getItem(key: string): Promise<string | null> {
     try {
       return await SecureStore.getItemAsync(key);

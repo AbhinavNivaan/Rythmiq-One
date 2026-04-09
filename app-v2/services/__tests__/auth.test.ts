@@ -1,5 +1,6 @@
 import * as SecureStore from 'expo-secure-store';
 
+// __mockAuth is used by getAuthToken, clearAuthTokens, authApi, and 401 retry tests below.
 const { __mockAuth } = require('@supabase/supabase-js');
 
 // Import after mocks are set up
