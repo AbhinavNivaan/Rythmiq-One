@@ -18,6 +18,24 @@ import { Platform } from 'react-native';
 
 WebBrowser.maybeCompleteAuthSession();
 
+// SecureStore-backed adapter for Supabase native session storage.
+// Errors in getItem return null (treated as no session → login).
+export const ExpoSecureStoreAdapter = {
+  async getItem(key: string): Promise<string | null> {
+    try {
+      return await SecureStore.getItemAsync(key);
+    } catch {
+      return null;
+    }
+  },
+  async setItem(key: string, value: string): Promise<void> {
+    await SecureStore.setItemAsync(key, value);
+  },
+  async removeItem(key: string): Promise<void> {
+    await SecureStore.deleteItemAsync(key);
+  },
+};
+
 // API Configuration
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -138,8 +156,17 @@ export function getCurrentOAuthRedirectUri(): string {
 }
 
 const supabase = SUPABASE_URL && SUPABASE_ANON_KEY
-  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: {
+        storage: Platform.OS !== 'web' ? ExpoSecureStoreAdapter : undefined,
+        autoRefreshToken: true,
+        persistSession: true,
+        detectSessionInUrl: false,
+      },
+    })
   : null;
+
+export { supabase };
 
 type OAuthProvider = 'google' | 'apple';
 
