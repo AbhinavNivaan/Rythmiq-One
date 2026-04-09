@@ -512,11 +512,9 @@ export const authApi = {
    * Logout current session
    */
   async logout(): Promise<void> {
-    try {
-      await apiRequest('/auth/logout', { method: 'POST' });
-    } finally {
-      await clearAuthTokens();
-    }
+    // Network call only — local session clear is handled by AuthContext.logout()
+    // via clearAuthTokens() in its finally block, ensuring it always runs.
+    await apiRequest('/auth/logout', { method: 'POST' });
   },
 
   /**
