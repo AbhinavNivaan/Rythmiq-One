@@ -1,11 +1,12 @@
 /**
  * Authentication Context Provider
- * 
- * Manages global authentication state and provides auth methods.
+ *
+ * Uses supabase.auth.onAuthStateChange for reactive, event-driven auth state.
+ * INITIAL_SESSION fires from local SecureStore in milliseconds on startup.
  */
 
-import React, { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react';
-import { authApi, getAuthToken, clearAuthTokens } from '../services/api';
+import React, { createContext, useContext, useEffect, useRef, useState, useCallback, ReactNode } from 'react';
+import { authApi, clearAuthTokens, supabase } from '../services/api';
 import type { User, AuthState } from '../types';
 
 interface AuthContextType extends AuthState {
@@ -27,104 +28,90 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-
-  /**
-   * Check existing session on mount
-   */
-  const refreshSession = useCallback(async () => {
-    try {
-      const token = await getAuthToken();
-      if (!token) {
-        setUser(null);
-        setIsAuthenticated(false);
-        return;
-      }
-
-      const session = await authApi.getSession();
-      if (session.user_id) {
-        setUser({
-          id: session.user_id,
-          email: session.email ?? '',
-          name: session.name ?? undefined,
-          created_at: '',
-        });
-        setIsAuthenticated(true);
-      } else {
-        await clearAuthTokens();
-        setUser(null);
-        setIsAuthenticated(false);
-      }
-    } catch (error) {
-      console.error('Session refresh failed:', error);
-      await clearAuthTokens();
-      setUser(null);
-      setIsAuthenticated(false);
-    }
-  }, []);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const init = async () => {
-      setIsLoading(true);
-      await refreshSession();
+    if (!supabase) {
       setIsLoading(false);
-    };
-    init();
-  }, [refreshSession]);
-
-  /**
-   * Login with email and password
-   */
-  const login = useCallback(async (email: string, password: string) => {
-    const response = await authApi.login(email, password);
-    setUser(response.user);
-    setIsAuthenticated(true);
-  }, []);
-
-  /**
-   * Sign up with email and password
-   */
-  const signup = useCallback(async (email: string, password: string, name?: string) => {
-    const response = await authApi.signup(email, password, name);
-
-    if (!response.access_token) {
-      setUser(null);
-      setIsAuthenticated(false);
-      throw new Error('Account created. Please check your email and verify your account before signing in.');
+      return;
     }
 
-    setUser(response.user);
-    setIsAuthenticated(true);
+    // Fallback: if INITIAL_SESSION never fires (storage/SDK failure), unblock
+    // routing after 10 seconds. Does NOT sign the user out.
+    timeoutRef.current = setTimeout(() => {
+      setIsLoading(false);
+    }, 10_000);
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        if (session?.user) {
+          setUser({
+            id: session.user.id,
+            email: session.user.email ?? '',
+            name: (session.user.user_metadata?.name as string | undefined) ?? undefined,
+            created_at: session.user.created_at ?? '',
+          });
+          setIsAuthenticated(true);
+        } else {
+          setUser(null);
+          setIsAuthenticated(false);
+        }
+        if (event === 'INITIAL_SESSION') {
+          clearTimeout(timeoutRef.current!);
+          setIsLoading(false);
+        }
+      }
+
+      if (event === 'SIGNED_OUT') {
+        setUser(null);
+        setIsAuthenticated(false);
+        clearTimeout(timeoutRef.current!);
+        setIsLoading(false);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
   }, []);
 
-  /**
-   * Login with Google OAuth
-   */
+  /** No-op: Supabase handles refresh automatically via autoRefreshToken. */
+  const refreshSession = useCallback(async () => {
+    await supabase?.auth.getSession();
+  }, []);
+
+  const login = useCallback(async (email: string, password: string) => {
+    await authApi.login(email, password);
+    // onAuthStateChange fires SIGNED_IN and updates state automatically.
+  }, []);
+
+  const signup = useCallback(async (email: string, password: string, name?: string) => {
+    const response = await authApi.signup(email, password, name);
+    if (!response.access_token) {
+      throw new Error('Account created. Please check your email and verify your account before signing in.');
+    }
+    // onAuthStateChange fires SIGNED_IN and updates state automatically.
+  }, []);
+
   const loginWithGoogle = useCallback(async () => {
-    const response = await authApi.loginWithOAuth('google');
-    setUser(response.user);
-    setIsAuthenticated(true);
+    await authApi.loginWithOAuth('google');
+    // onAuthStateChange fires SIGNED_IN and updates state automatically.
   }, []);
 
-  /**
-   * Login with Apple OAuth
-   */
   const loginWithApple = useCallback(async () => {
-    const response = await authApi.loginWithOAuth('apple');
-    setUser(response.user);
-    setIsAuthenticated(true);
+    await authApi.loginWithOAuth('apple');
+    // onAuthStateChange fires SIGNED_IN and updates state automatically.
   }, []);
 
-  /**
-   * Logout current session
-   */
   const logout = useCallback(async () => {
     try {
       await authApi.logout();
-    } catch (error) {
-      console.error('Logout error:', error);
+    } catch {
+      // swallow — clearAuthTokens below guarantees local session is cleared
     } finally {
-      setUser(null);
-      setIsAuthenticated(false);
+      await clearAuthTokens();
+      // onAuthStateChange fires SIGNED_OUT and clears user/isAuthenticated.
     }
   }, []);
 
@@ -147,9 +134,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
   );
 }
 
-/**
- * Hook to access auth context
- */
 export function useAuth() {
   const context = useContext(AuthContext);
   if (context === undefined) {
