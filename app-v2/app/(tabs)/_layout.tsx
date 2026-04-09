@@ -1,6 +1,15 @@
-import { Stack } from 'expo-router';
+import { Redirect, Stack } from 'expo-router';
+import { useSessionGate } from '../../hooks/useSessionGate';
 
 export default function TabLayout() {
+    const gate = useSessionGate();
+
+    // Hold while auth resolves
+    if (gate.isLoading) return null;
+
+    // Unauthenticated — send to login
+    if (!gate.ready) return <Redirect href="/(auth)/login" />;
+
     return (
         <Stack
             screenOptions={{
