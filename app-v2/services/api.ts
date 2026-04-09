@@ -271,8 +271,10 @@ export async function setAuthToken(token: string): Promise<void> {
  * Clear auth tokens (logout)
  */
 export async function clearAuthTokens(): Promise<void> {
-  await deleteStoredValue(AUTH_TOKEN_KEY);
-  await deleteStoredValue(REFRESH_TOKEN_KEY);
+  if (!supabase) return;
+  // scope: 'local' — clears local session without a network call.
+  // Works offline and does not invalidate other devices.
+  await supabase.auth.signOut({ scope: 'local' });
 }
 
 /**

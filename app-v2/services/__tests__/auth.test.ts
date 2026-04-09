@@ -64,3 +64,20 @@ describe('getAuthToken', () => {
     expect(token).toBeNull();
   });
 });
+
+// ─── clearAuthTokens ──────────────────────────────────────────────────────────
+
+import { clearAuthTokens } from '../api';
+
+describe('clearAuthTokens', () => {
+  it('calls supabase.auth.signOut with scope local', async () => {
+    __mockAuth.signOut.mockResolvedValueOnce({ error: null });
+    await clearAuthTokens();
+    expect(__mockAuth.signOut).toHaveBeenCalledWith({ scope: 'local' });
+  });
+
+  it('does not throw when signOut returns an error', async () => {
+    __mockAuth.signOut.mockResolvedValueOnce({ error: new Error('offline') });
+    await expect(clearAuthTokens()).resolves.not.toThrow();
+  });
+});
