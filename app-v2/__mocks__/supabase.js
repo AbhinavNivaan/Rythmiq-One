@@ -4,7 +4,7 @@ const mockAuth = {
   setSession: jest.fn(),
   signOut: jest.fn(),
   onAuthStateChange: jest.fn(() => ({
-    data: { subscription: { unsubscribe: jest.fn() } },
+    data: { subscription: { id: 'mock-subscription-id', callback: jest.fn(), unsubscribe: jest.fn() } },
   })),
 };
 
