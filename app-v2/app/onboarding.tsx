@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useRef } from 'react';
 import {
   View,
   Text,
@@ -238,7 +238,6 @@ const slides: Slide[] = [
 
 export default function OnboardingScreen() {
   const router = useRouter();
-  const [currentIndex, setCurrentIndex] = useState(0);
   const scrollX = useRef(new Animated.Value(0)).current;
 
   const renderSlide = ({ item }: { item: Slide }) => (
@@ -289,9 +288,6 @@ export default function OnboardingScreen() {
           [{ nativeEvent: { contentOffset: { x: scrollX } } }],
           { useNativeDriver: false }
         )}
-        onMomentumScrollEnd={(e) => {
-          setCurrentIndex(Math.round(e.nativeEvent.contentOffset.x / width));
-        }}
         scrollEventThrottle={16}
         style={styles.flatList}
       />
