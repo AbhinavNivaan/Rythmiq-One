@@ -1,7 +1,7 @@
 # Session Persistence — Design Spec
 
 **Date:** 2026-04-09
-**Status:** Approved
+**Status:** Approved (red-team reviewed 2026-04-09)
 **Approach:** B + C (Supabase native session management + layout-level auth guards)
 
 ---
@@ -19,7 +19,7 @@ A secondary problem: the manual token management layer in `api.ts` (`storeAuthTo
 - A user with a valid session opens the app and lands on the dashboard — no login, no onboarding.
 - A first-time user sees onboarding, then login.
 - A returning user with no valid session sees login directly (no onboarding again).
-- Any navigation to a protected screen from any entry point (deep link, push notification, background resume) is caught and redirected to login if unauthenticated.
+- Any navigation to any tab screen from any entry point (deep link, push notification, background resume) is caught and redirected to login if unauthenticated.
 - The architecture accommodates biometric re-auth in the future without changing routing logic.
 
 ---
@@ -61,9 +61,28 @@ createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
 
 **Replaced with:**
 - `getAuthToken()` → `(await supabase.auth.getSession()).data.session?.access_token ?? null`
-- `clearAuthTokens()` → `supabase.auth.signOut()`
+- `clearAuthTokens()` → `supabase.auth.signOut({ scope: 'local' })` — clears local session only, no network call; global invalidation is handled by `authApi.logout()` calling the backend
 
 The web platform path (localStorage / in-memory fallback) is preserved as-is — the adapter only applies on native.
+
+#### Session hydration after email/password login
+
+`authApi.login()` and `authApi.signup()` call the FastAPI backend, which returns `access_token` and `refresh_token`. The Supabase client in-memory session is never set by this flow — so `supabase.auth.getSession()` would return null after email/password login unless explicitly hydrated.
+
+Fix: after a successful backend login or signup response, call:
+```ts
+await supabase.auth.setSession({
+  access_token: response.access_token,
+  refresh_token: response.refresh_token,
+})
+```
+This stores the tokens via the SecureStore adapter and sets the in-memory session, making `getSession()` work correctly for all subsequent API calls.
+
+#### Removing the parallel token system in `security.ts`
+
+`app-v2/services/security.ts` contains a duplicate auth layer with its own `getAuthToken()`, `storeAuthTokens()`, `clearAuthTokens()`, and a 30-minute `SESSION_EXPIRY` check using the same SecureStore keys (`rythmiq_auth_token`, `rythmiq_refresh_token`). It is not wired into the current auth flow (nothing imports its auth functions), but the conflicting keys make it a landmine for future confusion.
+
+**Action:** Remove the auth-related functions from `security.ts` (`storeAuthTokens`, `getAuthToken`, `getRefreshToken`, `clearAuthTokens`, `isSessionValid`, `updateLastActivity`, `getSessionTimeRemaining`, `SESSION_EXPIRY` key, `SESSION_TIMEOUT_MS`). Retain everything else in `security.ts`: `secureStore`, `secureRetrieve`, `secureDelete`, the crypto utilities, and `BIOMETRIC_ENABLED` storage (needed for future biometric feature).
 
 ---
 
@@ -75,17 +94,23 @@ Replace the `useEffect` + `refreshSession()` mount pattern with a `supabase.auth
 
 **Lifecycle:**
 1. On mount: subscribe to `onAuthStateChange`. Set `isLoading = true`.
-2. First event fires (either `SIGNED_IN` with a restored session, or `SIGNED_OUT` with null): set `isLoading = false`, update `user` and `isAuthenticated` from the session payload.
-3. Subsequent events (token refresh, sign-out, etc.) update state automatically.
+2. Supabase v2 fires `INITIAL_SESSION` on startup (from local SecureStore, not the network — fires in milliseconds). This event carries either a valid session or null. When it fires: set `isLoading = false`, update `user` and `isAuthenticated` from the session payload.
+3. Subsequent events (`SIGNED_IN`, `SIGNED_OUT`, `TOKEN_REFRESHED`, etc.) update state automatically.
 4. On unmount: unsubscribe.
 
-**Auth methods** (`login`, `signup`, `loginWithGoogle`, `loginWithApple`, `logout`) continue to call Supabase operations as before. Manual `setUser` / `setIsAuthenticated` calls after each operation are removed — `onAuthStateChange` handles state propagation automatically.
+**Auth methods** (`login`, `signup`, `loginWithGoogle`, `loginWithApple`, `logout`) trigger Supabase operations and call `supabase.auth.setSession()` where needed (email/password path — see Layer 1). Manual `setUser` / `setIsAuthenticated` calls after each operation are removed — `onAuthStateChange` handles state propagation automatically.
 
-**`refreshSession()`** is kept on the public interface (existing callers) but its body becomes `supabase.auth.getSession()` — a no-op in practice since Supabase auto-refreshes.
+**`refreshSession()`** is kept on the public interface but its body becomes `supabase.auth.getSession()` — a no-op since Supabase auto-refreshes.
 
 ---
 
 ### Layer 3 — Routing (layout-level guards)
+
+#### `app-v2/app/_layout.tsx` — Splash screen lifecycle
+
+The current implementation hides the splash when fonts load, independently of auth. This would cause a blank frame while auth resolves.
+
+Fix: `SplashScreen.hideAsync()` is called only when **both** fonts are loaded **and** `isLoading === false` (auth has resolved). Both conditions must be met before the splash is dismissed.
 
 #### `app-v2/app/index.tsx` — Cold start gate
 
@@ -93,12 +118,14 @@ Reads `isLoading` and `isAuthenticated` from `AuthContext`. Also reads an `onboa
 
 | State | Route |
 |---|---|
-| `isLoading === true` | Render null (splash held open by font loader) |
+| `isLoading === true` | Render null (splash held open — see `_layout.tsx` fix above) |
 | `isAuthenticated === true` | `/(tabs)/dashboard` |
 | `isAuthenticated === false` + onboarding not seen | `/onboarding` |
 | `isAuthenticated === false` + onboarding seen | `/(auth)/login` |
 
-The `onboarding_seen` flag is written to SecureStore when the user taps "Get Started" on the onboarding screen (`app-v2/app/onboarding.tsx`), before `router.replace('/(auth)/login')`.
+**`onboarding_seen` flag:**
+- Written to SecureStore when the user taps "Get Started" on the onboarding screen, before `router.replace('/(auth)/login')`
+- **Migration for existing installs:** on startup, before reading the flag, check if a Supabase session exists in SecureStore. If yes, backfill `onboarding_seen = true`. This prevents existing users (v4/v5) who have no flag from being routed back through onboarding.
 
 #### `app-v2/app/(auth)/_layout.tsx` — Auth screen guard
 
@@ -114,7 +141,7 @@ Prevents a logged-in user reaching login or signup via stale navigation or back-
 
 Calls `useSessionGate()` hook. If `!gate.ready && !isLoading`: redirect to `/(auth)/login`.
 
-This is the permanent catch-all: any navigation to any tab screen from any entry point (deep link, push notification, cold start with expired session) is intercepted here.
+This is the catch-all for all tab screens: any navigation to any tab screen from any entry point is intercepted here. Note: `app/auth/callback.tsx` is intentionally outside this guard — it is the OAuth redirect handler and must remain unprotected.
 
 ---
 
@@ -147,9 +174,11 @@ The `(tabs)/_layout.tsx` guard does not change. Only `useSessionGate` changes in
 
 | File | Change |
 |---|---|
-| `app-v2/services/api.ts` | Add `ExpoSecureStoreAdapter`; replace manual token functions; update Supabase client init |
-| `app-v2/contexts/AuthContext.tsx` | Replace mount logic with `onAuthStateChange` subscription; simplify auth methods |
-| `app-v2/app/index.tsx` | Replace `<Redirect>` with session gate logic |
+| `app-v2/services/api.ts` | Add `ExpoSecureStoreAdapter`; replace manual token functions; update Supabase client init; add `setSession()` call after email/password login |
+| `app-v2/services/security.ts` | Remove auth-related functions (see Layer 1); retain crypto utilities and biometric flag storage |
+| `app-v2/contexts/AuthContext.tsx` | Replace mount logic with `onAuthStateChange` subscription; add `setSession()` call in login/signup; simplify auth methods |
+| `app-v2/app/_layout.tsx` | Tie `SplashScreen.hideAsync()` to both fonts loaded AND auth resolved |
+| `app-v2/app/index.tsx` | Replace `<Redirect>` with session gate logic + onboarding migration |
 | `app-v2/app/onboarding.tsx` | Write `onboarding_seen` flag to SecureStore on "Get Started" |
 | `app-v2/app/(auth)/_layout.tsx` | Add authenticated-user redirect guard |
 | `app-v2/app/(tabs)/_layout.tsx` | Add `useSessionGate()` guard |
@@ -160,8 +189,9 @@ The `(tabs)/_layout.tsx` guard does not change. Only `useSessionGate` changes in
 ## Error Handling
 
 - If SecureStore read fails inside the adapter, return `null` (treats as no session → login).
-- If `onAuthStateChange` never fires (network issue, Supabase unreachable): `isLoading` stays true and splash stays visible. A timeout of 8 seconds forces `isLoading = false` and routes to login as a fallback.
+- `INITIAL_SESSION` fires from local storage synchronously in milliseconds — a timeout fallback is not needed. If for any reason `INITIAL_SESSION` never fires, `isLoading` stays true permanently and the splash never hides. This is the correct fail-safe: a stuck splash is recoverable (user can force-quit), while a forced login destroys a valid session.
 - Session expiry with no refresh token: Supabase fires `SIGNED_OUT`, `isAuthenticated` becomes false, layout guard catches it and redirects to login.
+- `clearAuthTokens()` uses `{ scope: 'local' }` — guaranteed to clear local session even if offline or if the backend call in `authApi.logout()` fails.
 
 ---
 
@@ -171,3 +201,4 @@ The `(tabs)/_layout.tsx` guard does not change. Only `useSessionGate` changes in
 - The `authApi` object and all its methods — same signatures, same call sites.
 - OAuth flow (`loginWithGoogle`, `loginWithApple`) — same WebBrowser flow, same callback handling.
 - Web platform storage fallback (localStorage / in-memory).
+- `auth/callback.tsx` — intentionally unprotected OAuth redirect handler, unchanged.
