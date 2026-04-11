@@ -594,6 +594,8 @@ export interface JobStatus {
   document_type?: 'photo' | 'signature' | 'document';
   document_category?: string;
   document_subtype?: string;
+  document_label?: string;
+  portal_label?: string;
   document_name?: string;
   portal_schema_name?: string;
   /** Quality of the raw uploaded image before any processing (0–1). */
@@ -640,6 +642,7 @@ export const documentsApi = {
     fileSizeBytes: number,
     documentCategory?: string,
     documentSubtype?: string,
+    documentLabel?: string,
   ): Promise<{ job_id: string; upload_url: string; expires_at: string }> {
     return apiRequest<{ job_id: string; upload_url: string; expires_at: string }>('/jobs', {
       method: 'POST',
@@ -648,6 +651,7 @@ export const documentsApi = {
         document_type: documentType,
         document_category: documentCategory,
         document_subtype: documentSubtype,
+        document_label: documentLabel || undefined,
         filename,
         mime_type: mimeType,
         file_size_bytes: fileSizeBytes,

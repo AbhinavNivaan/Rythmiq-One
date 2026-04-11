@@ -40,9 +40,16 @@ async function ensureDownloadDir(): Promise<void> {
 }
 
 /**
- * Generate local filename for download
+ * Generate local filename for download.
+ * Uses friendlyName when provided (e.g. "PAN Card master"),
+ * otherwise falls back to the opaque rythmiq_{shortId}_{ts} pattern.
  */
-function getLocalFilename(jobId: string, extension: string = 'zip'): string {
+function getLocalFilename(jobId: string, extension: string = 'zip', friendlyName?: string): string {
+  if (friendlyName) {
+    // Strip characters that are unsafe in filenames
+    const safe = friendlyName.replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, ' ').trim();
+    if (safe) return `${safe}.${extension}`;
+  }
   const shortId = jobId.substring(0, 8);
   const timestamp = Date.now();
   return `rythmiq_${shortId}_${timestamp}.${extension}`;
@@ -123,15 +130,17 @@ export async function downloadFile(
 }
 
 /**
- * Download job output and return local path
+ * Download job output and return local path.
+ * @param friendlyName - Human-readable base name (e.g. "PAN Card master"). No extension.
  */
 export async function downloadJobOutput(
   jobId: string,
   downloadUrl: string,
   onProgress?: (progress: DownloadProgress) => void,
   extension: string = 'zip',
+  friendlyName?: string,
 ): Promise<DownloadResult> {
-  const filename = getLocalFilename(jobId, extension);
+  const filename = getLocalFilename(jobId, extension, friendlyName);
   return downloadFile(downloadUrl, filename, onProgress, extension);
 }
 

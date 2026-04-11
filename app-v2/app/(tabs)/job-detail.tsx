@@ -38,6 +38,26 @@ import Colors from '../../constants/Colors';
 import { documentsApi } from '../../services/api';
 import { downloadJobOutput, shareFile, formatFileSize, outputFormatToMime } from '../../services/download';
 import ReportFeedbackModal from '../../components/ui/ReportFeedbackModal';
+import type { JobStatus } from '../../services/api';
+
+/**
+ * Build a human-readable base filename (no extension) for a completed job.
+ * Mirrors the backend _build_download_filename() logic.
+ */
+function buildDownloadName(job: JobStatus): string {
+  const subtype = job.document_subtype ?? 'Document';
+  const label = (job.document_label ?? '').trim();
+  const isAdapt = (job.portal_schema_name || job.portal_label);
+
+  let core: string;
+  if (isAdapt) {
+    const portal = (job.portal_label || job.portal_schema_name || 'Export').trim();
+    core = `${subtype} ${portal}`;
+  } else {
+    core = `${subtype} master`;
+  }
+  return label ? `${label} ${core}` : core;
+}
 
 type JobStatusType = 'pending' | 'processing' | 'completed' | 'failed';
 
@@ -174,11 +194,13 @@ export default function JobDetailScreen() {
       // Fall back to URL extension check for legacy jobs that predate output_format field.
       // Files are stored as .enc so we use output_format as the primary signal.
       const { mimeType, ext } = outputFormatToMime(jobStatus.output_format);
+      const friendlyName = buildDownloadName(jobStatus);
       const result = await downloadJobOutput(
         jobId,
         downloadTarget,
         (progress) => setDownloadProgress(progress.progress),
-        ext
+        ext,
+        friendlyName,
       );
       if (!result.success) throw new Error(result.error || 'Download failed');
       setDownloadProgress(1);

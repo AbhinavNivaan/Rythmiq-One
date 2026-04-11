@@ -44,6 +44,7 @@ export function startBackgroundUpload(
   apiDocumentType: 'photo' | 'signature' | 'document',
   queryClient: QueryClient,
   outputFormat: string = 'jpeg',
+  documentLabel?: string,
 ) {
   notify({ total: confirmedCrops.length, current: 0, done: false, error: undefined });
 
@@ -64,6 +65,7 @@ export function startBackgroundUpload(
           blob.size,
           selectedCategory,
           selectedType,
+          documentLabel || undefined,
         );
 
         await documentsApi.uploadToPresignedUrl(upload_url, crop.originalUri, 'image/jpeg');

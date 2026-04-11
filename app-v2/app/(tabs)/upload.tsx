@@ -198,6 +198,7 @@ export default function UploadScreen() {
   const confirmedCrops = confirmed.filter((c): c is ConfirmedCrop => c !== undefined);
   const imageUris = confirmedCrops.map(c => c.croppedUri ?? c.originalUri);
   const [documentName, setDocumentName] = useState('');
+  const [documentLabel, setDocumentLabel] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<DocumentCategory>('identity');
   const [selectedType, setSelectedType] = useState<string>('Aadhaar Card');
   const documentCategories = useSeededDocumentCategories();
@@ -245,6 +246,7 @@ export default function UploadScreen() {
       apiDocumentType,
       queryClient,
       useLossless ? 'pdf_mrc' : 'jpeg',
+      documentLabel || undefined,
     );
     clearSession();
 
@@ -346,6 +348,21 @@ export default function UploadScreen() {
             placeholderTextColor={colors.white + '50'}
             value={documentName}
             onChangeText={setDocumentName}
+          />
+        </View>
+
+        {/* Document Owner Label (Optional) */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Belongs To (Optional)</Text>
+          <Text style={styles.sectionSubtitle}>
+            Whose document is this? Leave blank if it's yours.
+          </Text>
+          <TextInput
+            style={styles.nameInput}
+            placeholder="e.g., Dad, Chandraja, Vikas Chandra Jha"
+            placeholderTextColor={colors.white + '50'}
+            value={documentLabel}
+            onChangeText={setDocumentLabel}
           />
         </View>
 

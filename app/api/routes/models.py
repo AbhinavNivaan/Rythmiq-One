@@ -30,6 +30,9 @@ class CreateJobRequest(BaseModel):
     # For adapt jobs: reference an existing completed master job instead of uploading a new file.
     # When provided, filename/mime_type/file_size_bytes are not required.
     source_job_id: UUID | None = Field(default=None)
+    # Optional label for whose document this is (e.g. "Chandraja", "Dad").
+    # Blank = user's own document. Used to prefix the download filename.
+    document_label: str | None = Field(default=None, max_length=100)
     filename: str | None = Field(default=None, max_length=255)
     mime_type: str | None = Field(default=None, pattern=r"^(image|application)/(jpeg|jpg|png|pdf)$")
     file_size_bytes: int | None = Field(default=None, gt=0, le=52_428_800)  # 50MB max
@@ -105,6 +108,9 @@ class JobStatusResponse(BaseModel):
     output_format: str | None = None  # "jpeg" | "pdf" — actual format of the file at output_url
     input_quality_score: float | None = None
     output_quality_score: float | None = None
+    document_subtype: str | None = None
+    document_label: str | None = None
+    portal_label: str | None = None
 
 
 class JobOutputResponse(BaseModel):

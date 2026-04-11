@@ -10,6 +10,7 @@ This module is a thin orchestrator:
 """
 
 import logging
+import re as _re
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -46,6 +47,76 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+# ---------------------------------------------------------------------------
+# Download filename helpers
+# ---------------------------------------------------------------------------
+
+_SUBTYPE_DISPLAY: dict[str, str] = {
+    "pan_card": "PAN Card",
+    "aadhaar_card": "Aadhaar Card",
+    "aadhaar": "Aadhaar Card",
+    "voter_id": "Voter ID Card",
+    "voter_id_card": "Voter ID Card",
+    "driving_licence": "Driving Licence",
+    "driving_license": "Driving Licence",
+    "passport": "Passport",
+    "ration_card": "Ration Card",
+    "birth_certificate": "Birth Certificate",
+    "marriage_certificate": "Marriage Certificate",
+    "class_10_marksheet": "Class 10 Marksheet",
+    "class_12_marksheet": "Class 12 Marksheet",
+    "class_10_certificate": "Class 10 Certificate",
+    "class_12_certificate": "Class 12 Certificate",
+    "passport_photo": "Passport Photo",
+    "postcard_photo": "Postcard Photo",
+    "profile_photo": "Profile Photo",
+    "id_photo": "ID Photo",
+    "personal_signature": "Signature",
+}
+
+
+def _humanize_subtype(subtype: str | None) -> str:
+    """Return a display-ready document subtype name."""
+    if not subtype:
+        return "Document"
+    key = subtype.lower().replace(" ", "_").replace("-", "_")
+    if key in _SUBTYPE_DISPLAY:
+        return _SUBTYPE_DISPLAY[key]
+    return subtype.replace("_", " ").replace("-", " ").title()
+
+
+def _safe_filename_part(s: str) -> str:
+    """Strip characters that are invalid in filenames and collapse whitespace."""
+    sanitized = _re.sub(r'[\\/:*?"<>|]', "", s)
+    return _re.sub(r"\s+", " ", sanitized).strip()
+
+
+def _build_download_filename(metadata: dict, ext: str) -> str:
+    """
+    Return a human-readable download filename for a completed job.
+
+    Priority chain:
+    1. required_output_filename in metadata (portal-mandated name for adapt jobs)
+    2. [{label} ]{subtype} {portal}.{ext}  — adapt jobs
+       [{label} ]{subtype} master.{ext}    — master jobs
+    """
+    required = _safe_filename_part(metadata.get("required_output_filename") or "")
+    if required:
+        return f"{required}.{ext}"
+
+    label = _safe_filename_part(metadata.get("document_label") or "")
+    subtype = _humanize_subtype(metadata.get("document_subtype"))
+    mode = metadata.get("mode", "master")
+
+    if mode == "adapt":
+        portal = _safe_filename_part(metadata.get("portal_label") or "Export")
+        core = f"{subtype} {portal}"
+    else:
+        core = f"{subtype} master"
+
+    name = f"{label} {core}" if label else core
+    return f"{_safe_filename_part(name)}.{ext}"
 
 
 async def _submit_job_to_processing(
@@ -404,6 +475,9 @@ async def create_job(
                 "schema_definition": schema_def,
             }
             portal_schema_id = None  # No legacy portal_schema_version_id for form-schema path
+            # First word of short_name — e.g. "NEET" from "NEET 2026". Consistent with legacy path.
+            _short_name: str = form_schema_body.get("metadata", {}).get("short_name") or body.form_schema_id or ""
+            portal_label: str = _short_name.split()[0] if _short_name else ""
         else:
             # Legacy path: portal_schemas table
             schema_result = (
@@ -420,6 +494,9 @@ async def create_job(
                 )
             portal_schema = schema_result.data[0]
             portal_schema_id = str(portal_schema["id"])
+            # e.g. "UPSC" from "UPSC Photo" — take everything before the first space
+            _ps_name: str = portal_schema.get("name") or ""
+            portal_label = _ps_name.split()[0] if _ps_name else ""
 
         # ---- Step B: look up the source (master) job ----
         source_result = (
@@ -473,6 +550,12 @@ async def create_job(
             "input_metadata": {
                 "mode": "adapt",
                 "document_type": document_type,
+                "document_category": source_metadata.get("document_category"),
+                "document_subtype": source_metadata.get("document_subtype"),
+                # Inherit whose document this is from the source master job.
+                "document_label": source_metadata.get("document_label"),
+                # Human-readable portal name used in the download filename.
+                "portal_label": portal_label,
                 "storage_path": storage_path,
                 "adapted_from_job_id": str(body.source_job_id),
                 "form_schema_id": body.form_schema_id,
@@ -620,6 +703,7 @@ async def create_job(
             "document_type": body.document_type,
             "document_category": body.document_category,
             "document_subtype": body.document_subtype,
+            "document_label": body.document_label or None,
             "original_filename": body.filename,
             "mime_type": body.mime_type,
             "file_size_bytes": body.file_size_bytes,
@@ -935,14 +1019,12 @@ async def get_job(
 
         master_path_stored = job.get("master_path")
         if master_path_stored:
-            # Derive a human-readable filename and correct Content-Type so the
-            # browser/app downloads "document.jpg" instead of "{job_id}.enc".
             fmt = (output_format or "jpeg").lower()
             if fmt == "pdf":
-                dl_filename = f"{job_id}.pdf"
+                dl_filename = _build_download_filename(meta, "pdf")
                 dl_content_type = "application/pdf"
             else:
-                dl_filename = f"{job_id}.jpg"
+                dl_filename = _build_download_filename(meta, "jpg")
                 dl_content_type = "image/jpeg"
             output_url, _ = storage.generate_download_url(
                 master_path_stored,
@@ -974,6 +1056,9 @@ async def get_job(
         output_format=output_format,
         input_quality_score=meta.get("input_quality_score"),
         output_quality_score=meta.get("output_quality_score"),
+        document_subtype=meta.get("document_subtype"),
+        document_label=meta.get("document_label"),
+        portal_label=meta.get("portal_label"),
     )
 
 

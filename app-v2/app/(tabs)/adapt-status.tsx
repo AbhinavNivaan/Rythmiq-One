@@ -34,6 +34,21 @@ import Colors from '../../constants/Colors';
 import { documentsApi, JobStatus } from '../../services/api';
 import { downloadJobOutput, shareFile, outputFormatToMime } from '../../services/download';
 
+function buildDownloadName(job: JobStatus): string {
+  const subtype = job.document_subtype ?? 'Document';
+  const label = (job.document_label ?? '').trim();
+  const isAdapt = (job.portal_schema_name || job.portal_label);
+
+  let core: string;
+  if (isAdapt) {
+    const portal = (job.portal_label || job.portal_schema_name || 'Export').trim();
+    core = `${subtype} ${portal}`;
+  } else {
+    core = `${subtype} master`;
+  }
+  return label ? `${label} ${core}` : core;
+}
+
 type AdaptStatus = 'pending' | 'processing' | 'completed' | 'failed';
 
 const STATUS_CONFIG: Record<AdaptStatus, {
@@ -164,11 +179,13 @@ export default function AdaptStatusScreen() {
 
     setDownloadingId(job.job_id);
     try {
+      const friendlyName = buildDownloadName(job);
       const result = await downloadJobOutput(
         job.job_id,
         downloadTarget,
         () => {},
         fileExt,
+        friendlyName,
       );
       if (!result.success) throw new Error(result.error || 'Download failed');
       await shareFile(result.localPath, {
