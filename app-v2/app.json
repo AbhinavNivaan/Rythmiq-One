@@ -25,7 +25,8 @@
     "android": {
       "package": "app.rythmiq.one",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/adaptive-icon-foreground.png",
+        "monochromeImage": "./assets/adaptive-icon-monochrome.png",
         "backgroundColor": "#070712"
       },
       "edgeToEdgeEnabled": true,
