@@ -31,7 +31,7 @@ These are the only raw colour values allowed in the codebase. All other values a
 | `amber` | `#FF9500` | pending/warning + notification badge |
 | `red` | `#EF4444` | error/failed — replaces both `#FF3B30` and prior `#EF4444` usages |
 
-**Rule:** No hardcoded hex values outside `constants/Colors.ts`. No `#999`, `#666`, `rgba(...)` inline — use semantic aliases below.
+**Rule:** No hardcoded hex or `rgba(...)` values in screen or component files. All values — including opacity-derived ones — are defined once in `constants/Colors.ts` as named exports and referenced by name. Inline `rgba(...)` in a `StyleSheet` block is a violation. The `Colors.ts` file itself is the one place where raw values are permitted.
 
 ### 1.2 Semantic Aliases (Dark Theme)
 
@@ -40,8 +40,8 @@ These are the only raw colour values allowed in the codebase. All other values a
 | `background` | `neutral-0` | Screen background |
 | `surface` | `neutral-100` | Cards, inputs, search bar |
 | `surface-elevated` | `neutral-200` | Modals, bottom sheets, focused input bg |
-| `border-subtle` | `rgba(white, 5%)` | Resting container borders |
-| `border-default` | `rgba(white, 10%)` | Active/overlay borders |
+| `border-subtle` | `rgba(255,255,255,0.05)` — named in Colors.ts | Resting container borders |
+| `border-default` | `rgba(255,255,255,0.10)` — named in Colors.ts | Active/overlay borders |
 | `border-focus` | `green` | Focused input ring |
 | `border-error` | `red` | Error input ring |
 | `text-primary` | `neutral-900` | All primary text |
@@ -54,15 +54,16 @@ These are the only raw colour values allowed in the codebase. All other values a
 | `status-completed` | `blue` | Completed job state |
 | `status-failed` | `red` | Failed job state |
 
-**Light mode:** Only semantic aliases change. Component code stays the same — swap the alias map.
+**Light mode:** Dark theme only for v1. Light mode token tables and contrast audits are deferred to a separate design decision. Do not build theming infrastructure before that decision is made.
 
 ---
 
 ## 2. Typography
 
 **Font family:** Satoshi (variable TTF — `Satoshi-Variable.ttf`)  
-**Source:** `/Users/abhinav/Downloads/Satoshi_Complete/Fonts/TTF/`  
-**Loading:** via `expo-font` in `app/_layout.tsx`
+**Asset location:** `app-v2/assets/fonts/Satoshi-Variable.ttf` (copy from `/Users/abhinav/Downloads/Satoshi_Complete/Fonts/TTF/` during implementation — do not reference the Downloads path in code)  
+**Loading:** via `expo-font` `useFonts` hook in `app/_layout.tsx`. Missing font at runtime must be treated as a hard error, not a silent fallback.  
+**Shared constant:** a `Typography` object must be created at `app-v2/constants/Typography.ts` and imported wherever text styles are applied — no inline `fontSize` values in StyleSheet blocks.
 
 ### Type Scale
 
@@ -97,7 +98,7 @@ These are the only raw colour values allowed in the codebase. All other values a
 | `space-5` | 40px | Large section separation |
 | `space-6` | 48px | Screen-level vertical rhythm |
 
-**Rule:** No arbitrary spacing values. If a value isn't in this scale, use the nearest token. The one exception is border widths (1px, 1.5px) and radius values — those use the radius scale below.
+**Rule:** No arbitrary spacing values in screen or component `StyleSheet` blocks. Use the nearest token. Exempted from the 8pt grid: border widths (1px, 1.5px), indicator thicknesses (3–4px), handle heights (4px), and dot sizes (7–8px) — these are sub-pixel design details, not layout spacing.
 
 ---
 
@@ -138,8 +139,8 @@ These are the only raw colour values allowed in the codebase. All other values a
 | **Icon Round** | `surface` | `border-subtle`, 1px | — | Header icon actions (Bell, User), back nav, FABs. Always 46×46px. Never resize. |
 
 #### Disabled State (all variants)
-- Fill: `rgba(255,255,255,0.1)`
-- Text: `rgba(255,255,255,0.25)`
+- Fill: `Colors.disabled.fill` — defined as `rgba(255,255,255,0.10)` in Colors.ts
+- Text: `Colors.disabled.text` — defined as `rgba(255,255,255,0.25)` in Colors.ts
 - No press animation (`activeOpacity: 1`)
 - `pointerEvents: 'none'`
 
@@ -187,7 +188,7 @@ These are the only raw colour values allowed in the codebase. All other values a
 - **Background:** `surface-elevated` (#23263a)
 - **Top corners:** `radius-xl` (24px) · bottom corners: 0
 - **Handle:** 36×4px · `neutral-900` 15% · centered · 14px margin from top edge
-- **Backdrop:** `rgba(0,0,0,0.75)`
+- **Backdrop:** `Colors.backdrop` — defined as `rgba(0,0,0,0.75)` in Colors.ts
 - **Title:** `title-sm` (20px) / Bold
 - **Body text:** `body` (16px) / Regular / `text-secondary`
 - **Actions:** always at bottom · standard pairings: Primary + Ghost, Primary + Ghost Outline, Soft Danger + Ghost Outline
@@ -201,7 +202,7 @@ These are the only raw colour values allowed in the codebase. All other values a
 
 ### 5.7 Toast
 
-Three variants — all: `borderRadius: radius-xl (24px)` · tinted background + coloured left border 1px · 8px dot + message text · appears above tab bar or bottom of screen · auto-dismiss after 3s · one toast at a time (queue if multiple)
+Three variants — all: `borderRadius: radius-xl (24px)` · tinted background + coloured left border 1px · 8px dot + message text · anchored to bottom of screen with `space-3 (24px)` margin · auto-dismiss after 3s · one toast at a time (queue if multiple)
 
 | Variant | Fill | Border | Dot + Text |
 |---------|------|--------|------------|
@@ -281,7 +282,13 @@ Priority order: HIGH = fix next sprint · MEDIUM = fix as you touch the screen �
 
 ---
 
-## 9. What Not to Do
+## 9. Accessibility (Deferred)
+
+Reduced motion, minimum contrast ratios (WCAG AA), and dynamic type handling are not in scope for v1. These will be addressed in a separate accessibility pass before public launch. Do not design around them now, but do not actively break them either — use the specified colour pairings which were chosen with sufficient contrast on dark backgrounds.
+
+---
+
+## 10. What Not to Do
 
 - Do not add new colour values outside the 8 primitive tokens
 - Do not use `fontWeight: '600'` — Satoshi has no SemiBold
