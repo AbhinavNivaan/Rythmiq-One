@@ -1,6 +1,6 @@
 /**
  * Skeleton Loader Components
- * 
+ *
  * Provides loading placeholder animations for better perceived performance.
  */
 
@@ -16,7 +16,7 @@ interface SkeletonProps {
 }
 
 /**
- * Animated skeleton placeholder
+ * Animated skeleton placeholder with shimmer effect using semantic surface tokens
  */
 export function Skeleton({
   width = '100%',
@@ -32,12 +32,12 @@ export function Skeleton({
         Animated.timing(animatedValue, {
           toValue: 1,
           duration: 1000,
-          useNativeDriver: true,
+          useNativeDriver: false,
         }),
         Animated.timing(animatedValue, {
           toValue: 0,
           duration: 1000,
-          useNativeDriver: true,
+          useNativeDriver: false,
         }),
       ])
     );
@@ -46,9 +46,9 @@ export function Skeleton({
     return () => animation.stop();
   }, [animatedValue]);
 
-  const opacity = animatedValue.interpolate({
+  const backgroundColor = animatedValue.interpolate({
     inputRange: [0, 1],
-    outputRange: [0.3, 0.7],
+    outputRange: [Colors.semantic.surface, Colors.semantic.surfaceElevated],
   });
 
   return (
@@ -58,8 +58,7 @@ export function Skeleton({
           width: width as any,
           height: height as any,
           borderRadius,
-          backgroundColor: Colors.palette.shadowGrey,
-          opacity,
+          backgroundColor,
         },
         style,
       ]}
@@ -179,7 +178,7 @@ export function DashboardStatsSkeleton() {
 const styles = StyleSheet.create({
   card: {
     flexDirection: 'row',
-    backgroundColor: Colors.palette.shadowGrey,
+    backgroundColor: Colors.semantic.surface,
     borderRadius: 16,
     padding: 16,
     marginBottom: 12,
@@ -201,14 +200,14 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   statusCard: {
-    backgroundColor: Colors.palette.shadowGrey,
+    backgroundColor: Colors.semantic.surface,
     borderRadius: 20,
     padding: 32,
     alignItems: 'center',
     marginBottom: 24,
   },
   infoSection: {
-    backgroundColor: Colors.palette.shadowGrey,
+    backgroundColor: Colors.semantic.surface,
     borderRadius: 16,
     padding: 16,
     marginBottom: 16,
@@ -219,10 +218,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.05)',
+    borderBottomColor: Colors.semantic.borderSubtle,
   },
   actionSection: {
-    backgroundColor: Colors.palette.shadowGrey,
+    backgroundColor: Colors.semantic.surface,
     borderRadius: 16,
     padding: 16,
     marginBottom: 16,
@@ -233,7 +232,7 @@ const styles = StyleSheet.create({
   portalItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.palette.shadowGrey,
+    backgroundColor: Colors.semantic.surface,
     borderRadius: 16,
     padding: 16,
     marginBottom: 12,
@@ -245,7 +244,7 @@ const styles = StyleSheet.create({
   },
   statCard: {
     flex: 1,
-    backgroundColor: Colors.palette.shadowGrey,
+    backgroundColor: Colors.semantic.surface,
     borderRadius: 16,
     padding: 16,
     alignItems: 'center',
