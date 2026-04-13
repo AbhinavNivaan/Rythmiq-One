@@ -1,11 +1,9 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
-import { useColorScheme } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -23,24 +21,25 @@ const queryClient = new QueryClient({
 
 // Inner component so it can read AuthContext
 function AppShell() {
-    const colorScheme = useColorScheme();
-    const [fontsLoaded] = useFonts({});
+    const [fontsLoaded, fontError] = useFonts({
+        'Satoshi-Regular': require('../assets/fonts/Satoshi-Regular.otf'),
+        'Satoshi-Medium':  require('../assets/fonts/Satoshi-Medium.otf'),
+        'Satoshi-Bold':    require('../assets/fonts/Satoshi-Bold.otf'),
+        'Satoshi-Black':   require('../assets/fonts/Satoshi-Black.otf'),
+    });
     const { isLoading: authLoading } = useAuth();
 
     useEffect(() => {
+        if (fontError) {
+            throw fontError;
+        }
         if (fontsLoaded && !authLoading) {
             SplashScreen.hideAsync();
         }
-    }, [fontsLoaded, authLoading]);
-
-    if (!fontsLoaded) {
-        return null;
-    }
-
-    const theme = colorScheme === 'dark' ? DarkTheme : DefaultTheme;
+    }, [fontsLoaded, fontError, authLoading]);
 
     return (
-        <ThemeProvider value={theme}>
+        <>
             <Stack>
                 <Stack.Screen name="index" options={{ headerShown: false }} />
                 <Stack.Screen name="onboarding" options={{ headerShown: false }} />
@@ -49,7 +48,7 @@ function AppShell() {
                 <Stack.Screen name="+not-found" />
             </Stack>
             <StatusBar style="auto" />
-        </ThemeProvider>
+        </>
     );
 }
 
