@@ -24,6 +24,7 @@ module.exports = {
     '^@supabase/supabase-js$': '<rootDir>/__mocks__/supabase.js',
     '^react-native(/.*)?$': '<rootDir>/__mocks__/react-native.js',
     '^react-native-reanimated(/.*)?$': '<rootDir>/__mocks__/react-native-reanimated.js',
+    '^lucide-react-native$': '<rootDir>/__mocks__/lucide-react-native.js',
   },
   collectCoverageFrom: [
     'services/**/*.ts',
