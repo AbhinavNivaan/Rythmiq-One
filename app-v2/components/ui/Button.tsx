@@ -1,155 +1,167 @@
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, ActivityIndicator, ViewStyle, TextStyle } from 'react-native';
-import { Sparkles } from 'lucide-react-native';
-import Colors from '../../constants/Colors';
+import { StyleSheet, Text, TouchableOpacity, ActivityIndicator, ViewStyle } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
+import Colors from '../../constants/Colors';
+import Typography from '../../constants/Typography';
 
-interface ButtonProps {
-    onPress: () => void;
-    title: string;
-    variant?: 'primary' | 'secondary' | 'outline' | 'ghost' | 'dark';
-    isLoading?: boolean;
-    style?: ViewStyle;
-    textStyle?: TextStyle;
-    disabled?: boolean;
-    icon?: React.ReactNode;
-    showIcon?: boolean;
+export type ButtonVariant =
+  | 'primary-white'
+  | 'primary-green'
+  | 'secondary'
+  | 'soft-danger'
+  | 'ghost'
+  | 'ghost-outline'
+  | 'danger'
+  | 'icon-round';
+
+interface ButtonStyles {
+  container: ViewStyle;
+  textColor: string;
+}
+
+export function getButtonStyles(variant: ButtonVariant, disabled: boolean): ButtonStyles {
+  if (disabled && variant !== 'icon-round') {
+    return {
+      container: { backgroundColor: Colors.disabled.fill },
+      textColor: Colors.disabled.text,
+    };
+  }
+
+  switch (variant) {
+    case 'primary-white':
+      return {
+        container: { backgroundColor: Colors.palette.neutral900 },
+        textColor: Colors.palette.neutral0,
+      };
+    case 'primary-green':
+      return {
+        container: { backgroundColor: Colors.palette.green },
+        textColor: Colors.palette.neutral0,
+      };
+    case 'secondary':
+      return {
+        container: { backgroundColor: 'rgba(74,222,128,0.12)' },
+        textColor: Colors.palette.green,
+      };
+    case 'soft-danger':
+      return {
+        container: { backgroundColor: 'rgba(239,68,68,0.12)' },
+        textColor: Colors.palette.red,
+      };
+    case 'ghost':
+      return {
+        container: { backgroundColor: 'transparent' },
+        textColor: `rgba(252,254,255,0.80)`,
+      };
+    case 'ghost-outline':
+      return {
+        container: {
+          backgroundColor: 'transparent',
+          borderWidth: 1.5,
+          borderColor: 'rgba(252,254,255,0.20)',
+        },
+        textColor: `rgba(252,254,255,0.80)`,
+      };
+    case 'danger':
+      return {
+        container: {
+          backgroundColor: 'transparent',
+          borderWidth: 1.5,
+          borderColor: Colors.palette.red,
+        },
+        textColor: Colors.palette.red,
+      };
+    case 'icon-round':
+      return {
+        container: {
+          backgroundColor: Colors.semantic.surface,
+          borderWidth: 1,
+          borderColor: Colors.semantic.borderSubtle,
+          width: 46,
+          height: 46,
+          borderRadius: 23,
+        },
+        textColor: Colors.palette.neutral900,
+      };
+  }
 }
 
 const AnimatedTouchable = Animated.createAnimatedComponent(TouchableOpacity);
 
+interface ButtonProps {
+  onPress: () => void;
+  title?: string;
+  variant?: ButtonVariant;
+  isLoading?: boolean;
+  style?: ViewStyle;
+  disabled?: boolean;
+  icon?: React.ReactNode;
+}
+
 export default function Button({
-    onPress,
-    title,
-    variant = 'primary',
-    isLoading = false,
-    style,
-    textStyle,
-    disabled = false,
-    icon,
-    showIcon = false,
+  onPress,
+  title,
+  variant = 'primary-white',
+  isLoading = false,
+  style,
+  disabled = false,
+  icon,
 }: ButtonProps) {
-    const scale = useSharedValue(1);
+  const scale = useSharedValue(1);
+  const isIconRound = variant === 'icon-round';
+  const isDisabled = disabled || isLoading;
 
-    const animatedStyle = useAnimatedStyle(() => {
-        return {
-            transform: [{ scale: scale.value }],
-        };
-    });
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
 
-    const handlePressIn = () => {
-        scale.value = withSpring(0.96);
-    };
+  const handlePressIn = () => {
+    if (!isDisabled && !isIconRound) scale.value = withSpring(0.96);
+  };
+  const handlePressOut = () => {
+    if (!isDisabled && !isIconRound) scale.value = withSpring(1);
+  };
 
-    const handlePressOut = () => {
-        scale.value = withSpring(1);
-    };
+  const { container, textColor } = getButtonStyles(variant, isDisabled);
 
-    const getBackgroundColor = () => {
-        if (disabled) return '#A0A0A0';
-        switch (variant) {
-            case 'primary': // White background for primary CTAs
-                return Colors.palette.white;
-            case 'secondary': // Dark with outline
-                return 'transparent';
-            case 'dark': // Ink Black (legacy, might deprecate)
-                return Colors.palette.inkBlack;
-            case 'outline':
-                return 'transparent';
-            case 'ghost':
-                return 'transparent';
-            default:
-                return Colors.palette.white; // Default to white
-        }
-    };
-
-    const getTextColor = () => {
-        if (disabled) return '#F0F0F0';
-        switch (variant) {
-            case 'primary': // Dark text on white
-                return Colors.palette.inkBlack;
-            case 'secondary': // Light text on dark
-            case 'outline':
-            case 'ghost':
-                return Colors.palette.white;
-            case 'dark':
-                return '#FFFFFF';
-            default:
-                return Colors.palette.inkBlack; // Default dark text
-        }
-    };
-
-    const getBorder = () => {
-        if (variant === 'secondary') {
-            return {
-                borderWidth: 1.5,
-                borderColor: 'rgba(255, 255, 255, 0.3)' // Light outline for secondary
-            };
-        }
-        if (variant === 'outline') {
-            return { borderWidth: 1, borderColor: '#E5E7EB' };
-        }
-        return {};
-    };
-
-    // Shadow/3D effect from the middle row of the reference image
-    const getShadow = () => {
-        if (variant === 'primary' || variant === 'dark') {
-            return {
-                borderBottomWidth: 4,
-                borderBottomColor: variant === 'primary' ? '#141c7a' : '#000000', // Darker shade
-            }
-        }
-        return {};
-    }
-
-    const textColor = getTextColor();
-
-    return (
-        <AnimatedTouchable
-            onPress={onPress}
-            onPressIn={handlePressIn}
-            onPressOut={handlePressOut}
-            disabled={disabled || isLoading}
-            activeOpacity={0.9}
-            style={[
-                styles.container,
-                { backgroundColor: getBackgroundColor() },
-                getBorder(),
-                // getShadow(), // Uncomment if we want the 3D 'pressed' look permanent, otherwise just use flat
-                style,
-                animatedStyle,
-            ]}
-        >
-            {isLoading ? (
-                <ActivityIndicator color={textColor} />
-            ) : (
-                <>
-                    {showIcon && icon}
-                    <Text style={[styles.text, { color: textColor }, textStyle]}>{title}</Text>
-                </>
-            )}
-        </AnimatedTouchable>
-    );
+  return (
+    <AnimatedTouchable
+      onPress={onPress}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
+      disabled={isDisabled}
+      activeOpacity={isDisabled ? 1 : isIconRound ? 0.75 : 0.9}
+      style={[
+        isIconRound ? styles.iconRound : styles.base,
+        container,
+        style,
+        animatedStyle,
+      ]}
+    >
+      {isLoading ? (
+        <ActivityIndicator color={textColor} />
+      ) : isIconRound ? (
+        icon
+      ) : (
+        <Text style={[Typography.button, { color: textColor }]}>{title}</Text>
+      )}
+    </AnimatedTouchable>
+  );
 }
 
 const styles = StyleSheet.create({
-    container: {
-        paddingVertical: 14,
-        paddingHorizontal: 24,
-        borderRadius: 12,
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexDirection: 'row',
-        gap: 8,
-        minHeight: 52,
-    },
-    text: {
-        fontSize: 16,
-        fontWeight: '600',
-        letterSpacing: 0.3,
-    },
-    icon: {
-        opacity: 0.9,
-    }
+  base: {
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    minHeight: 52,
+  },
+  iconRound: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });

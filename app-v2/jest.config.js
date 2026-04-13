@@ -1,15 +1,19 @@
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
-  extensionsToTreatAsEsm: ['.ts'],
+  extensionsToTreatAsEsm: ['.ts', '.tsx'],
   globals: {
     'ts-jest': {
       useESM: true,
       tsconfig: {
         esModuleInterop: true,
         allowSyntheticDefaultImports: true,
+        jsx: 'react',
       },
     },
+  },
+  transform: {
+    '^.+\\.m?tsx?$': ['ts-jest', { useESM: true, tsconfig: { esModuleInterop: true, allowSyntheticDefaultImports: true, jsx: 'react' } }],
   },
   moduleNameMapper: {
     '\\.tflite$': '<rootDir>/__mocks__/fileMock.js',

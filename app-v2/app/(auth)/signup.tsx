@@ -126,7 +126,7 @@ export default function SignupScreen() {
                         title="Create Account"
                         onPress={handleSignup}
                         isLoading={isLoading}
-                        variant="primary"
+                        variant="primary-white"
                         style={styles.signupButton}
                     />
                 </Animated.View>

@@ -115,7 +115,7 @@ export default function LoginScreen() {
                         title="Login"
                         onPress={handleLogin}
                         isLoading={isLoading}
-                        variant="primary"
+                        variant="primary-white"
                         style={styles.loginButton}
                     />
                 </Animated.View>
