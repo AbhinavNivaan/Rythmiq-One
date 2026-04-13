@@ -1,8 +1,9 @@
 /**
  * Toast Notification System
- * 
- * Provides a context-based toast notification system with 
+ *
+ * Provides a context-based toast notification system with
  * support for success, error, warning, and info messages.
+ * Exports getToastStyles() for the 3-variant semantic token system.
  */
 
 import React, {
@@ -10,6 +11,8 @@ import React, {
   useContext,
   useState,
   useCallback,
+  useRef,
+  useEffect,
   ReactNode,
 } from 'react';
 import {
@@ -18,7 +21,7 @@ import {
   StyleSheet,
   TouchableOpacity,
   Animated,
-  Dimensions,
+  ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -29,8 +32,68 @@ import {
   X,
 } from 'lucide-react-native';
 import Colors from '../../constants/Colors';
+import Typography from '../../constants/Typography';
 
-const { width } = Dimensions.get('window');
+// ---------------------------------------------------------------------------
+// Variant system (design-system tokens)
+// ---------------------------------------------------------------------------
+
+export type ToastVariant = 'success' | 'error' | 'info';
+
+interface ToastStyleResult {
+  container: ViewStyle;
+  dotColor: string;
+  textColor: string;
+}
+
+export function getToastStyles(variant: ToastVariant): ToastStyleResult {
+  const map: Record<ToastVariant, { fill: string; border: string; color: string }> = {
+    success: { fill: 'rgba(74,222,128,0.10)',  border: 'rgba(74,222,128,0.20)',  color: Colors.palette.green },
+    error:   { fill: 'rgba(239,68,68,0.10)',   border: 'rgba(239,68,68,0.20)',   color: Colors.palette.red   },
+    info:    { fill: 'rgba(96,165,250,0.10)',  border: 'rgba(96,165,250,0.20)',  color: Colors.palette.blue  },
+  };
+  const { fill, border, color } = map[variant];
+  return {
+    container: { backgroundColor: fill, borderColor: border },
+    dotColor: color,
+    textColor: color,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Simple standalone Toast component (used by the provider internally)
+// ---------------------------------------------------------------------------
+
+interface ToastProps {
+  message: string;
+  variant: ToastVariant;
+  onDismiss: () => void;
+  duration?: number;
+}
+
+export function Toast({ message, variant, onDismiss, duration = 3000 }: ToastProps) {
+  const opacity = useRef(new Animated.Value(0)).current;
+  const { container, dotColor, textColor } = getToastStyles(variant);
+
+  useEffect(() => {
+    Animated.sequence([
+      Animated.timing(opacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+      Animated.delay(duration),
+      Animated.timing(opacity, { toValue: 0, duration: 200, useNativeDriver: true }),
+    ]).start(onDismiss);
+  }, []);
+
+  return (
+    <Animated.View style={[styles.simpleContainer, container, { opacity }]}>
+      <View style={[styles.dot, { backgroundColor: dotColor }]} />
+      <Text style={[Typography.label, { color: textColor, flex: 1 }]}>{message}</Text>
+    </Animated.View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Legacy context-based system (backward-compatible)
+// ---------------------------------------------------------------------------
 
 export type ToastType = 'success' | 'error' | 'warning' | 'info';
 
@@ -55,23 +118,23 @@ interface ToastConfig {
 const TOAST_CONFIG: Record<ToastType, ToastConfig> = {
   success: {
     icon: CheckCircle,
-    color: '#34C759',
-    backgroundColor: 'rgba(52, 199, 89, 0.15)',
+    color: Colors.palette.green,
+    backgroundColor: 'rgba(74,222,128,0.10)',
   },
   error: {
     icon: XCircle,
-    color: '#FF3B30',
-    backgroundColor: 'rgba(255, 59, 48, 0.15)',
+    color: Colors.palette.red,
+    backgroundColor: 'rgba(239,68,68,0.10)',
   },
   warning: {
     icon: AlertTriangle,
-    color: '#FF9500',
-    backgroundColor: 'rgba(255, 149, 0, 0.15)',
+    color: Colors.palette.amber,
+    backgroundColor: 'rgba(255,149,0,0.15)',
   },
   info: {
     icon: Info,
-    color: '#89C7FE',
-    backgroundColor: 'rgba(137, 199, 254, 0.15)',
+    color: Colors.palette.blue,
+    backgroundColor: 'rgba(96,165,250,0.10)',
   },
 };
 
@@ -94,7 +157,7 @@ export function useToast(): ToastContextValue {
   return context;
 }
 
-// Individual Toast Component
+// Individual Toast item for the provider
 function ToastItem({
   toast,
   onDismiss,
@@ -106,7 +169,6 @@ function ToastItem({
   const [fadeAnim] = useState(new Animated.Value(0));
 
   React.useEffect(() => {
-    // Slide in
     Animated.parallel([
       Animated.spring(slideAnim, {
         toValue: 0,
@@ -121,7 +183,6 @@ function ToastItem({
       }),
     ]).start();
 
-    // Auto dismiss
     const duration = toast.duration || 4000;
     const timer = setTimeout(() => {
       handleDismiss();
@@ -246,6 +307,24 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 }
 
 const styles = StyleSheet.create({
+  simpleContainer: {
+    position: 'absolute',
+    bottom: 24,
+    left: 24,
+    right: 24,
+    borderRadius: 24,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    gap: 10,
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    flexShrink: 0,
+  },
   container: {
     position: 'absolute',
     left: 16,

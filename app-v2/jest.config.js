@@ -22,6 +22,7 @@ module.exports = {
     '^expo-web-browser$': '<rootDir>/__mocks__/expo-web-browser.js',
     '^expo-auth-session$': '<rootDir>/__mocks__/expo-auth-session.js',
     '^@supabase/supabase-js$': '<rootDir>/__mocks__/supabase.js',
+    '^react-native-safe-area-context$': '<rootDir>/__mocks__/react-native-safe-area-context.js',
     '^react-native(/.*)?$': '<rootDir>/__mocks__/react-native.js',
     '^react-native-reanimated(/.*)?$': '<rootDir>/__mocks__/react-native-reanimated.js',
     '^lucide-react-native$': '<rootDir>/__mocks__/lucide-react-native.js',
