@@ -22,7 +22,7 @@ interface ButtonStyles {
 export function getButtonStyles(variant: ButtonVariant, disabled: boolean): ButtonStyles {
   if (disabled && variant !== 'icon-round') {
     return {
-      container: { backgroundColor: Colors.disabled.fill },
+      container: { backgroundColor: Colors.disabled.fill, pointerEvents: 'none' as const },
       textColor: Colors.disabled.text,
     };
   }

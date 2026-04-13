@@ -361,7 +361,7 @@ const styles = StyleSheet.create({
   },
   toastTitle: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   toastMessage: {
     fontSize: 12,
@@ -374,7 +374,7 @@ const styles = StyleSheet.create({
   },
   actionText: {
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   dismissButton: {
     width: 32,

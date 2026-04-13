@@ -7,6 +7,7 @@ import 'react-native-reanimated';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ToastProvider } from '../components/ui/Toast';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -39,7 +40,7 @@ function AppShell() {
     }, [fontsLoaded, fontError, authLoading]);
 
     return (
-        <>
+        <ToastProvider>
             <Stack>
                 <Stack.Screen name="index" options={{ headerShown: false }} />
                 <Stack.Screen name="onboarding" options={{ headerShown: false }} />
@@ -48,7 +49,7 @@ function AppShell() {
                 <Stack.Screen name="+not-found" />
             </Stack>
             <StatusBar style="auto" />
-        </>
+        </ToastProvider>
     );
 }
 
