@@ -93,6 +93,9 @@ def _validate_categorization_result(payload: Any) -> dict[str, Any] | None:
 
 def categorize_document(image_bytes: bytes, api_key: str) -> dict[str, Any] | None:
     """Classify a document image via Gemini and return parsed JSON or None."""
+    if not image_bytes:
+        return None
+
     if not api_key:
         return None
 

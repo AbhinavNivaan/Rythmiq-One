@@ -13,6 +13,17 @@ def test_categorize_returns_none_when_no_api_key():
     assert result is None
 
 
+def test_categorize_returns_none_when_image_payload_is_empty():
+    """Should return None and skip Gemini calls when image payload is empty."""
+    with patch("app.api.services.gemini.genai") as mock_genai:
+        from app.api.services import gemini as gemini_module
+
+        result = gemini_module.categorize_document(b"", api_key="test-key")
+
+    assert result is None
+    mock_genai.configure.assert_not_called()
+
+
 def test_categorize_returns_none_on_exception():
     """Should swallow exceptions and return None."""
     with patch("app.api.services.gemini.genai") as mock_genai:
