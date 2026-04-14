@@ -11,6 +11,7 @@ This module is a thin orchestrator:
 
 import logging
 import re as _re
+from datetime import datetime, timezone
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -1234,6 +1235,80 @@ async def get_job_output(
         job_id=job_id,
         portal_output=portal_output,
         download_url=download_url,
+    )
+
+
+@router.get("/{job_id}/extraction", response_model=ExtractionResponse)
+async def get_job_extraction(
+    job_id: UUID,
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> ExtractionResponse:
+    """Get canonical extraction fields for a completed job."""
+    db = get_db_client()
+
+    job_result = (
+        db.table("jobs")
+        .select("id, status, user_id, completed_at, input_metadata")
+        .eq("id", str(job_id))
+        .eq("user_id", str(user.id))
+        .limit(1)
+        .execute()
+    )
+
+    if not job_result.data:
+        raise NotFoundException(f"Job {job_id} not found")
+
+    job = job_result.data[0]
+    if job["status"] != "completed":
+        raise JobNotCompleteException(
+            f"Job {job_id} is not complete",
+            details={"current_status": job["status"]},
+        )
+
+    doc_result = (
+        db.table("documents")
+        .select("canonical_output")
+        .eq("job_id", str(job_id))
+        .eq("user_id", str(user.id))
+        .limit(1)
+        .execute()
+    )
+
+    if not doc_result.data:
+        raise NotFoundException(f"Extraction for job {job_id} not found")
+
+    canonical_output = doc_result.data[0].get("canonical_output") or {}
+    if not isinstance(canonical_output, dict):
+        canonical_output = {}
+
+    fields = canonical_output.get("fields") or {}
+    if not isinstance(fields, dict):
+        fields = {}
+
+    confidence_raw = canonical_output.get("confidence") or {}
+    confidence: dict[str, float | None] = {}
+    if isinstance(confidence_raw, dict):
+        for key, value in confidence_raw.items():
+            confidence[key] = float(value) if isinstance(value, (int, float)) else None
+
+    extracted_at_value = canonical_output.get("extracted_at") or job.get("completed_at")
+    if isinstance(extracted_at_value, datetime):
+        extracted_at = extracted_at_value
+    elif isinstance(extracted_at_value, str):
+        extracted_at = datetime.fromisoformat(extracted_at_value.replace("Z", "+00:00"))
+    else:
+        extracted_at = datetime.now(timezone.utc)
+
+    metadata = job.get("input_metadata") or {}
+    document_type = metadata.get("document_type", "document")
+
+    return ExtractionResponse(
+        job_id=UUID(job["id"]),
+        document_type=document_type,
+        status=job["status"],
+        extracted_at=extracted_at,
+        fields=fields,
+        confidence=confidence,
     )
 
 
