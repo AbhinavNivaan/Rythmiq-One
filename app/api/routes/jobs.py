@@ -1243,69 +1243,46 @@ async def get_job_extraction(
     job_id: UUID,
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> ExtractionResponse:
-    """Get canonical extraction fields for a completed job."""
+    """Get canonical extraction fields for a job extraction record."""
     db = get_db_client()
 
-    job_result = (
-        db.table("jobs")
-        .select("id, status, user_id, completed_at, input_metadata")
-        .eq("id", str(job_id))
-        .eq("user_id", str(user.id))
-        .limit(1)
-        .execute()
-    )
-
-    if not job_result.data:
-        raise NotFoundException(f"Job {job_id} not found")
-
-    job = job_result.data[0]
-    if job["status"] != "completed":
-        raise JobNotCompleteException(
-            f"Job {job_id} is not complete",
-            details={"current_status": job["status"]},
-        )
-
-    doc_result = (
-        db.table("documents")
-        .select("canonical_output")
+    extraction_result = (
+        db.table("document_extractions")
+        .select("job_id, user_id, document_type, status, extracted_at, fields, confidence")
         .eq("job_id", str(job_id))
         .eq("user_id", str(user.id))
         .limit(1)
         .execute()
     )
 
-    if not doc_result.data:
+    if not extraction_result.data:
         raise NotFoundException(f"Extraction for job {job_id} not found")
 
-    canonical_output = doc_result.data[0].get("canonical_output") or {}
-    if not isinstance(canonical_output, dict):
-        canonical_output = {}
+    extraction = extraction_result.data[0]
 
-    fields = canonical_output.get("fields") or {}
+    fields = extraction.get("fields") or {}
     if not isinstance(fields, dict):
         fields = {}
 
-    confidence_raw = canonical_output.get("confidence") or {}
+    confidence_raw = extraction.get("confidence") or {}
     confidence: dict[str, float | None] = {}
     if isinstance(confidence_raw, dict):
         for key, value in confidence_raw.items():
             confidence[key] = float(value) if isinstance(value, (int, float)) else None
 
-    extracted_at_value = canonical_output.get("extracted_at") or job.get("completed_at")
-    if isinstance(extracted_at_value, datetime):
-        extracted_at = extracted_at_value
-    elif isinstance(extracted_at_value, str):
-        extracted_at = datetime.fromisoformat(extracted_at_value.replace("Z", "+00:00"))
-    else:
-        extracted_at = datetime.now(timezone.utc)
+    extracted_at_raw = extraction.get("extracted_at")
+    extracted_at = extracted_at_raw if isinstance(extracted_at_raw, str) else None
 
-    metadata = job.get("input_metadata") or {}
-    document_type = metadata.get("document_type", "document")
+    document_type_raw = extraction.get("document_type")
+    document_type = document_type_raw if isinstance(document_type_raw, str) else "document"
+
+    status_raw = extraction.get("status")
+    status = status_raw if isinstance(status_raw, str) else "completed"
 
     return ExtractionResponse(
-        job_id=UUID(job["id"]),
+        job_id=job_id,
         document_type=document_type,
-        status=job["status"],
+        status=status,
         extracted_at=extracted_at,
         fields=fields,
         confidence=confidence,

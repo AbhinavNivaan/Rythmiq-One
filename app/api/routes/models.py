@@ -189,7 +189,7 @@ class ExtractionResponse(BaseModel):
     job_id: UUID
     document_type: str
     status: str
-    extracted_at: datetime
+    extracted_at: str | None
     fields: dict[str, Any]
     confidence: dict[str, float | None]
 
