@@ -251,6 +251,8 @@ class JobPayload:
     #      category="identity",   subtype="PAN Card"
     document_category: Optional[str] = None
     document_subtype: Optional[str] = None
+    # User consent flag for field extraction flow.
+    extract_data: bool = False
     # Set True when the input blob is an encrypted master (adapt-from-master flow).
     # Worker will decrypt in-memory with sek_b64 before processing.
     # Blob format: first 12 bytes = AES-GCM nonce, remainder = ciphertext.
@@ -314,6 +316,7 @@ class JobPayload:
             document_type=document_type,
             document_category=data.get("document_category") or None,
             document_subtype=data.get("document_subtype") or None,
+            extract_data=bool(data.get("extract_data", False)),
             sek_b64=data.get("sek_b64"),
             portal_schema=portal_schema,
             master_constraints=MasterConstraints.from_dict(data.get("master_constraints")),

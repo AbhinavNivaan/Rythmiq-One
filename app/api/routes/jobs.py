@@ -157,6 +157,7 @@ async def _submit_job_to_processing(
             "document_type": document_type,
             "document_category": document_category,
             "document_subtype": document_subtype,
+            "extract_data": bool(metadata.get("extract_data", False)),
             "input": {
                 "raw_path": storage_path,
                 "artifact_url": None,
@@ -220,6 +221,7 @@ async def _submit_job_to_processing(
             "user_id": str(user_id),
             "job_type": job_type,
             "document_type": document_type,
+            "extract_data": bool((input_metadata or {}).get("extract_data", False)),
             "storage_path": storage_path,
             "portal_schema_id": str(portal_schema_id) if portal_schema_id else None,
             "portal_schema_name": portal_schema_name,
@@ -556,6 +558,7 @@ async def create_job(
                 "document_type": document_type,
                 "document_category": source_metadata.get("document_category"),
                 "document_subtype": source_metadata.get("document_subtype"),
+                "extract_data": body.extract_data,
                 # Inherit whose document this is from the source master job.
                 "document_label": source_metadata.get("document_label"),
                 # Human-readable portal name used in the download filename.
@@ -707,6 +710,7 @@ async def create_job(
             "document_type": body.document_type,
             "document_category": body.document_category,
             "document_subtype": body.document_subtype,
+            "extract_data": body.extract_data,
             "document_label": body.document_label or None,
             "original_filename": body.filename,
             "mime_type": body.mime_type,

@@ -40,6 +40,10 @@ class CreateJobRequest(BaseModel):
         default=False,
         description="If true, creates pending job + upload URL without dispatching processing. Client must call /jobs/{job_id}/submit after upload.",
     )
+    extract_data: bool = Field(
+        default=False,
+        description="User consent flag to run data extraction on this job.",
+    )
     # User's Storage Encryption Key passed at dispatch time (zero-knowledge model).
     # Required for adapt-from-master jobs when source is an encrypted master blob.
     # Never stored server-side.
