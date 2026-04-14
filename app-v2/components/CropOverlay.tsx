@@ -4,13 +4,14 @@
  * Renders an interactive document crop quad overlay over an image.
  * - Draggable white corner circles (56pt hit target, 14pt visible radius)
  * - Blue quad outline + dim outside the quad
+ * - Floating magnifier loupe (2.5×) while dragging a corner
  * - Quad coords are normalised 0.0–1.0 relative to the original image dimensions
  * - Accounts for resizeMode="contain" letterboxing inside the container
  */
 
 import React, { useCallback } from 'react'
 import { StyleSheet, View } from 'react-native'
-import Svg, { Circle, Path } from 'react-native-svg'
+import Svg, { Circle, Path, Line } from 'react-native-svg'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import Animated, {
   useSharedValue,
@@ -20,12 +21,21 @@ import Animated, {
 } from 'react-native-reanimated'
 
 import type { NormalisedQuad } from '../stores/captureSession'
+import Colors from '../constants/Colors'
+import { calcImageTranslation, calcLoupePosition } from '../utils/loupeMath'
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle)
 const AnimatedPath = Animated.createAnimatedComponent(Path)
+const AnimatedLine = Animated.createAnimatedComponent(Line)
 
 const CORNER_HIT_SIZE = 56
 const CORNER_RADIUS = 14
+const LOUPE_DIAMETER = 110
+const LOUPE_RADIUS = 55
+const ZOOM = 2.5
+const FLIP_THRESHOLD = 120
+const ABOVE_OFFSET = 75
+const BELOW_OFFSET = 40
 
 // Compute the image's rendered frame inside a contain-mode container
 function getImageFrame(
@@ -50,6 +60,168 @@ function getImageFrame(
     frameW,
     frameH,
   }
+}
+
+// --- LoupeView ---------------------------------------------------------------
+
+interface LoupeViewProps {
+  imageUri: string
+  activeCX: Animated.SharedValue<number>
+  activeCY: Animated.SharedValue<number>
+  isDragging: Animated.SharedValue<number>
+  containerWidth: number
+  containerHeight: number
+  offsetX: number
+  offsetY: number
+  frameW: number
+  frameH: number
+}
+
+function LoupeView({
+  imageUri,
+  activeCX,
+  activeCY,
+  isDragging,
+  containerWidth,
+  containerHeight,
+  offsetX,
+  offsetY,
+  frameW,
+  frameH,
+}: LoupeViewProps) {
+  // Outer animated style — controls position and visibility
+  const outerStyle = useAnimatedStyle(() => {
+    const { top, left } = calcLoupePosition(
+      activeCX.value,
+      activeCY.value,
+      offsetY,
+      containerWidth,
+      LOUPE_DIAMETER,
+      FLIP_THRESHOLD,
+      ABOVE_OFFSET,
+      BELOW_OFFSET,
+    )
+    return {
+      position: 'absolute',
+      top,
+      left,
+      width: LOUPE_DIAMETER,
+      height: LOUPE_DIAMETER,
+      opacity: isDragging.value,
+    }
+  })
+
+  // Image translation — centres the active corner pixel at the loupe centre
+  const imageStyle = useAnimatedStyle(() => {
+    const { translateX, translateY } = calcImageTranslation(
+      activeCX.value,
+      activeCY.value,
+      offsetX,
+      offsetY,
+      ZOOM,
+      LOUPE_RADIUS,
+    )
+    return {
+      width: frameW * ZOOM,
+      height: frameH * ZOOM,
+      transform: [{ translateX }, { translateY }],
+    }
+  })
+
+  // Tether animated props — dashed line from loupe edge to corner
+  const tetherProps = useAnimatedProps(() => {
+    const { top, left } = calcLoupePosition(
+      activeCX.value,
+      activeCY.value,
+      offsetY,
+      containerWidth,
+      LOUPE_DIAMETER,
+      FLIP_THRESHOLD,
+      ABOVE_OFFSET,
+      BELOW_OFFSET,
+    )
+    const nearTop = (activeCY.value - offsetY) < FLIP_THRESHOLD
+    const loupeCenterX = left + LOUPE_RADIUS
+    const loupeEdgeY = nearTop ? top : top + LOUPE_DIAMETER
+    return {
+      x1: loupeCenterX,
+      y1: loupeEdgeY,
+      x2: activeCX.value,
+      y2: activeCY.value,
+      opacity: isDragging.value * 0.45,
+    }
+  })
+
+  return (
+    <>
+      {/* Circular loupe — clipped image + crosshair */}
+      <Animated.View style={outerStyle} pointerEvents="none">
+        <View
+          style={{
+            width: LOUPE_DIAMETER,
+            height: LOUPE_DIAMETER,
+            borderRadius: LOUPE_RADIUS,
+            overflow: 'hidden',
+          }}
+        >
+          <Animated.Image
+            source={{ uri: imageUri }}
+            style={imageStyle}
+            resizeMode="cover"
+          />
+          {/* Crosshair — rendered on top of the image, inside the clip */}
+          <Svg
+            width={LOUPE_DIAMETER}
+            height={LOUPE_DIAMETER}
+            style={StyleSheet.absoluteFillObject}
+          >
+            {/* Horizontal arm */}
+            <Line
+              x1={LOUPE_RADIUS - 10}
+              y1={LOUPE_RADIUS}
+              x2={LOUPE_RADIUS + 10}
+              y2={LOUPE_RADIUS}
+              stroke={Colors.palette.blue400}
+              strokeWidth={1.5}
+              strokeOpacity={0.7}
+            />
+            {/* Vertical arm */}
+            <Line
+              x1={LOUPE_RADIUS}
+              y1={LOUPE_RADIUS - 10}
+              x2={LOUPE_RADIUS}
+              y2={LOUPE_RADIUS + 10}
+              stroke={Colors.palette.blue400}
+              strokeWidth={1.5}
+              strokeOpacity={0.7}
+            />
+            {/* Centre dot */}
+            <Circle
+              cx={LOUPE_RADIUS}
+              cy={LOUPE_RADIUS}
+              r={1.25}
+              fill={Colors.palette.blue400}
+              fillOpacity={0.7}
+            />
+          </Svg>
+        </View>
+      </Animated.View>
+
+      {/* Tether — dashed line from loupe edge to corner, over full container */}
+      <Svg
+        width={containerWidth}
+        height={containerHeight}
+        style={[StyleSheet.absoluteFillObject, { pointerEvents: 'none' }]}
+      >
+        <AnimatedLine
+          animatedProps={tetherProps}
+          stroke={Colors.palette.blue400}
+          strokeWidth={1.5}
+          strokeDasharray="3,2.5"
+        />
+      </Svg>
+    </>
+  )
 }
 
 // --- CornerHandle ----------------------------------------------------------
@@ -131,6 +303,8 @@ interface Props {
   /** Initial quad in normalised 0.0–1.0 space relative to the original image */
   initialQuad: NormalisedQuad
   onQuadChange: (quad: NormalisedQuad) => void
+  /** URI of the image being cropped — passed to LoupeView for the zoomed thumbnail */
+  imageUri: string
 }
 
 export default function CropOverlay({
@@ -140,6 +314,7 @@ export default function CropOverlay({
   imageNativeHeight,
   initialQuad,
   onQuadChange,
+  imageUri,
 }: Props) {
   const { offsetX, offsetY, frameW, frameH } = getImageFrame(
     imageNativeWidth, imageNativeHeight, containerWidth, containerHeight,
@@ -215,7 +390,7 @@ export default function CropOverlay({
         <AnimatedPath
           animatedProps={strokeProps}
           fill="none"
-          stroke="#89C7FE"
+          stroke={Colors.palette.blue400}
           strokeWidth={2.5}
         />
         {circleAnimProps.map((props, i) => (
@@ -224,7 +399,7 @@ export default function CropOverlay({
             animatedProps={props}
             r={CORNER_RADIUS}
             fill="#FCFEFF"
-            stroke="#89C7FE"
+            stroke={Colors.palette.blue400}
             strokeWidth={2.5}
           />
         ))}
@@ -245,6 +420,19 @@ export default function CropOverlay({
           isDragging={isDragging}
         />
       ))}
+
+      <LoupeView
+        imageUri={imageUri}
+        activeCX={activeCX}
+        activeCY={activeCY}
+        isDragging={isDragging}
+        containerWidth={containerWidth}
+        containerHeight={containerHeight}
+        offsetX={offsetX}
+        offsetY={offsetY}
+        frameW={frameW}
+        frameH={frameH}
+      />
     </View>
   )
 }
