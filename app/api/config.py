@@ -87,6 +87,14 @@ class Settings(BaseSettings):
         alias="SLACK_WEBHOOK_URL",
         description="Slack incoming webhook URL for alerts and feedback reports.",
     )
+    # ======================
+    # Gemini
+    # ======================
+    gemini_api_key: str = Field(
+        default="",
+        alias="GEMINI_API_KEY",
+        description="Google Gemini API key for auto-categorization and field extraction.",
+    )
     api_port: int = Field(
         default=8000,
         alias="API_PORT",
