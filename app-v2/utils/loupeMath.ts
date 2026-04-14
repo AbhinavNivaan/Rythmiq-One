@@ -20,6 +20,7 @@ export function calcImageTranslation(
   zoom: number,
   loupeRadius: number,
 ): { translateX: number; translateY: number } {
+  'worklet'
   return {
     translateX: loupeRadius - (activeCX - offsetX) * zoom,
     translateY: loupeRadius - (activeCY - offsetY) * zoom,
@@ -44,6 +45,7 @@ export function calcLoupePosition(
   aboveOffset: number,
   belowOffset: number,
 ): { top: number; left: number } {
+  'worklet'
   const nearTop = (activeCY - offsetY) < flipThreshold
   const top = nearTop
     ? activeCY + belowOffset
