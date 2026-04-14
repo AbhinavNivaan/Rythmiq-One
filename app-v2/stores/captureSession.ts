@@ -16,17 +16,32 @@ export interface ConfirmedCrop {
   quadSource: 'model' | 'manual'  // 'model' = on-device TFLite detected; 'manual' = user positioned corners
 }
 
+export interface CategorizationResult {
+  document_category: string | null
+  document_subtype: string | null
+  suggested_name: string | null
+  suggested_owner: string | null
+  confidence: number | null
+}
+
 interface CaptureSessionState {
   sessionId: string | null
   images: CapturedImage[]
   docType: string
   confirmed: (ConfirmedCrop | undefined)[]
+  categorizationResult: CategorizationResult | null
 
   startSession: (images: CapturedImage[], docType: string) => string
   confirmCrop: (index: number, crop: ConfirmedCrop) => void
   replaceImage: (index: number, image: CapturedImage) => void
+  setCategorizationResult: (result: CategorizationResult | null) => void
   clearSession: () => void
-  getSession: () => { images: CapturedImage[]; docType: string; confirmed: (ConfirmedCrop | undefined)[] }
+  getSession: () => {
+    images: CapturedImage[]
+    docType: string
+    confirmed: (ConfirmedCrop | undefined)[]
+    categorizationResult: CategorizationResult | null
+  }
 }
 
 export const useCaptureSession = create<CaptureSessionState>((set, get) => ({
@@ -34,10 +49,11 @@ export const useCaptureSession = create<CaptureSessionState>((set, get) => ({
   images: [],
   docType: '',
   confirmed: [],
+  categorizationResult: null,
 
   startSession: (images, docType) => {
     const sessionId = `session_${Date.now()}`
-    set({ sessionId, images, docType, confirmed: [] })
+    set({ sessionId, images, docType, confirmed: [], categorizationResult: null })
     return sessionId
   },
 
@@ -60,12 +76,16 @@ export const useCaptureSession = create<CaptureSessionState>((set, get) => ({
     })
   },
 
+  setCategorizationResult: result => {
+    set({ categorizationResult: result })
+  },
+
   clearSession: () => {
-    set({ sessionId: null, images: [], docType: '', confirmed: [] })
+    set({ sessionId: null, images: [], docType: '', confirmed: [], categorizationResult: null })
   },
 
   getSession: () => {
-    const { images, docType, confirmed } = get()
-    return { images: [...images], docType, confirmed: [...confirmed] }
+    const { images, docType, confirmed, categorizationResult } = get()
+    return { images: [...images], docType, confirmed: [...confirmed], categorizationResult }
   },
 }))

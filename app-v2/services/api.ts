@@ -14,7 +14,7 @@ import * as SecureStore from 'expo-secure-store';
 import * as WebBrowser from 'expo-web-browser';
 import { makeRedirectUri } from 'expo-auth-session';
 import { createClient } from '@supabase/supabase-js';
-import type { SupportedStorage } from '@supabase/auth-js';
+import type { SupportedStorage } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -627,6 +627,14 @@ export interface JobStatus {
   };
 }
 
+export interface CategorizationResponse {
+  document_category: string | null;
+  document_subtype: string | null;
+  suggested_name: string | null;
+  suggested_owner: string | null;
+  confidence: number | null;
+}
+
 export const documentsApi = {
   /**
    * Create a MASTER document job (Scan flow - no portal)
@@ -725,6 +733,61 @@ export const documentsApi = {
         file_size_bytes: fileSizeBytes,
       }),
     });
+  },
+
+  /**
+   * Categorize a captured document image using the backend Gemini-powered endpoint.
+   */
+  async categorize(
+    fileUri: string,
+    imageWidth: number,
+    imageHeight: number,
+  ): Promise<CategorizationResponse> {
+    const token = await getAuthToken();
+    const headers: Record<string, string> = {};
+
+    if (DEV_SANDBOX_MODE) {
+      headers['x-dev-sandbox'] = 'true';
+    } else if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+
+    const formData = new FormData();
+    formData.append('image', {
+      uri: fileUri,
+      name: 'capture.jpg',
+      type: 'image/jpeg',
+    } as any);
+    formData.append('image_width', String(imageWidth));
+    formData.append('image_height', String(imageHeight));
+
+    const response = await fetch(`${API_BASE_URL}/jobs/categorize`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    let data: Record<string, any> = {};
+    try {
+      data = await response.json();
+    } catch {
+      data = {};
+    }
+
+    if (!response.ok) {
+      const detail = (data.detail && typeof data.detail === 'object')
+        ? data.detail
+        : data;
+
+      throw new ApiError(
+        response.status,
+        detail.error_code || detail.code || 'UNKNOWN_ERROR',
+        detail.message || data.message || 'An error occurred',
+        detail.details || data.details,
+      );
+    }
+
+    return data as CategorizationResponse;
   },
   
   /**
