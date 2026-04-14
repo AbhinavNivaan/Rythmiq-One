@@ -170,6 +170,7 @@ export default function CropPreviewScreen() {
               imageNativeHeight={currentImage.height}
               initialQuad={currentQuad}
               onQuadChange={handleQuadChange}
+              imageUri={currentImage.uri}
             />
           )}
           {isDetecting && (
