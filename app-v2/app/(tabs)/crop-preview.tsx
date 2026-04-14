@@ -21,6 +21,7 @@ import { router, useLocalSearchParams } from 'expo-router'
 import * as ImageManipulator from 'expo-image-manipulator'
 import { useCaptureSession, type NormalisedQuad } from '../../stores/captureSession'
 import { detectDocument, defaultQuad } from '../../services/documentDetector'
+import { documentsApi } from '../../services/api'
 import CropOverlay from '../../components/CropOverlay'
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window')
@@ -37,7 +38,7 @@ export default function CropPreviewScreen() {
   const params = useLocalSearchParams<{ sessionId?: string; index?: string }>()
   const index = parseInt(params.index ?? '0', 10)
 
-  const { images, confirmCrop } = useCaptureSession()
+  const { images, confirmCrop, setCategorizationResult } = useCaptureSession()
   const currentImage = images[index]
 
   const [isDetecting, setIsDetecting] = useState(true)
@@ -46,6 +47,7 @@ export default function CropPreviewScreen() {
   const [quadSource, setQuadSource] = useState<'model' | 'manual'>('manual')
   const [hintVisible, setHintVisible] = useState(true)
   const hasInteracted = useRef(false)
+  const hasTriggeredCategorization = useRef(false)
 
   const [imageLayout, setImageLayout] = useState({ width: SCREEN_WIDTH - 32, height: SCREEN_HEIGHT * 0.6 })
 
@@ -70,6 +72,30 @@ export default function CropPreviewScreen() {
         setQuadSource('manual')
       })
       .finally(() => setIsDetecting(false))
+
+    if (index === 0 && !hasTriggeredCategorization.current) {
+      hasTriggeredCategorization.current = true
+
+      // Run Gemini categorization in parallel with on-device crop detection.
+      ;(async () => {
+        try {
+          const compressed = await ImageManipulator.manipulateAsync(
+            currentImage.uri,
+            [],
+            { compress: 0.75, format: ImageManipulator.SaveFormat.JPEG },
+          )
+          const result = await documentsApi.categorize(
+            compressed.uri,
+            currentImage.width,
+            currentImage.height,
+          )
+          setCategorizationResult(result)
+        } catch (error) {
+          // Non-fatal: upload path can still proceed without categorization.
+          console.warn('[crop-preview] auto-categorization failed (non-fatal)', error)
+        }
+      })()
+    }
   }, [currentImage?.uri])
 
   const handleQuadChange = useCallback((quad: NormalisedQuad) => {
