@@ -62,9 +62,16 @@ interface CornerHandleProps {
   minY: number
   maxY: number
   onDragEnd: () => void
+  // Loupe wiring
+  activeCX: Animated.SharedValue<number>
+  activeCY: Animated.SharedValue<number>
+  isDragging: Animated.SharedValue<number>
 }
 
-function CornerHandle({ cx, cy, minX, maxX, minY, maxY, onDragEnd }: CornerHandleProps) {
+function CornerHandle({
+  cx, cy, minX, maxX, minY, maxY, onDragEnd,
+  activeCX, activeCY, isDragging,
+}: CornerHandleProps) {
   const startX = useSharedValue(0)
   const startY = useSharedValue(0)
 
@@ -72,12 +79,19 @@ function CornerHandle({ cx, cy, minX, maxX, minY, maxY, onDragEnd }: CornerHandl
     .onStart(() => {
       startX.value = cx.value
       startY.value = cy.value
+      // Set position BEFORE isDragging=1 to prevent a one-frame jump to (0,0)
+      activeCX.value = cx.value
+      activeCY.value = cy.value
+      isDragging.value = 1
     })
     .onUpdate(e => {
       cx.value = Math.max(minX, Math.min(maxX, startX.value + e.translationX))
       cy.value = Math.max(minY, Math.min(maxY, startY.value + e.translationY))
+      activeCX.value = cx.value
+      activeCY.value = cy.value
     })
     .onEnd(() => {
+      isDragging.value = 0
       runOnJS(onDragEnd)()
     })
 
@@ -146,6 +160,10 @@ export default function CropOverlay({
   const c1x = useSharedValue(p1.px); const c1y = useSharedValue(p1.py)
   const c2x = useSharedValue(p2.px); const c2y = useSharedValue(p2.py)
   const c3x = useSharedValue(p3.px); const c3y = useSharedValue(p3.py)
+
+  const activeCX = useSharedValue(0)
+  const activeCY = useSharedValue(0)
+  const isDragging = useSharedValue(0)
 
   const emitChange = useCallback(() => {
     const toNorm = (px: number, py: number): [number, number] => [
@@ -222,6 +240,9 @@ export default function CropOverlay({
           minY={offsetY}
           maxY={offsetY + frameH}
           onDragEnd={emitChange}
+          activeCX={activeCX}
+          activeCY={activeCY}
+          isDragging={isDragging}
         />
       ))}
     </View>
