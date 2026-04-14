@@ -11,6 +11,10 @@ describe('Colors — primitive tokens', () => {
     expect(Colors.palette.amber).toBe('#FF9500');
     expect(Colors.palette.red).toBe('#EF4444');
   });
+
+  it('has blue400 token with maya blue value', () => {
+    expect(Colors.palette.blue400).toBe('#89C7FE');
+  });
 });
 
 describe('Colors — semantic aliases', () => {

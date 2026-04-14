@@ -5,6 +5,7 @@ const palette = {
   neutral900: '#FCFEFF',
   green:  '#4ADE80',
   blue:   '#60A5FA',
+  blue400: '#89C7FE',
   amber:  '#FF9500',
   red:    '#EF4444',
 } as const;
