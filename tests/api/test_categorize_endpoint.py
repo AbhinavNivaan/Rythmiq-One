@@ -100,6 +100,37 @@ def test_categorize_returns_200_with_nulls_on_gemini_failure() -> None:
     assert body["confidence"] is None
 
 
+def test_categorize_returns_200_with_nulls_when_gemini_key_missing() -> None:
+    """When GEMINI_API_KEY is missing, endpoint should return all-null fallback."""
+    mock_user = MagicMock()
+    mock_user.id = USER_ID
+
+    app.dependency_overrides[get_current_user] = lambda: mock_user
+    try:
+        client = TestClient(app)
+        with patch("app.api.routes.jobs.categorize_document") as mock_cat, patch(
+            "app.api.routes.jobs.get_settings"
+        ) as mock_settings:
+            mock_settings.return_value.gemini_api_key = None
+            response = client.post(
+                "/jobs/categorize",
+                files={"image": ("test.jpg", BytesIO(_fake_image_bytes()), "image/jpeg")},
+                data={"image_width": "800", "image_height": "600"},
+                headers=_auth_headers(),
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["document_category"] is None
+    assert body["document_subtype"] is None
+    assert body["suggested_name"] is None
+    assert body["suggested_owner"] is None
+    assert body["confidence"] is None
+    mock_cat.assert_not_called()
+
+
 def test_categorize_requires_auth() -> None:
     client = TestClient(app)
     response = client.post(

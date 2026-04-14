@@ -183,12 +183,16 @@ class FeedbackRequest(BaseModel):
 # =============================================================================
 
 
-class CategorizationResponse(BaseModel):
-    """Response for POST /jobs/categorize. All fields null on fallback."""
+class ExtractionResponse(BaseModel):
+    """Response model for document extraction/categorization fallback flow."""
 
     document_category: str | None = None
     document_subtype: str | None = None
     suggested_name: str | None = None
     suggested_owner: str | None = None
     confidence: float | None = None
+
+
+class CategorizationResponse(ExtractionResponse):
+    """Response for POST /jobs/categorize. All fields null on fallback."""
 
