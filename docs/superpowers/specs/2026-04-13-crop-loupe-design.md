@@ -27,7 +27,8 @@ Show a floating magnifier loupe above the active corner while dragging. The loup
 - **Tether:** A short dashed line (`#89C7FE`, 3pt dash / 2.5pt gap, 45% opacity) connects the bottom (or top, when flipped) of the loupe to the corner position
 - **Crosshair:** Two 20pt lines + 2.5pt dot at the loupe centre, `#89C7FE` at 70% opacity — marks the exact corner pixel
 - **Visibility:** `opacity` animated 0 → 1 on drag start, 1 → 0 on drag end (no fade delay; instant)
-- **Hint text:** Fades to 10% opacity while any drag is in progress (the loupe replaces its purpose)
+- **Hint text:** No change to hint behavior — it already auto-hides permanently after the first `onQuadChange` via existing `hasInteracted` logic in `crop-preview.tsx`. No mid-drag fade needed; the loupe itself provides feedback during the drag.
+- **Colours:** Spec references `#89C7FE` for clarity. Implementation must use `Colors.palette.blue400` (same value) per design system rules.
 
 ---
 
@@ -35,7 +36,7 @@ Show a floating magnifier loupe above the active corner while dragging. The loup
 
 ### Option chosen: Inline in CropOverlay
 
-All loupe state lives inside `CropOverlay`. No changes to `crop-preview.tsx`. The only new public surface is one additional prop on `CropOverlay`.
+All loupe state lives inside `CropOverlay`. Minimal changes to `crop-preview.tsx` — one new prop (`imageUri`) passed to `<CropOverlay>`. No other changes to the parent screen.
 
 ### Component changes
 
@@ -59,7 +60,7 @@ onDragActive: (cx: number, cy: number) => void
 onDragEnd: () => void  // already exists — extended to reset isDragging
 ```
 
-On `onStart`: set `isDragging.value = 1` (UI thread, direct assignment)
+On `onStart`: set `activeCX.value = cx.value; activeCY.value = cy.value` first, then `isDragging.value = 1` — this prevents a one-frame jump to (0,0) before the first `onUpdate` fires
 On `onUpdate`: call `onDragActive(cx.value, cy.value)` directly — gesture callbacks run on the UI thread in Reanimated 3; `onDragActive` must be a worklet function
 On `onEnd`: set `isDragging.value = 0`, then call `runOnJS(onDragEnd)()` (already present)
 
@@ -122,20 +123,22 @@ export function calcLoupePosition(
   activeCX: number,
   activeCY: number,
   offsetY: number,
+  containerWidth: number,
   loupeDiameter: number, // 110
   flipThreshold: number, // 120
   aboveOffset: number,   // 75
   belowOffset: number,   // 40
 ): { top: number; left: number } {
   const nearTop = (activeCY - offsetY) < flipThreshold
-  return {
-    top: nearTop
-      ? activeCY + belowOffset
-      : activeCY - aboveOffset - loupeDiameter,
-    left: activeCX - loupeDiameter / 2,
-  }
+  const top = nearTop
+    ? activeCY + belowOffset
+    : activeCY - aboveOffset - loupeDiameter
+  const left = Math.max(0, Math.min(containerWidth - loupeDiameter, activeCX - loupeDiameter / 2))
+  return { top, left }
 }
 ```
+
+`left` is clamped to `[0, containerWidth - loupeDiameter]` so the loupe never clips off the left or right edge of the container.
 
 Both functions are called inside `useAnimatedStyle` worklets in `LoupeView`.
 
@@ -184,8 +187,8 @@ The loupe position and image translation update at 60fps on the UI thread with z
 ## Testing
 
 **Unit tests (`loupeMath.test.ts`):**
-- `calcImageTranslation`: corner at centre of frame → image centred; corner at top-left → image at max positive offset; corner at bottom-right → image at max negative offset
-- `calcLoupePosition`: corner above flip threshold → loupe below; corner below flip threshold → loupe above; corner at exact threshold boundary
+- `calcImageTranslation`: corner at centre of frame (zero offset) → image centred; corner at top-left → max positive offset; corner at bottom-right → max negative offset; non-zero `offsetX`/`offsetY` (letterboxed landscape doc in portrait container) → translation accounts for letterbox correctly
+- `calcLoupePosition`: corner above flip threshold → loupe below; corner below flip threshold → loupe above; corner at exact threshold boundary; corner near left edge → `left` clamped to 0; corner near right edge → `left` clamped to `containerWidth - loupeDiameter`
 
 **Manual verification checklist:**
 - [ ] Loupe appears instantly on drag start, disappears on drag end
