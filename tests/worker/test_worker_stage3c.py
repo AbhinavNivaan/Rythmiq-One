@@ -65,17 +65,21 @@ def test_worker_wires_stage3c_between_enhancement_and_ocr_and_cleans_temp_file()
 
     sentinel_db = object()
     stage_order: list[str] = []
-    extracted_paths: list[str] = []
 
     def _fake_enhance(*_args: Any, **_kwargs: Any) -> Any:
         stage_order.append("enhance")
         return mock_enhanced
 
-    def _fake_extract(image_path: str, _api_key: str | None) -> dict[str, Any]:
+    def _fake_extract(**kwargs: Any) -> dict[str, Any]:
         stage_order.append("extract")
-        extracted_paths.append(image_path)
-        assert os.path.exists(image_path)
+        assert kwargs["job_id"] == "stage3c-job-001"
+        assert kwargs["user_id"] == "stage3c-user-001"
+        assert kwargs["document_type"] == "document"
+        assert kwargs["extract_data"] is True
+        assert kwargs["db_client"] is sentinel_db
+        assert kwargs["image_bytes"] == b"enhanced-image-bytes"
         return {
+            "status": "completed",
             "fields": {"pan_number": "ABCDE1234F"},
             "confidence": {"pan_number": 0.97},
         }
@@ -87,9 +91,8 @@ def test_worker_wires_stage3c_between_enhancement_and_ocr_and_cleans_temp_file()
     with patch("worker.create_client_from_spec", return_value=mock_storage), \
          patch("worker.assess_quality", return_value=mock_quality), \
          patch("worker.enhance_image", side_effect=_fake_enhance), \
-         patch("worker.extract_document_fields", side_effect=_fake_extract, create=True) as extract_mock, \
+            patch("worker.process_extraction_stage", side_effect=_fake_extract, create=True) as extract_mock, \
          patch("worker.get_supabase_client", return_value=sentinel_db, create=True) as db_client_mock, \
-         patch("worker.upsert_document_extraction", return_value=True, create=True) as upsert_mock, \
          patch("worker.docai_extract_text", side_effect=_fake_ocr), \
          patch("worker.adapt_master_document", return_value=mock_schema), \
          patch("worker.adapt_to_schema", return_value=mock_schema), \
@@ -100,16 +103,5 @@ def test_worker_wires_stage3c_between_enhancement_and_ocr_and_cleans_temp_file()
     assert result.job_id == "stage3c-job-001"
     assert db_client_mock.call_count == 1
     assert extract_mock.call_count == 1
-    assert upsert_mock.call_count == 1
 
     assert stage_order == ["enhance", "extract", "ocr"]
-
-    extracted_path = extracted_paths[0]
-    assert not os.path.exists(extracted_path)
-
-    persisted = upsert_mock.call_args.kwargs
-    assert persisted["job_id"] == "stage3c-job-001"
-    assert persisted["user_id"] == "stage3c-user-001"
-    assert persisted["status"] == "completed"
-    assert persisted["fields"] == {"pan_number": "ABCDE1234F"}
-    assert persisted["confidence"] == {"pan_number": 0.97}

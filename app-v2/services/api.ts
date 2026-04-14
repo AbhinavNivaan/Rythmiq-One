@@ -680,7 +680,7 @@ export const documentsApi = {
     documentCategory?: string,
     documentSubtype?: string,
     quadSource?: 'model' | 'manual',
-    extractData: boolean = true,
+    extractData: boolean = false,
   ): Promise<{ job_id: string; status: string }> {
     return apiRequest<{ job_id: string; status: string }>(`/jobs/${jobId}/submit`, {
       method: 'POST',

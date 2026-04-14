@@ -79,19 +79,27 @@ export default function CropPreviewScreen() {
       // Run Gemini categorization in parallel with on-device crop detection.
       ;(async () => {
         try {
+          const maxDim = 800
+          const scaleFactor = Math.min(
+            1,
+            maxDim / Math.max(currentImage.width, currentImage.height),
+          )
+          const targetWidth = Math.max(1, Math.round(currentImage.width * scaleFactor))
+
           const compressed = await ImageManipulator.manipulateAsync(
             currentImage.uri,
-            [],
-            { compress: 0.75, format: ImageManipulator.SaveFormat.JPEG },
+            [{ resize: { width: targetWidth } }],
+            { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG },
           )
           const result = await documentsApi.categorize(
             compressed.uri,
-            currentImage.width,
-            currentImage.height,
+            compressed.width ?? targetWidth,
+            compressed.height ?? Math.max(1, Math.round(currentImage.height * scaleFactor)),
           )
           setCategorizationResult(result)
         } catch (error) {
           // Non-fatal: upload path can still proceed without categorization.
+          setCategorizationResult(null)
           console.warn('[crop-preview] auto-categorization failed (non-fatal)', error)
         }
       })()

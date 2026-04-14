@@ -96,7 +96,7 @@ def test_process_extraction_stage_persists_completed_record(monkeypatch) -> None
         image_bytes=b"image-bytes",
         job_id="job-2",
         user_id="user-2",
-        document_type="identity",
+        document_type="document",
         extract_data=True,
         api_key="gemini-key",
         db_client=sentinel_db,
@@ -107,13 +107,15 @@ def test_process_extraction_stage_persists_completed_record(monkeypatch) -> None
     assert result["fields"] == payload["fields"]
     assert result["confidence"] == payload["confidence"]
 
-    assert len(calls) == 1
+    assert len(calls) == 2
     assert calls[0]["job_id"] == "job-2"
-    assert calls[0]["user_id"] == "user-2"
-    assert calls[0]["document_type"] == "identity"
-    assert calls[0]["status"] == "completed"
-    assert calls[0]["fields"] == payload["fields"]
-    assert calls[0]["confidence"] == payload["confidence"]
+    assert calls[0]["status"] == "pending"
+    assert calls[1]["job_id"] == "job-2"
+    assert calls[1]["user_id"] == "user-2"
+    assert calls[1]["document_type"] == "document"
+    assert calls[1]["status"] == "completed"
+    assert calls[1]["fields"] == payload["fields"]
+    assert calls[1]["confidence"] == payload["confidence"]
 
 
 def test_process_extraction_stage_persists_failed_record_for_invalid_response(monkeypatch) -> None:
@@ -142,8 +144,10 @@ def test_process_extraction_stage_persists_failed_record_for_invalid_response(mo
     assert result["fields"] == {}
     assert result["confidence"] == {}
 
-    assert len(calls) == 1
+    assert len(calls) == 2
     assert calls[0]["job_id"] == "job-3"
-    assert calls[0]["status"] == "failed"
-    assert calls[0]["fields"] == {}
-    assert calls[0]["confidence"] == {}
+    assert calls[0]["status"] == "pending"
+    assert calls[1]["job_id"] == "job-3"
+    assert calls[1]["status"] == "failed"
+    assert calls[1]["fields"] == {}
+    assert calls[1]["confidence"] == {}

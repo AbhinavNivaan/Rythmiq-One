@@ -79,6 +79,7 @@ class SubmitJobRequest(BaseModel):
     confirmed_crop_quad: list[list[float]] | None = None
     # [[x,y],[x,y],[x,y],[x,y]] normalised 0.0–1.0, TL/TR/BR/BL order
     quad_source: Literal["model", "manual"] | None = None
+    extract_data: bool = False
 
 
 class SubmitJobResponse(BaseModel):

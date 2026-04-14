@@ -144,6 +144,7 @@ async def _submit_job_to_processing(
     output_format: str = "jpeg",
     confirmed_crop_quad: list[list[float]] | None = None,
     quad_source: str | None = None,
+    extract_data: bool = False,
 ) -> None:
     settings = get_settings()
 
@@ -157,7 +158,7 @@ async def _submit_job_to_processing(
             "document_type": document_type,
             "document_category": document_category,
             "document_subtype": document_subtype,
-            "extract_data": bool(metadata.get("extract_data", False)),
+            "extract_data": bool(extract_data),
             "input": {
                 "raw_path": storage_path,
                 "artifact_url": None,
@@ -221,7 +222,7 @@ async def _submit_job_to_processing(
             "user_id": str(user_id),
             "job_type": job_type,
             "document_type": document_type,
-            "extract_data": bool((input_metadata or {}).get("extract_data", False)),
+            "extract_data": bool(extract_data),
             "storage_path": storage_path,
             "portal_schema_id": str(portal_schema_id) if portal_schema_id else None,
             "portal_schema_name": portal_schema_name,
@@ -618,6 +619,7 @@ async def create_job(
             sek_b64=body.sek_b64,
             encrypted_input=encrypted_input,
             confirmed_crop_quad=None,
+            extract_data=body.extract_data,
         )
 
         return CreateJobResponse(job_id=adapt_job_id)
@@ -781,6 +783,7 @@ async def create_job(
             sek_b64=body.sek_b64,
             encrypted_input=False,  # Fresh upload is never pre-encrypted
             confirmed_crop_quad=None,
+            extract_data=body.extract_data,
         )
     else:
         logger.info(
@@ -839,6 +842,15 @@ async def submit_job(
         )
 
     metadata = job.get("input_metadata") or {}
+    metadata["extract_data"] = bool(body.extract_data)
+
+    # Persist latest consent choice for auditability and parity with worker payload.
+    try:
+        db.table("jobs").update({"input_metadata": metadata}).eq("id", str(job_id)).execute()
+    except Exception:
+        # Non-fatal: the explicit payload flag below is authoritative for this dispatch.
+        pass
+
     storage_path = metadata.get("storage_path")
     if not storage_path:
         raise InvalidInputException(
@@ -883,6 +895,7 @@ async def submit_job(
         output_format=body.output_format,
         confirmed_crop_quad=body.confirmed_crop_quad,
         quad_source=body.quad_source,
+        extract_data=body.extract_data,
     )
 
     return SubmitJobResponse(job_id=job_id, status="processing")

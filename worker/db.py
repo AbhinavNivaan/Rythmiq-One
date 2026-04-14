@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import logging
 import os
 from typing import Any
@@ -41,12 +40,13 @@ def upsert_document_extraction(
     status: str,
     fields: dict[str, Any],
     confidence: dict[str, float],
+    model_version: str | None = None,
+    error: str | None = None,
 ) -> bool:
     """Upsert a document extraction record for GET /jobs/{job_id}/extraction."""
     if db_client is None:
         return False
 
-    now_iso = datetime.now(timezone.utc).isoformat()
     payload: dict[str, Any] = {
         "job_id": str(job_id),
         "user_id": str(user_id),
@@ -54,16 +54,18 @@ def upsert_document_extraction(
         "status": str(status),
         "fields": fields if isinstance(fields, dict) else {},
         "confidence": confidence if isinstance(confidence, dict) else {},
-        "updated_at": now_iso,
+        "model_version": model_version,
+        "error": error,
     }
 
     if status == "completed":
-        payload["extracted_at"] = now_iso
+        from datetime import datetime, timezone
+        payload["extracted_at"] = datetime.now(timezone.utc).isoformat()
 
     try:
         db_client.table("document_extractions").upsert(
             payload,
-            on_conflict="job_id,user_id",
+            on_conflict="job_id",
         ).execute()
         return True
     except Exception as exc:

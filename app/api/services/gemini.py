@@ -133,5 +133,7 @@ def categorize_document(image_bytes: bytes, api_key: str) -> dict[str, Any] | No
         logger.warning("Gemini categorization returned non-JSON response")
         return None
     except Exception as exc:  # pragma: no cover - defensive fallback
-        logger.warning("Gemini categorization failed: %s", type(exc).__name__)
+        # Keep logs diagnostic but privacy-safe: no image bytes or model payload text.
+        safe_message = str(exc)[:160]
+        logger.warning("Gemini categorization failed: %s (%s)", type(exc).__name__, safe_message)
         return None

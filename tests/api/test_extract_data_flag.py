@@ -151,6 +151,7 @@ def test_submit_job_to_processing_passes_extract_data_to_worker_payload() -> Non
                 },
                 correlation_id="corr-1",
                 camber=camber,
+                extract_data=True,
             )
         )
 
