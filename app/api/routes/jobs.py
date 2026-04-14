@@ -949,13 +949,13 @@ async def list_jobs(
     return {"jobs": jobs}
 
 
-@router.post("/categorize", response_model=ExtractionResponse)
+@router.post("/categorize", response_model=CategorizationResponse)
 async def categorize_document_endpoint(
     image: UploadFile = File(...),
     image_width: int = Form(...),
     image_height: int = Form(...),
     current_user: AuthenticatedUser = Depends(get_current_user),
-) -> ExtractionResponse:
+) -> CategorizationResponse:
     """
     Classify a document image using Gemini Flash Vision.
 
@@ -968,15 +968,15 @@ async def categorize_document_endpoint(
 
     settings = get_settings()
     if not settings.gemini_api_key:
-        return ExtractionResponse()
+        return CategorizationResponse()
 
     image_bytes = await image.read()
     result = categorize_document(image_bytes, api_key=settings.gemini_api_key)
 
     if result is None:
-        return ExtractionResponse()
+        return CategorizationResponse()
 
-    return ExtractionResponse(
+    return CategorizationResponse(
         document_category=result.get("document_category"),
         document_subtype=result.get("document_subtype"),
         suggested_name=result.get("suggested_name"),

@@ -139,3 +139,11 @@ def test_categorize_requires_auth() -> None:
         data={"image_width": "800", "image_height": "600"},
     )
     assert response.status_code == 401
+
+
+def test_categorize_openapi_uses_categorization_response_model() -> None:
+    openapi = app.openapi()
+    schema_ref = (
+        openapi["paths"]["/jobs/categorize"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+    )
+    assert schema_ref.endswith("/CategorizationResponse")
