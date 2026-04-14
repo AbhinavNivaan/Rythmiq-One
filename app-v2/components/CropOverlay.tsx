@@ -398,7 +398,7 @@ export default function CropOverlay({
             key={i}
             animatedProps={props}
             r={CORNER_RADIUS}
-            fill="#FCFEFF"
+            fill={Colors.palette.neutral900}
             stroke={Colors.palette.blue400}
             strokeWidth={2.5}
           />
