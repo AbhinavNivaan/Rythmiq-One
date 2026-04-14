@@ -20,6 +20,8 @@ import json
 import logging
 import sys
 import time
+import base64
+import tempfile
 from typing import Any, Dict, List, Optional
 
 # Ensure parent directory is in path for imports
@@ -53,6 +55,8 @@ from processors.document_ai import extract_text_safe as docai_extract_text
 from processors.enhancement import enhance_image, EnhancementOptions, READABLE_QUALITY_THRESHOLD
 from processors.schema import adapt_to_schema, adapt_master_document
 from processors.dataset_logger import log_detection_sample
+from processors import extraction as extraction_processor
+from db import get_worker_db_client as get_supabase_client, upsert_document_extraction
 from crypto import encrypt_file as crypto_encrypt, decrypt_file as crypto_decrypt, sek_from_base64, nonce_to_base64, NONCE_SIZE
 from slack import post_slack_alert
 
@@ -60,6 +64,53 @@ from slack import post_slack_alert
 logger = logging.getLogger(__name__)
 
 _PDF_MAGIC = b"%PDF"
+
+
+def extract_document_fields(image_path: str, api_key: str | None) -> dict[str, Any]:
+    """Extract fields from an enhanced image file using Gemini Flash Vision."""
+    if not api_key:
+        return {"fields": {}, "confidence": {}}
+
+    if extraction_processor.genai is None:
+        return {"fields": {}, "confidence": {}}
+
+    try:
+        with open(image_path, "rb") as handle:
+            image_bytes = handle.read()
+
+        if not image_bytes:
+            return {"fields": {}, "confidence": {}}
+
+        extraction_processor.genai.configure(api_key=api_key)
+        model = extraction_processor.genai.GenerativeModel(
+            model_name="gemini-2.0-flash",
+            system_instruction=extraction_processor._EXTRACTION_SYSTEM,
+        )
+
+        image_part = {
+            "mime_type": "image/jpeg",
+            "data": base64.b64encode(image_bytes).decode("utf-8"),
+        }
+
+        response = model.generate_content(
+            [image_part, extraction_processor._EXTRACTION_USER],
+            generation_config=extraction_processor.genai.GenerationConfig(
+                response_mime_type="application/json",
+                response_schema=extraction_processor._EXTRACTION_SCHEMA,
+            ),
+            request_options={"timeout": 10},
+        )
+
+        parsed = json.loads(response.text)
+        validated = extraction_processor._validate_extraction_payload(parsed)
+        if validated is None:
+            return {"fields": {}, "confidence": {}}
+
+        fields, confidence = validated
+        return {"fields": fields, "confidence": confidence}
+    except Exception as exc:
+        logger.warning("Stage 3c extraction failed: %s", type(exc).__name__)
+        return {"fields": {}, "confidence": {}}
 
 
 def _extract_image_from_pdf(pdf_bytes: bytes) -> bytes:
@@ -290,6 +341,50 @@ def process_job(payload: JobPayload) -> SuccessResult:
         )
 
     enhanced = enhance_image(raw_data, enhancement_options)
+
+    # Stage 3c: DATA EXTRACTION (optional, fail-open)
+    if payload.extract_data:
+        extraction_status = "failed"
+        extraction_fields: dict[str, Any] = {}
+        extraction_confidence: dict[str, float] = {}
+        db_client = get_supabase_client()
+        temp_enhanced_path: str | None = None
+
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as temp_file:
+                temp_file.write(enhanced.image_data)
+                temp_enhanced_path = temp_file.name
+
+            extraction_result = extract_document_fields(
+                temp_enhanced_path,
+                os.environ.get("GEMINI_API_KEY"),
+            )
+
+            fields_raw = extraction_result.get("fields") if isinstance(extraction_result, dict) else {}
+            confidence_raw = extraction_result.get("confidence") if isinstance(extraction_result, dict) else {}
+
+            extraction_fields = fields_raw if isinstance(fields_raw, dict) else {}
+            extraction_confidence = confidence_raw if isinstance(confidence_raw, dict) else {}
+            extraction_status = "completed"
+        except Exception as exc:
+            logger.warning("Stage 3c extraction persistence prep failed: %s", type(exc).__name__)
+        finally:
+            if temp_enhanced_path and os.path.exists(temp_enhanced_path):
+                try:
+                    os.remove(temp_enhanced_path)
+                except OSError:
+                    logger.warning("Failed to remove Stage 3c temp file")
+
+        if db_client is not None:
+            upsert_document_extraction(
+                db_client,
+                job_id=payload.job_id,
+                user_id=payload.user_id,
+                document_type=payload.document_type,
+                status=extraction_status,
+                fields=extraction_fields,
+                confidence=extraction_confidence,
+            )
 
     # Stage 4: DOCUMENT AI OCR (replaces PaddleOCR — runs on enhanced image)
     # Single call after enhancement.  No rollback needed — Document AI
