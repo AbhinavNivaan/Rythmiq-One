@@ -8,6 +8,10 @@ const palette = {
   blue400: '#89C7FE',
   amber:  '#FF9500',
   red:    '#EF4444',
+  // Legacy aliases — screens still reference these; remove after screen remediation
+  inkBlack:   '#070712',
+  shadowGrey: '#191B26',
+  white:      '#FCFEFF',
 } as const;
 
 const semantic = {
