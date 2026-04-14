@@ -14,7 +14,7 @@ import re as _re
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from postgrest.exceptions import APIError
 
 from app.api.auth import AuthenticatedUser, get_current_user
@@ -33,9 +33,11 @@ from app.api.services.camber import CamberService, get_camber_service
 from app.api.services.packaging import PackagingService, get_packaging_service
 from app.api.config import get_settings
 from app.api.routes.webhooks import _persist_worker_output
+from app.api.services.gemini import categorize_document
 from app.api.services import feedback_gcs
 from app.api import slack
 from .models import (
+    CategorizationResponse,
     CreateJobRequest,
     CreateJobResponse,
     FeedbackRequest,
@@ -944,6 +946,42 @@ async def list_jobs(
         )
 
     return {"jobs": jobs}
+
+
+@router.post("/categorize", response_model=CategorizationResponse)
+async def categorize_document_endpoint(
+    image: UploadFile = File(...),
+    image_width: int = Form(...),
+    image_height: int = Form(...),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+) -> CategorizationResponse:
+    """
+    Classify a document image using Gemini Flash Vision.
+
+    Returns document category, subtype, and naming suggestions.
+    Always returns HTTP 200 - on any error, all fields are null.
+    Image bytes are never logged or stored server-side.
+    """
+    # Ensure multipart metadata fields are provided and parsed.
+    _ = (image_width, image_height, current_user)
+
+    settings = get_settings()
+    if not settings.gemini_api_key:
+        return CategorizationResponse()
+
+    image_bytes = await image.read()
+    result = categorize_document(image_bytes, api_key=settings.gemini_api_key)
+
+    if result is None:
+        return CategorizationResponse()
+
+    return CategorizationResponse(
+        document_category=result.get("document_category"),
+        document_subtype=result.get("document_subtype"),
+        suggested_name=result.get("suggested_name"),
+        suggested_owner=result.get("suggested_owner"),
+        confidence=result.get("confidence"),
+    )
 
 
 @router.get("/{job_id}", response_model=JobStatusResponse)

@@ -177,3 +177,18 @@ class FeedbackRequest(BaseModel):
     note: str | None = Field(default=None, max_length=500)
     consent_granted: bool = Field(...)
 
+
+# =============================================================================
+# Categorization Models
+# =============================================================================
+
+
+class CategorizationResponse(BaseModel):
+    """Response for POST /jobs/categorize. All fields null on fallback."""
+
+    document_category: str | None = None
+    document_subtype: str | None = None
+    suggested_name: str | None = None
+    suggested_owner: str | None = None
+    confidence: float | None = None
+
