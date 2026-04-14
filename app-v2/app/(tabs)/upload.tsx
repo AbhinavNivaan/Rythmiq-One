@@ -24,7 +24,7 @@ import { router } from 'expo-router';
 import { ArrowLeft, Camera, Upload, CheckCircle, FileImage, PenTool, File, ChevronUp, Check } from 'lucide-react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Colors from '../../constants/Colors';
-import { documentsApi, formSchemasApi } from '../../services/api';
+import { formSchemasApi } from '../../services/api';
 import { startBackgroundUpload } from '../../services/backgroundUpload';
 import { useCaptureSession, type ConfirmedCrop } from '../../stores/captureSession';
 
@@ -48,6 +48,7 @@ type DocumentCategory =
   | 'other';
 
 type DocumentType = string;
+const CATEGORIZATION_PREFILL_THRESHOLD = 0.7;
 
 // Document category to type mapping
 const DOCUMENT_CATEGORIES: Record<DocumentCategory, { label: string; types: string[] }> = {
@@ -84,6 +85,10 @@ const DOCUMENT_CATEGORIES: Record<DocumentCategory, { label: string; types: stri
     types: ['Other Document'],
   },
 };
+
+function isDocumentCategory(value: string | null | undefined): value is DocumentCategory {
+  return !!value && Object.prototype.hasOwnProperty.call(DOCUMENT_CATEGORIES, value);
+}
 
 /**
  * Merges portal-specific document subtypes (seeded by form schemas) into the
@@ -195,12 +200,14 @@ export default function UploadScreen() {
   const clearSession = useCaptureSession(s => s.clearSession);
   const confirmed = useCaptureSession(s => s.confirmed);
   const docType = useCaptureSession(s => s.docType);
+  const categorizationResult = useCaptureSession(s => s.categorizationResult);
   const confirmedCrops = confirmed.filter((c): c is ConfirmedCrop => c !== undefined);
   const imageUris = confirmedCrops.map(c => c.croppedUri ?? c.originalUri);
   const [documentName, setDocumentName] = useState('');
   const [documentLabel, setDocumentLabel] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<DocumentCategory>('identity');
   const [selectedType, setSelectedType] = useState<string>('Aadhaar Card');
+  const [extractData, setExtractData] = useState(true);
   const documentCategories = useSeededDocumentCategories();
   const [isCategoryOpen, setIsCategoryOpen] = useState(false);
   const [isTypeOpen, setIsTypeOpen] = useState(false);
@@ -211,7 +218,38 @@ export default function UploadScreen() {
   // reset any user override back to the session default).
   const hasPreSelected = useRef(false);
   useEffect(() => {
-    if (!docType || hasPreSelected.current) return;
+    if (hasPreSelected.current) return;
+
+    const canUseCategorization =
+      categorizationResult?.confidence !== null
+      && categorizationResult?.confidence !== undefined
+      && categorizationResult.confidence > CATEGORIZATION_PREFILL_THRESHOLD
+      && isDocumentCategory(categorizationResult.document_category);
+
+    if (canUseCategorization) {
+      const category = categorizationResult!.document_category as DocumentCategory;
+      const categoryTypes = documentCategories[category].types;
+      const preferredType = categorizationResult?.document_subtype;
+
+      setSelectedCategory(category);
+      setSelectedType(
+        preferredType && categoryTypes.includes(preferredType)
+          ? preferredType
+          : categoryTypes[0]
+      );
+
+      if (categorizationResult.suggested_name) {
+        setDocumentName(categorizationResult.suggested_name);
+      }
+      if (categorizationResult.suggested_owner) {
+        setDocumentLabel(categorizationResult.suggested_owner);
+      }
+
+      hasPreSelected.current = true;
+      return;
+    }
+
+    if (!docType) return;
 
     const docTypeToCategory: Record<string, DocumentCategory> = {
       Photo: 'photograph',
@@ -225,7 +263,7 @@ export default function UploadScreen() {
     setSelectedCategory(mappedCategory);
     setSelectedType(documentCategories[mappedCategory].types[0]);
     hasPreSelected.current = true;
-  }, [docType, documentCategories]);
+  }, [categorizationResult, docType, documentCategories]);
 
   const handleUpload = useCallback(() => {
     if (imageUris.length === 0) {
@@ -236,6 +274,9 @@ export default function UploadScreen() {
     let apiDocumentType: 'photo' | 'signature' | 'document' = 'document';
     if (selectedCategory === 'photograph') apiDocumentType = 'photo';
     else if (selectedCategory === 'signature') apiDocumentType = 'signature';
+    const shouldExtractData = selectedCategory !== 'photograph' && selectedCategory !== 'signature'
+      ? extractData
+      : false;
 
     // Fire upload in the background — it continues after navigation
     startBackgroundUpload(
@@ -247,12 +288,13 @@ export default function UploadScreen() {
       queryClient,
       useLossless ? 'pdf_mrc' : 'jpeg',
       documentLabel || undefined,
+      shouldExtractData,
     );
     clearSession();
 
     // Go to jobs immediately so the user can see progress and explore freely
     router.replace('/(tabs)/jobs');
-  }, [confirmedCrops, documentName, selectedCategory, selectedType, queryClient, useLossless, clearSession]);
+  }, [clearSession, confirmedCrops, documentLabel, documentName, extractData, imageUris.length, queryClient, selectedCategory, selectedType, useLossless]);
 
 
   return (
@@ -385,6 +427,26 @@ export default function UploadScreen() {
             />
           </View>
         </View>
+
+        {/* Extraction Consent Toggle (only for non-photo/signature docs) */}
+        {selectedCategory !== 'photograph' && selectedCategory !== 'signature' && (
+          <View style={styles.section}>
+            <View style={styles.toggleRow}>
+              <View style={styles.toggleTextContainer}>
+                <Text style={styles.sectionTitle}>Extract Structured Data</Text>
+                <Text style={styles.toggleDescription}>
+                  Auto-detect document fields to pre-fill export forms.
+                </Text>
+              </View>
+              <Switch
+                value={extractData}
+                onValueChange={setExtractData}
+                trackColor={{ false: colors.shadowGrey, true: colors.trueCobalt }}
+                thumbColor={extractData ? colors.mayaBlue : colors.white + 'CC'}
+              />
+            </View>
+          </View>
+        )}
 
         {/* Info Box */}
         <View style={styles.infoBox}>

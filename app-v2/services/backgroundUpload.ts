@@ -45,6 +45,7 @@ export function startBackgroundUpload(
   queryClient: QueryClient,
   outputFormat: string = 'jpeg',
   documentLabel?: string,
+  extractData: boolean = true,
 ) {
   notify({ total: confirmedCrops.length, current: 0, done: false, error: undefined });
 
@@ -76,6 +77,7 @@ export function startBackgroundUpload(
           selectedCategory,
           selectedType,
           crop.quadSource,
+          extractData,
         );
 
         notify({ current: i + 1 });

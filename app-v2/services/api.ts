@@ -680,11 +680,13 @@ export const documentsApi = {
     documentCategory?: string,
     documentSubtype?: string,
     quadSource?: 'model' | 'manual',
+    extractData: boolean = true,
   ): Promise<{ job_id: string; status: string }> {
     return apiRequest<{ job_id: string; status: string }>(`/jobs/${jobId}/submit`, {
       method: 'POST',
       body: JSON.stringify({
         output_format: outputFormat,
+        extract_data: extractData,
         ...(confirmedCropQuad ? { confirmed_crop_quad: confirmedCropQuad } : {}),
         ...(documentCategory ? { document_category: documentCategory } : {}),
         ...(documentSubtype ? { document_subtype: documentSubtype } : {}),
