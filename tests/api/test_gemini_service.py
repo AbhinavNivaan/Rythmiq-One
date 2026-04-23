@@ -86,7 +86,7 @@ def test_categorize_configures_gemini_and_calls_model_with_expected_contract():
 
     mock_genai.configure.assert_called_once_with(api_key="live-key")
     mock_genai.GenerativeModel.assert_called_once_with(
-        model_name="gemini-2.0-flash",
+        model_name="gemini-2.5-flash",
         system_instruction=gemini_module._CATEGORIZE_SYSTEM,
     )
 
@@ -141,6 +141,40 @@ def test_categorize_rejects_unknown_document_category():
         result = gemini_module.categorize_document(b"fakejpeg", api_key="test-key")
 
     assert result is None
+
+
+def test_categorize_returns_voter_id_subtype():
+    """Should return 'Voter ID Card' as subtype for Voter ID documents."""
+    mock_response = MagicMock()
+    mock_response.text = json.dumps(
+        {
+            "document_category": "identity",
+            "document_subtype": "Voter ID Card",
+            "suggested_name": "Voter ID",
+            "suggested_owner": "Abhinav Prakash",
+            "confidence": 0.97,
+        }
+    )
+
+    with patch("app.api.services.gemini.genai") as mock_genai:
+        mock_genai.GenerativeModel.return_value.generate_content.return_value = mock_response
+        from app.api.services import gemini as gemini_module
+
+        result = gemini_module.categorize_document(b"fakejpeg", api_key="test-key")
+
+    assert result is not None
+    assert result["document_category"] == "identity"
+    assert result["document_subtype"] == "Voter ID Card"
+    assert result["confidence"] == 0.97
+
+
+def test_categorize_prompt_includes_voter_id_and_issuer_instruction():
+    """Prompt must name Voter ID Card explicitly and instruct Gemini to read the issuing authority."""
+    from app.api.services import gemini as gemini_module
+
+    prompt = gemini_module._CATEGORIZE_USER
+    assert "Voter ID Card" in prompt
+    assert "issuing authority" in prompt
 
 
 def test_categorize_rejects_confidence_outside_range():

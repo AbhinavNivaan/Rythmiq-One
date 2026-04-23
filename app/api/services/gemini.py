@@ -33,10 +33,16 @@ _CATEGORIZE_SYSTEM = (
 )
 
 _CATEGORIZE_USER = (
-    "Classify this document. Return: document_category (one of: identity, academic, "
-    "address, financial, photograph, signature, certificate, other), "
-    "document_subtype (specific name e.g. 'PAN Card', 'Aadhaar Card', "
-    "'Class 10 Marksheet'), suggested_name (short user-facing label), "
+    "Classify this document. "
+    "First, read the issuing authority, document title, and any prominent header text visible "
+    "on the document — these are the strongest signals for identifying the document subtype. "
+    "Return: document_category (one of: identity, academic, address, financial, photograph, "
+    "signature, certificate, other), "
+    "document_subtype (the specific official document name — for Indian identity documents use "
+    "exactly: 'PAN Card', 'Aadhaar Card', 'Voter ID Card', 'Passport', 'Driving Licence', "
+    "'Ration Card'; for academic use e.g. 'Class 10 Marksheet', 'Class 12 Marksheet'; "
+    "for others use the most precise name visible on the document), "
+    "suggested_name (short user-facing label), "
     "suggested_owner (person's name if visible on document, otherwise null), "
     "confidence (0.0-1.0)."
 )
@@ -105,7 +111,7 @@ def categorize_document(image_bytes: bytes, api_key: str) -> dict[str, Any] | No
     try:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel(
-            model_name="gemini-2.0-flash",
+            model_name="gemini-2.5-flash",
             system_instruction=_CATEGORIZE_SYSTEM,
         )
 
@@ -126,8 +132,14 @@ def categorize_document(image_bytes: bytes, api_key: str) -> dict[str, Any] | No
         parsed = json.loads(response.text)
         validated = _validate_categorization_result(parsed)
         if validated is None:
-            logger.warning("Gemini categorization returned invalid contract output")
+            logger.warning("Gemini categorization returned invalid contract output: %s", parsed)
             return None
+        logger.info(
+            "Gemini categorization: category=%s subtype=%s confidence=%.2f",
+            validated.get("document_category"),
+            validated.get("document_subtype"),
+            validated.get("confidence", 0),
+        )
         return validated
     except json.JSONDecodeError:
         logger.warning("Gemini categorization returned non-JSON response")

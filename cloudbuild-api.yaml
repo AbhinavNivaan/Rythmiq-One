@@ -70,7 +70,7 @@ steps:
           --project=rythmiq-one \
           --service-account=rythmiq-api@rythmiq-one.iam.gserviceaccount.com \
           --set-env-vars="SERVICE_ENV=production,EXECUTION_BACKEND=cloudrun,CLOUD_RUN_WORKER_URL=https://rythmiq-worker-1048753379343.asia-south1.run.app" \
-          --set-secrets="SUPABASE_URL=rythmiq-api-supabase-url:latest,SUPABASE_ANON_KEY=rythmiq-api-supabase-anon-key:latest,SUPABASE_SERVICE_ROLE_KEY=rythmiq-api-supabase-service-role-key:latest,SUPABASE_JWT_SECRET=rythmiq-api-supabase-jwt-secret:latest,DO_SPACES_ACCESS_KEY=rythmiq-api-spaces-access-key:latest,DO_SPACES_SECRET_KEY=rythmiq-api-spaces-secret-key:latest,DO_SPACES_ENDPOINT=rythmiq-api-spaces-endpoint:latest,DO_SPACES_REGION=rythmiq-api-spaces-region:latest,DO_SPACES_BUCKET=rythmiq-api-spaces-bucket:latest,WEBHOOK_SECRET=rythmiq-api-webhook-secret:latest,INTERNAL_CLEANUP_SECRET=rythmiq-api-internal-cleanup-secret:latest,SLACK_WEBHOOK_URL=SLACK_WEBHOOK_URL:latest"
+          --set-secrets="SUPABASE_URL=rythmiq-api-supabase-url:latest,SUPABASE_ANON_KEY=rythmiq-api-supabase-anon-key:latest,SUPABASE_SERVICE_ROLE_KEY=rythmiq-api-supabase-service-role-key:latest,SUPABASE_JWT_SECRET=rythmiq-api-supabase-jwt-secret:latest,DO_SPACES_ACCESS_KEY=rythmiq-api-spaces-access-key:latest,DO_SPACES_SECRET_KEY=rythmiq-api-spaces-secret-key:latest,DO_SPACES_ENDPOINT=rythmiq-api-spaces-endpoint:latest,DO_SPACES_REGION=rythmiq-api-spaces-region:latest,DO_SPACES_BUCKET=rythmiq-api-spaces-bucket:latest,WEBHOOK_SECRET=rythmiq-api-webhook-secret:latest,INTERNAL_CLEANUP_SECRET=rythmiq-api-internal-cleanup-secret:latest,SLACK_WEBHOOK_URL=SLACK_WEBHOOK_URL:latest,GEMINI_API_KEY=rythmiq-gemini-api-key:latest"
 
 images:
   - 'asia-south1-docker.pkg.dev/rythmiq-one/rythmiq-images/api:latest'
