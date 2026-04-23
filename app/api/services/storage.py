@@ -269,21 +269,39 @@ class StorageService:
         Delete all objects under prefix, skipping any key that does not start with prefix.
 
         Args:
-            prefix: S3 key prefix to enumerate (e.g. 'uploads/{user_id}/'). Acts as
-                    the scope guard — any enumerated key that does not start with this
-                    prefix is skipped and logged as a warning.
-            user_id: Owner user ID — passed for audit/logging purposes; the prefix
-                     already encodes the user scope so startswith(prefix) is the
-                     effective guard.
+            prefix: S3 key prefix to enumerate. Must be one of the user-scoped
+                    shapes: ``uploads/{user_id}/...``, ``output/{user_id}/...``,
+                    or ``master/{user_id}/...``. The entry-point guard rejects
+                    anything else, preventing cross-tenant deletion even if a
+                    future caller forgets to embed the user id.
+            user_id: Owner user ID — required and validated against the prefix.
 
         Returns:
             (deleted_count, failed_count)
 
         Raises:
+            ValueError: If user_id is empty or prefix does not begin with an
+                        allowlisted user-scoped root. See security audit S9.
             StorageException: If prefix enumeration (list/paginate) fails.
                               Individual object delete failures are counted but
                               do not raise.
         """
+        if not user_id:
+            raise ValueError("delete_objects_by_prefix: user_id is required")
+
+        allowed_roots = (
+            f"uploads/{user_id}/",
+            f"output/{user_id}/",
+            f"master/{user_id}/",
+        )
+        if not any(prefix.startswith(root) for root in allowed_roots):
+            # Never log the raw prefix — an attacker-controlled value reaches
+            # this boundary and we don't want it echoed back into logs.
+            raise ValueError(
+                "delete_objects_by_prefix: prefix must start with "
+                "uploads/<user_id>/, output/<user_id>/, or master/<user_id>/"
+            )
+
         deleted = 0
         failed = 0
         try:

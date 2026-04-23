@@ -124,3 +124,72 @@ def test_accumulates_counts_across_multiple_pages():
     assert deleted == 2
     assert failed == 0
     assert svc._client.delete_objects.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Entry-point guard (security audit S9).
+# The prefix must embed the given user_id. Anything else must raise ValueError
+# before boto3 is touched — otherwise a future caller that forgets the user
+# segment could nuke another tenant's prefix.
+# ---------------------------------------------------------------------------
+
+
+def test_guard_accepts_uploads_root():
+    svc = _make_svc()
+    svc._client.get_paginator.return_value = _make_paginator([{"Contents": []}])
+    svc.delete_objects_by_prefix(f"uploads/{USER_ID}/", USER_ID)
+
+
+def test_guard_accepts_output_root():
+    svc = _make_svc()
+    svc._client.get_paginator.return_value = _make_paginator([{"Contents": []}])
+    svc.delete_objects_by_prefix(f"output/{USER_ID}/", USER_ID)
+
+
+def test_guard_accepts_master_root():
+    svc = _make_svc()
+    svc._client.get_paginator.return_value = _make_paginator([{"Contents": []}])
+    svc.delete_objects_by_prefix(f"master/{USER_ID}/", USER_ID)
+
+
+def test_guard_accepts_job_scoped_subprefix():
+    svc = _make_svc()
+    svc._client.get_paginator.return_value = _make_paginator([{"Contents": []}])
+    svc.delete_objects_by_prefix(f"output/{USER_ID}/job-42/", USER_ID)
+
+
+def test_guard_rejects_empty_user_id():
+    svc = _make_svc()
+    with pytest.raises(ValueError, match="user_id is required"):
+        svc.delete_objects_by_prefix(f"uploads/{USER_ID}/", "")
+    svc._client.get_paginator.assert_not_called()
+
+
+def test_guard_rejects_prefix_without_user_scope():
+    svc = _make_svc()
+    with pytest.raises(ValueError, match="must start with"):
+        svc.delete_objects_by_prefix("uploads/", USER_ID)
+    svc._client.get_paginator.assert_not_called()
+
+
+def test_guard_rejects_root_prefix():
+    svc = _make_svc()
+    with pytest.raises(ValueError, match="must start with"):
+        svc.delete_objects_by_prefix("", USER_ID)
+    svc._client.get_paginator.assert_not_called()
+
+
+def test_guard_rejects_cross_tenant_prefix():
+    # uploads/<attacker>/ with user_id=<victim> must raise — the prefix does
+    # not start with uploads/<victim>/.
+    svc = _make_svc()
+    with pytest.raises(ValueError, match="must start with"):
+        svc.delete_objects_by_prefix("uploads/other-user-id/", USER_ID)
+    svc._client.get_paginator.assert_not_called()
+
+
+def test_guard_rejects_unknown_root():
+    svc = _make_svc()
+    with pytest.raises(ValueError, match="must start with"):
+        svc.delete_objects_by_prefix(f"backups/{USER_ID}/", USER_ID)
+    svc._client.get_paginator.assert_not_called()
