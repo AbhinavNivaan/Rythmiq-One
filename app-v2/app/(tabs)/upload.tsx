@@ -207,7 +207,9 @@ export default function UploadScreen() {
   const [documentLabel, setDocumentLabel] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<DocumentCategory>('identity');
   const [selectedType, setSelectedType] = useState<string>('Aadhaar Card');
-  const [extractData, setExtractData] = useState(true);
+  // Default off: toggling this on sends the image to Gemini for field extraction.
+  // User must opt in deliberately per upload. See security audit S11.
+  const [extractData, setExtractData] = useState(false);
   const documentCategories = useSeededDocumentCategories();
   const [isCategoryOpen, setIsCategoryOpen] = useState(false);
   const [isTypeOpen, setIsTypeOpen] = useState(false);
@@ -438,7 +440,7 @@ export default function UploadScreen() {
               <View style={styles.toggleTextContainer}>
                 <Text style={styles.sectionTitle}>Extract Structured Data</Text>
                 <Text style={styles.toggleDescription}>
-                  Auto-detect document fields to pre-fill export forms.
+                  Sends this image to Google Gemini to auto-detect fields (PAN, Aadhaar number, name, DOB) so exports pre-fill automatically. Off by default.
                 </Text>
               </View>
               <Switch

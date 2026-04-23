@@ -45,7 +45,9 @@ export function startBackgroundUpload(
   queryClient: QueryClient,
   outputFormat: string = 'jpeg',
   documentLabel?: string,
-  extractData: boolean = true,
+  // Default off: extraction sends the image bytes to Gemini. Callers must
+  // opt in explicitly after the user grants consent. See security audit S11.
+  extractData: boolean = false,
 ) {
   notify({ total: confirmedCrops.length, current: 0, done: false, error: undefined });
 
