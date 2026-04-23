@@ -300,6 +300,7 @@ def process_job(payload: JobPayload) -> SuccessResult:
         job_id=payload.job_id,
         user_id=payload.user_id,
         document_type=payload.document_type,
+        document_subtype=payload.document_subtype,
         extract_data=payload.extract_data,
         api_key=os.environ.get("GEMINI_API_KEY"),
         db_client=_db_client,

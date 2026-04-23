@@ -19,7 +19,7 @@ except ImportError:  # pragma: no cover - handled at runtime
 
 logger = logging.getLogger(__name__)
 
-_MODEL_VERSION = "gemini-2.0-flash"
+_MODEL_VERSION = "gemini-2.5-flash"
 _CONFIDENCE_THRESHOLD = 0.6
 _PAN_RE = re.compile(r"^[A-Z]{5}[0-9]{4}[A-Z]$")
 _AADHAAR_RE = re.compile(r"^\d{12}$")
@@ -35,18 +35,16 @@ _EXTRACTION_USER = (
     "For confidence, include one key per extracted field with a score from 0.0 to 1.0."
 )
 
-_EXTRACTION_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "fields": {"type": "object"},
-        "confidence": {
-            "type": "object",
-            "additionalProperties": {"type": "number"},
-        },
-    },
-    "required": ["fields", "confidence"],
+_SUBTYPE_EXTRACTION_HINTS: dict[str, str] = {
+    "pan card": (
+        "Document subtype is PAN Card. Prioritize these field keys when visible: "
+        "pan_number, name, dob, father_name. Use null when unreadable; do not invent values."
+    ),
+    "aadhaar": (
+        "Document subtype is Aadhaar. Prioritize these field keys when visible: "
+        "aadhaar_number, name, dob, gender, address. Use null when unreadable; do not invent values."
+    ),
 }
-
 
 def _validate_extraction_payload(payload: Any) -> tuple[dict[str, Any], dict[str, float]] | None:
     if not isinstance(payload, dict):
@@ -68,9 +66,12 @@ def _validate_extraction_payload(payload: Any) -> tuple[dict[str, Any], dict[str
     for key, value in confidence.items():
         if not isinstance(key, str):
             return None
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
+        if isinstance(value, bool):
             return None
-        value_f = float(value)
+        try:
+            value_f = float(value)
+        except (TypeError, ValueError):
+            return None
         if value_f < 0.0 or value_f > 1.0:
             return None
         normalized_confidence[key] = value_f
@@ -142,6 +143,7 @@ def process_extraction_stage(
     extract_data: bool,
     api_key: str | None,
     db_client: Any | None = None,
+    document_subtype: str | None = None,
 ) -> dict[str, Any]:
     """
     Run optional Stage 3c extraction and persist output to document_extractions.
@@ -189,11 +191,16 @@ def process_extraction_stage(
             "data": base64.b64encode(image_bytes).decode("utf-8"),
         }
 
+        prompt = _EXTRACTION_USER
+        subtype_key = (document_subtype or "").strip().lower()
+        subtype_hint = _SUBTYPE_EXTRACTION_HINTS.get(subtype_key)
+        if subtype_hint:
+            prompt = f"{_EXTRACTION_USER} {subtype_hint}"
+
         response = model.generate_content(
-            [image_part, _EXTRACTION_USER],
+            [image_part, prompt],
             generation_config=genai.GenerationConfig(
                 response_mime_type="application/json",
-                response_schema=_EXTRACTION_SCHEMA,
             ),
             request_options={"timeout": 30},
         )
@@ -205,6 +212,8 @@ def process_extraction_stage(
 
         fields, confidence = validated
         fields, confidence = _apply_guardrails(fields, confidence)
+        if not fields:
+            raise ValueError("empty extraction payload")
         status = "completed"
     except Exception as exc:
         failure_error = f"{type(exc).__name__}: {exc}"[:500]
