@@ -23,7 +23,11 @@ steps:
       - 'rythmiq-worker'
       - '--image=asia-south1-docker.pkg.dev/rythmiq-one/rythmiq-images/worker:latest'
       - '--region=asia-south1'
-      - '--allow-unauthenticated'
+      # Require IAM auth. API calls the worker with an OIDC identity token
+      # (see app/api/services/cloud_run_client.py _get_auth_token). The API
+      # service account must have roles/run.invoker on this service.
+      # See security audit S3.
+      - '--no-allow-unauthenticated'
       - '--cpu=2'
       - '--memory=4Gi'
       - '--max-instances=5'
