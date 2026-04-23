@@ -29,7 +29,8 @@ interface CaptureSessionState {
   images: CapturedImage[]
   docType: string
   confirmed: (ConfirmedCrop | undefined)[]
-  categorizationResult: CategorizationResult | null
+  // undefined = in-flight (not yet received); null = completed with no/failed result; object = success
+  categorizationResult: CategorizationResult | null | undefined
 
   startSession: (images: CapturedImage[], docType: string) => string
   confirmCrop: (index: number, crop: ConfirmedCrop) => void
@@ -40,7 +41,7 @@ interface CaptureSessionState {
     images: CapturedImage[]
     docType: string
     confirmed: (ConfirmedCrop | undefined)[]
-    categorizationResult: CategorizationResult | null
+    categorizationResult: CategorizationResult | null | undefined
   }
 }
 
@@ -49,11 +50,12 @@ export const useCaptureSession = create<CaptureSessionState>((set, get) => ({
   images: [],
   docType: '',
   confirmed: [],
-  categorizationResult: null,
+  categorizationResult: undefined,
 
   startSession: (images, docType) => {
     const sessionId = `session_${Date.now()}`
-    set({ sessionId, images, docType, confirmed: [], categorizationResult: null })
+    // Reset to undefined so the upload screen knows categorization is in-flight.
+    set({ sessionId, images, docType, confirmed: [], categorizationResult: undefined })
     return sessionId
   },
 

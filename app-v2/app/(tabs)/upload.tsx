@@ -216,9 +216,12 @@ export default function UploadScreen() {
   // Pre-select document category/type from session — runs once when docType is known.
   // Must not re-run when documentCategories changes (async query resolving would
   // reset any user override back to the session default).
+  // categorizationResult: undefined = still in-flight; null = failed/empty; object = success
   const hasPreSelected = useRef(false);
   useEffect(() => {
     if (hasPreSelected.current) return;
+    // Categorization hasn't returned yet — wait for the next render.
+    if (categorizationResult === undefined) return;
 
     const canUseCategorization =
       categorizationResult?.confidence !== null

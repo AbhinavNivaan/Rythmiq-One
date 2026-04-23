@@ -76,10 +76,15 @@ export default function CropPreviewScreen() {
     if (index === 0 && !hasTriggeredCategorization.current) {
       hasTriggeredCategorization.current = true
 
-      // Run Gemini categorization in parallel with on-device crop detection.
+      // Run Gemini categorization in parallel with TFLite detection.
+      // 1200px long-edge gives Gemini enough resolution to read document header text
+      // (e.g. "Election Commission of India") without adding ImageManipulator crop latency.
+      // An 8-second timeout ensures the upload screen is never permanently blocked.
       ;(async () => {
-        try {
-          const maxDim = 800
+        const timeout = new Promise<null>(resolve => setTimeout(() => resolve(null), 8000))
+
+        const categorize = (async () => {
+          const maxDim = 1200
           const scaleFactor = Math.min(
             1,
             maxDim / Math.max(currentImage.width, currentImage.height),
@@ -89,13 +94,17 @@ export default function CropPreviewScreen() {
           const compressed = await ImageManipulator.manipulateAsync(
             currentImage.uri,
             [{ resize: { width: targetWidth } }],
-            { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG },
+            { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG },
           )
-          const result = await documentsApi.categorize(
+          return await documentsApi.categorize(
             compressed.uri,
             compressed.width ?? targetWidth,
             compressed.height ?? Math.max(1, Math.round(currentImage.height * scaleFactor)),
           )
+        })()
+
+        try {
+          const result = await Promise.race([categorize, timeout])
           setCategorizationResult(result)
         } catch (error) {
           // Non-fatal: upload path can still proceed without categorization.
