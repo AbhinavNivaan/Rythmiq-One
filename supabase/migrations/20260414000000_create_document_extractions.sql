@@ -4,7 +4,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE TABLE public.document_extractions (
     id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     job_id        UUID NOT NULL REFERENCES public.jobs(id) ON DELETE CASCADE,
-    user_id       UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    user_id       UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     document_type TEXT,
     extracted_at  TIMESTAMPTZ DEFAULT NOW(),
     fields        JSONB NOT NULL DEFAULT '{}',
