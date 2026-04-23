@@ -119,6 +119,13 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    @property
+    def is_prod(self) -> bool:
+        # Recognize both "prod" and "production" case-insensitively. Cloud Build
+        # sets SERVICE_ENV=production; historical callsites compared to the
+        # literal "prod". See security audit S17.
+        return (self.service_env or "").strip().lower() in ("prod", "production")
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -58,12 +58,15 @@ def configure_logging() -> None:
 def create_app() -> FastAPI:
     settings = get_settings()
 
+    # Docs/OpenAPI surface is kept off in prod to avoid enumeration of internal
+    # routes (e.g. /internal/webhooks/camber). See security audit S17.
+    expose_docs = not settings.is_prod
     app = FastAPI(
         title="Rythmiq One API",
         version="2.0.0",
-        docs_url="/docs" if settings.service_env != "prod" else None,
-        redoc_url="/redoc" if settings.service_env != "prod" else None,
-        openapi_url="/openapi.json" if settings.service_env != "prod" else None,
+        docs_url="/docs" if expose_docs else None,
+        redoc_url="/redoc" if expose_docs else None,
+        openapi_url="/openapi.json" if expose_docs else None,
     )
 
     # Middleware (order matters: first added = outermost)

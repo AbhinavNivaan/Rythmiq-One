@@ -276,7 +276,7 @@ class CloudRunClient:
                 details={"job_id": str(job_id)},
             )
         except httpx.HTTPStatusError as e:
-            if e.response.status_code in (401, 403) and self._settings.service_env != "prod":
+            if e.response.status_code in (401, 403) and not self._settings.is_prod:
                 logger.warning(
                     "Cloud Run auth denied in non-prod, falling back to local mock backend",
                     extra={
@@ -306,7 +306,7 @@ class CloudRunClient:
                 },
             )
         except httpx.RequestError as e:
-            if self._settings.service_env != "prod":
+            if not self._settings.is_prod:
                 logger.warning(
                     "Cloud Run request failed in non-prod, falling back to local mock backend",
                     extra={"job_id": str(job_id), "service_env": self._settings.service_env},
